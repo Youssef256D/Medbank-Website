@@ -188,6 +188,26 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-01 — Approval no longer reverts to unapproved
+Fixed a race where approving a user (or toggling access) could snap back to "pending" a moment later.
+
+1. **Root cause: stale-snapshot clobber in `hydrateRelationalProfiles()`.** The hydration reads its local-users + server-`profiles` snapshot at function start, then does slow paged fetches. An admin approval landing mid-flight was overwritten when the hydration saved its stale snapshot. The pre-existing `shouldPreferRecentLocalUserData` guard made it worse by locking in the stale `existing.isApproved === false`.
+2. **Fix: `overlayConcurrentAdminUserWrites(nextUsers, hydrationStartedAt)`.** Before the hydration's `saveLocalOnly(STORAGE_KEYS.users, ...)`, if `relationalSync.lastUserLocalWriteAt > hydrationStartedAt`, the current (fresh) local `isApproved`/`approvedAt`/`approvedBy`/`mcqAccessEnabled`/`coursesAccessEnabled`/`authAccessKnownActive`/assigned-courses/year/semester are overlaid onto the matching hydrated rows so the admin action wins.
+3. **Safe signal.** Only `USER_RELATIONAL_SYNC_SCOPE_ADMIN` writes stamp `lastUserLocalWriteAt` (`shouldStampRecentLocalUserWrite`); the hydration's own `server_backfill` writes do not, so normal hydration is untouched and only genuine concurrent admin mutations trigger the overlay.
+4. **Approve action sequence unchanged.** Enrollment sync → DB approval → auth-access sync ordering (required for RLS) is preserved; only the post-hydration reconciliation changed.
+5. **Static cache bust bumped.** `index.html` app-version is `2026-07-01.05`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-07-01 — CSP connect-src sourcemap fix
+Silenced repeated `Refused to connect to 'https://cdn.jsdelivr.net/sm/....map'` CSP console errors.
+
+1. **Sourcemap fetches are now allowed.** With DevTools open, the browser fetches sourcemaps for the CDN libraries (Lucide/GSAP/supabase-js) from jsDelivr's `/sm/` service. The CSP `connect-src` only allowed `self` + Supabase, so every fetch was blocked and logged. Added `https://cdn.jsdelivr.net` and `https://unpkg.com` to `connect-src` in `index.html`.
+2. **No new origin exposure.** Both hosts are already trusted in `script-src`; this only permits sourcemap/companion fetches from the same script CDNs.
+3. **Static cache bust bumped.** `index.html` app-version is `2026-07-01.04`.
+
+**Files touched:** `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-01 — Marketing "Answer Key" redesign
 Gave the public landing/features/pricing routes a distinct, subject-true visual identity without changing the static-SPA deploy model. Design-only; no business/auth/access logic touched.
 

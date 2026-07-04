@@ -9,6 +9,19 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-01 — Approval no longer reverts to unapproved
+
+- Fixed the bug where approving a user could silently revert to "pending" a moment later, forcing a re-approval. The cause was a race in `hydrateRelationalProfiles()`: it snapshots the local users and the server `profiles` rows when it *starts*, then does slow paged reads. If an admin approved (or changed access) while those reads were in flight, the hydration saved its now-stale snapshot back over the fresh change — and the existing "prefer recent local data" guard made it worse by locking in the stale `approved=false`.
+- Added `overlayConcurrentAdminUserWrites()`: right before a profile hydration saves, if an admin-scoped user write landed *after* the hydration began reading (detected via `relationalSync.lastUserLocalWriteAt`, which only admin approve/suspend/access writes stamp), the freshly-written `isApproved` / `approvedAt` / `approvedBy` / `mcqAccessEnabled` / `coursesAccessEnabled` / enrollment fields are overlaid onto the hydration result so the admin action wins. The hydration's own `server_backfill` writes do not stamp that timestamp, so normal hydration is unaffected.
+- No change to the approve action's own sync sequence (enrollment sync → DB approval → auth-access sync); that ordering is required for RLS. The reported "syncing takes a while" is inherent to those sequential round-trips, but the approval now sticks instead of bouncing back.
+- Bumped the production `app-version` to `2026-07-01.05`.
+
+### 2026-07-01 — CSP connect-src sourcemap fix
+
+- Silenced the repeated `Refused to connect to 'https://cdn.jsdelivr.net/sm/....map'` CSP console errors. When DevTools is open the browser tries to fetch the sourcemaps for the CDN libraries (Lucide / GSAP / supabase-js) from jsDelivr's `/sm/` sourcemap service, but `connect-src` only allowed `self` + Supabase, so every fetch was blocked and logged.
+- Added `https://cdn.jsdelivr.net` and `https://unpkg.com` to the CSP `connect-src` directive in `index.html`. These hosts are already trusted in `script-src`, so this only permits sourcemap/companion fetches from the same script CDNs — no new origin exposure.
+- Bumped the production `app-version` to `2026-07-01.04`.
+
 ### 2026-07-01 — Marketing "Answer Key" redesign
 
 - Gave the public landing / features / pricing routes a distinct visual identity built around the product's own world: a hero **MCQ specimen card** (a clinical question with A–E options, the correct one resolved with a check and a sliver of explanation) as the signature element that embodies MedBank's differentiator.

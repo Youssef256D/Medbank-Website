@@ -9080,6 +9080,12 @@ async function hydrateRelationalProfiles(currentUser) {
     return;
   }
 
+  // Timestamp taken BEFORE any reads. This hydration snapshots local users and
+  // server profile rows now, then does slow paged fetches. If an admin approves /
+  // suspends / changes access mid-flight, that write must not be clobbered by the
+  // stale snapshot this function is about to save (see
+  // overlayConcurrentAdminUserWrites).
+  const hydrationStartedAt = Date.now();
   const usersBefore = getUsers();
   const isAdmin = currentUser.role === "admin";
   let profileRows = [];
@@ -9450,7 +9456,10 @@ async function hydrateRelationalProfiles(currentUser) {
     }
     migrateLocalUserReferences(existing.id, entry.id);
   });
-  const nextUsers = [...preservedLocalOnly, ...preservedRelational, ...mapped];
+  const nextUsers = overlayConcurrentAdminUserWrites(
+    [...preservedLocalOnly, ...preservedRelational, ...mapped],
+    hydrationStartedAt,
+  );
   repairUserIdentityAliasesInList(nextUsers);
   archiveSessionsForChangedUserEnrollments(usersBefore, nextUsers, {
     reason: "enrollment_change",
@@ -10751,6 +10760,69 @@ function shouldPreferRecentLocalUserData(user = null) {
       )
     )
   );
+}
+
+function overlayConcurrentAdminUserWrites(nextUsers, hydrationStartedAt) {
+  // Guards against approval/access "reverting" after an admin action. A profile
+  // hydration reads its local + server snapshot when it STARTS, then does slow
+  // paged fetches. If an admin approves/suspends or toggles access during that
+  // window, hydration would otherwise save its stale snapshot over the fresh
+  // change. Only ADMIN-scoped user writes stamp lastUserLocalWriteAt (see
+  // shouldStampRecentLocalUserWrite) — the hydration's own server_backfill writes
+  // do not — so a stamp newer than this hydration's start reliably means a real
+  // admin mutation landed mid-flight and its fields must win.
+  if (
+    !Array.isArray(nextUsers)
+    || !hydrationStartedAt
+    || !(Number(relationalSync.lastUserLocalWriteAt || 0) > hydrationStartedAt)
+  ) {
+    return nextUsers;
+  }
+  const freshByAuthId = new Map();
+  getUsers().forEach((entry) => {
+    const authId = getUserProfileId(entry);
+    if (isUuidValue(authId) && !freshByAuthId.has(authId)) {
+      freshByAuthId.set(authId, entry);
+    }
+  });
+  if (!freshByAuthId.size) {
+    return nextUsers;
+  }
+  return nextUsers.map((entry) => {
+    const authId = getUserProfileId(entry);
+    const fresh = isUuidValue(authId) ? freshByAuthId.get(authId) : null;
+    if (!fresh || String(fresh.role || "").trim().toLowerCase() === "admin") {
+      return entry;
+    }
+    const overlay = { ...entry };
+    if (typeof fresh.isApproved === "boolean") {
+      overlay.isApproved = fresh.isApproved;
+      overlay.approvedAt = fresh.approvedAt ?? null;
+      overlay.approvedBy = fresh.approvedBy ?? null;
+    }
+    if (typeof fresh.mcqAccessEnabled === "boolean") {
+      overlay.mcqAccessEnabled = fresh.mcqAccessEnabled;
+    }
+    if (typeof fresh.coursesAccessEnabled === "boolean") {
+      overlay.coursesAccessEnabled = fresh.coursesAccessEnabled;
+    }
+    if (typeof fresh.authAccessKnownActive === "boolean") {
+      overlay.authAccessKnownActive = fresh.authAccessKnownActive;
+    }
+    const freshCourses = sanitizeCourseAssignments(fresh.assignedCourses || []);
+    if (freshCourses.length) {
+      overlay.assignedCourses = freshCourses;
+    }
+    const freshYear = normalizeAcademicYearOrNull(fresh.academicYear);
+    if (freshYear !== null) {
+      overlay.academicYear = freshYear;
+    }
+    const freshSemester = normalizeAcademicSemesterOrNull(fresh.academicSemester);
+    if (freshSemester !== null) {
+      overlay.academicSemester = freshSemester;
+    }
+    return overlay;
+  });
 }
 
 function mergeUserRecord(remoteUser, localUser) {
