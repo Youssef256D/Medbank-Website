@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-05 — CSS custom-property alias fix
+- Fixed 7 orphan `var()` references in `styles.css` — rules used `--text`, `--border`, `--brand-dark`, `--accent-strong`, `--shadow-tiny`, `--radius-xs`, and `--shadow-medium`, but only the differently-named canonical tokens (`--ink`, `--line`, `--brand-strong`, `--accent`, `--shadow-soft`, `--radius-sm`, `--shadow`) were ever defined. Rules using the orphan names inherited nothing themselves; whatever value showed depended on ancestor inheritance rather than the intended theme-aware token.
+- Added the 7 as aliases in `:root` (`--text: var(--ink);`, etc.). Since the canonical tokens are redefined per theme (`body.theme-dark`, `body.theme-comfort`), a single `:root`-level alias resolves correctly in every theme without per-theme duplication.
+- Surfaced during a `/design-sync` re-sync (`design-sync` tool's `[TOKENS_MISSING]` validator flagged the 7 names as referenced-but-undefined). Also corrected the sync's `runtimeFontPrefixes` config, which still listed the long-removed "Bricolage Grotesque" instead of the current "Source Sans 3" + "Inter".
+- Bumped the production `app-version` to `2026-07-05.01`.
+
 ### 2026-07-01 — Approval no longer reverts to unapproved
 
 - Fixed the bug where approving a user could silently revert to "pending" a moment later, forcing a re-approval. The cause was a race in `hydrateRelationalProfiles()`: it snapshots the local users and the server `profiles` rows when it *starts*, then does slow paged reads. If an admin approved (or changed access) while those reads were in flight, the hydration saved its now-stale snapshot back over the fresh change — and the existing "prefer recent local data" guard made it worse by locking in the stale `approved=false`.

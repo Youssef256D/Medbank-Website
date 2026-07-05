@@ -188,6 +188,16 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-05 — CSS custom-property alias fix
+Fixed 7 orphan `var()` references in `styles.css`, found via a `/design-sync` re-sync.
+
+1. **Root cause.** Rules used `var(--text)`, `var(--border)`, `var(--brand-dark)`, `var(--accent-strong)`, `var(--shadow-tiny)`, `var(--radius-xs)`, `var(--shadow-medium)` — none of which were ever defined. Only differently-named canonical tokens existed: `--ink`, `--line`, `--brand-strong`, `--accent`, `--shadow-soft`, `--radius-sm`, `--shadow`.
+2. **Fix.** Added the 7 as `:root`-level aliases (`--text: var(--ink);`, etc., right after `--data-warn`). Because the canonical tokens are redefined per theme (`body.theme-dark`, `body.theme-comfort`), a single `:root` alias resolves through to the active theme's value automatically — no per-theme duplication needed.
+3. **Design-sync config corrected too.** `.design-sync/config.json`'s `runtimeFontPrefixes` still listed the removed "Bricolage Grotesque"; updated to `["Source Sans 3", "Inter"]` to match what `index.html` actually loads. Removed a dead `.design-sync/missing-tokens.css` + `cfg.tokensGlob` from an earlier unfinished attempt at this same fix (that mechanism silently never wired in — `copyTokens` requires `cfg.tokensPkg`, not just `tokensGlob` — and its invented hex values didn't match the real palette anyway).
+4. **Static cache bust bumped.** `index.html` app-version is `2026-07-05.01`.
+
+**Files touched:** `styles.css`, `index.html`, `.design-sync/config.json`, `.design-sync/NOTES.md`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-01 — Approval no longer reverts to unapproved
 Fixed a race where approving a user (or toggling access) could snap back to "pending" a moment later.
 

@@ -35,6 +35,16 @@
      Defined once so all themes share it (unlike --accent, which the dark
      theme intentionally neutralises to grey). */
   --data-warn: #e0a23b;
+  /* Aliases for a handful of rules written against these names instead of
+     the canonical tokens above; resolve through var() so theme overrides
+     of the canonical token still apply. */
+  --text: var(--ink);
+  --border: var(--line);
+  --brand-dark: var(--brand-strong);
+  --accent-strong: var(--accent);
+  --shadow-tiny: var(--shadow-soft);
+  --radius-xs: var(--radius-sm);
+  --shadow-medium: var(--shadow);
 }
 
 * {

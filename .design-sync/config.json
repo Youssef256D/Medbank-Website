@@ -5,5 +5,5 @@
   "shape": "package",
   "cssEntry": "styles.css",
   "componentSrcMap": {},
-  "runtimeFontPrefixes": ["Bricolage Grotesque", "Inter"]
+  "runtimeFontPrefixes": ["Source Sans 3", "Inter"]
 }
