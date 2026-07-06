@@ -188,6 +188,13 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-06 — Landing first-paint fallback fix
+Visual-only startup fix: the static `index.html` `#app` fallback still contained the old "Medical MCQ practice platform." hero, which could flash on refresh/first load before `main.js` replaced it with `renderLanding()`. Replaced the fallback with the current simplified landing hero so the first paint and hydrated render match.
+
+1. **Static cache bust bumped.** `index.html` app-version is `2026-07-06.06-local` (preview/local; drop `-local` before production).
+
+**Files touched:** `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-06 — Restore MCQ card green
 Visual-only reversal after owner review: restored the light-theme `.exam-question-card` background to the prior soft green-blue (`#c4dde5`) and border (`#b9d3da`) from the older MCQ screen. Selected/correct/wrong answer colors and exam logic were not changed.
 

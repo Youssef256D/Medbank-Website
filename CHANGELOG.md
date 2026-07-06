@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-06 — Landing first-paint fallback fix
+- Replaced the stale static `index.html` fallback hero ("Medical MCQ practice platform.") with the current simplified landing hero, so refresh/first-load no longer flashes the old landing before `main.js` renders.
+- Bumped `app-version` to `2026-07-06.06-local`.
+
 ### 2026-07-06 — Restore MCQ card green
 - Restored the light-theme MCQ solving card to the previous soft green-blue panel (`#c4dde5` with `#b9d3da` border), matching the older question-screen look the owner preferred. Answer selection/correct/wrong state colors remain unchanged.
 - Bumped `app-version` to `2026-07-06.05-local`.
