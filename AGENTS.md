@@ -188,6 +188,55 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-06 — Supabase sync overhaul (approval reverts, stale banks, admin speed, DB hardening)
+Fixed the reported sync problems: approvals reverting to pending, slow admin dashboard sync, and students stuck on stale question banks. Touches `main.js`, `supabase/functions/admin-set-user-access` (deployed v6), and three new hosted migrations.
+
+1. **Per-user timestamp merge replaces the 30s wall clock.** Admin user writes stamp `user.profileUpdatedAt` (centrally in `save()` when `userSyncScope` is ADMIN + `profileSyncIds`; the approval path stamps the server's `profiles.updated_at` from the update's `select`). `shouldPreferRecentLocalUserData(user, serverUpdatedAtIso)` now compares per-user timestamps (legacy clock only as fallback for unstamped rows); `hydrateRelationalProfiles` persists `profileUpdatedAt = max(local, server)` on merged rows. `overlayConcurrentAdminUserWrites` additionally overlays name/email/phone.
+2. **Flush freshness guard.** `flushRelationalWrites` sends `getUsers()` (freshest local snapshot) for the users key instead of the queued snapshot, so a stale queued payload can't re-push old approval/access flags via `syncProfilesToRelational`. `scheduleRelationalWrite` with `force: true` now bypasses and unblocks `blockedStorageKeys`.
+3. **Edge Function consistency.** `admin-set-user-access`: one retry w/ backoff on auth ban updates; on approve-flow auth failure the profile `approved` flag is reverted (consistent-deny) and returned in `revertedProfileIds`.
+4. **`content_versions` signal (migration `20260706120000`).** One-row-per-scope table; statement triggers on `questions`/`question_choices` bump the `questions` version; SELECT-only RLS for `authenticated`; added to the realtime publication. `refreshStudentDataSnapshot` compares it against local `mcq_question_content_version` (STORAGE_KEYS.questionContentVersion) and forces question hydration when it moved; `ensureContentRealtimeSubscription` also listens to `content_versions` UPDATEs. `REQUIRED_QUESTION_CATALOG_REFRESH_VERSION` remains as legacy backstop. Rollback in `supabase/rollbacks/`.
+5. **Admin poll fast path.** `hydrateRelationalProfiles(user, {skipIfUnchanged:true})` (used only by the 30s dashboard poll via `refreshAdminDataSnapshot({skipUnchangedProfiles:true})`) probes newest `profiles.updated_at` + exact count and skips full hydration when unchanged (cursor cleared in `resetRelationalSyncState`). `fetchRowsPaged` fetches pages in parallel waves of 4 after a full first page.
+6. **DB hardening (user-confirmed).** Migration `20260706121000` adds 19 FK indexes. Migration `20260706122000` consolidates duplicate permissive policies on questions/question_choices/courses/course_topics/profiles/app_feature_flags/test_block_items (merged `items_write` ALL policy into per-command policies whose predicates are the exact OR of the originals) and initplan-wraps `auth.uid()`/helpers on those + `user_activity_sessions`; verified behavior-preserving by identical row counts under real student and admin JWTs before/after; rollback recreates originals verbatim. Migration `20260706123000` revokes anon/authenticated EXECUTE on internal definer RPCs, anon on `get_admin_question_count_summary`, and pins search_path on `private.course_code_key`/`course_name_key`. Remaining advisor items deliberately deferred: `platform_*` duplicate SELECT policies (low traffic) and the Auth leaked-password-protection dashboard toggle (manual step).
+7. **Housekeeping.** Deleted stray uncommitted `database/migrations/20260701_remove_forced_admin_promotion.sql`. Note: the multi-tab refresh-trigger "seen token" race suspected earlier does **not** exist — tokens are marked seen only after a successful refresh.
+8. **Static cache bust bumped.** `index.html` app-version is `2026-07-06.04-local` (drop `-local` before production).
+
+**Files touched:** `main.js`, `index.html`, `supabase/functions/admin-set-user-access/index.ts`, `supabase/migrations/20260706{120000,121000,122000,123000}_*.sql`, `supabase/rollbacks/20260706{120000,122000}_*.sql`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-07-06 — Landing contact routing, owner details, GSAP motion, mobile auth trim
+Follow-up to the landing rebuild. Content/design + motion only; no auth/access/data behavior changed.
+
+1. **Courses CTA → Contact.** The Courses section button is now `data-nav="contact"` ("Contact us about courses") instead of `signup`, so prospective course owners reach the platform rather than self-registering.
+2. **Contact shows owner details, not a form.** `landingContactBodyHtml()` renders a contact card — Youssef Ayoub · MedBank owner, `tel:+201004532728` (displayed `+20 100 453 2728`), and `mailto:youssefayoub2525@gmail.com` — for contact and pricing. `landingContactSectionHtml()` (landing scroll `#landing-contact`) and the standalone `renderContact()` route both use it, so they stay consistent. The old `#support-form` was removed; `wireContact()` no-ops safely when the form is absent. (This is a deliberate public listing of the owner's phone/email at the user's request — not a secret, does not violate the frontend-secrets rule.)
+3. **GSAP on the landing.** Extended `setupGsapMarketingPageMotion` (on-load hero/head + card stagger) and `getGsapRouteRevealTargets` (scroll reveals) with the new `.landing-simple` selectors: `.lp-eyebrow`/`.lp-hero-title`/`.lp-hero-lede`/`.lp-hero-actions`/`.lp-hero-note`/`.lp-kicker`/`.lp-product-title`/`.lp-product-lede` (intro) and `.lp-points li`/`.lp-contact-card`/`.lp-product-head` (reveal). Reuses the existing reduced-motion gating and ScrollTrigger batch. Verified: gsap loaded, ScrollTrigger active (6 triggers), `data-gsap-marketing-wired=1`.
+4. **Mobile auth trim.** `.auth-public-copy` (the "Welcome back" marketing copy + benefit chips on login/signup) is set to `display:none` inside the existing `@media (max-width: 960px)` block — that's where the auth shell goes single-column, i.e. the stacked "mobile" presentation. Desktop (>960px) still shows it (`display:grid`, verified).
+5. **Verified** at 1200px and 375px: Courses CTA resolves to `contact`, tel/mail hrefs correct, no console errors, GSAP active, mobile auth copy hidden / desktop shown.
+6. **Static cache bust bumped.** `index.html` app-version is `2026-07-06.03-local` (preview/local; drop `-local` before production).
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-07-06 — Simplified landing + split into MCQ Bank / Courses pages
+Reworked the public landing from a loud single-scroll marketing page into a calm, simple site with two dedicated product pages. Content/IA + design only; no auth, access, or data behavior changed.
+
+1. **`renderLanding` rebuilt.** Four sections now: a neutral centered Home hero (`MEDBANK` eyebrow, `Protected courses + a medical MCQ bank.` with a teal `+` signature, one-line lede, Log in / Sign up), an **MCQ Bank** section, a **Courses** section, and a trimmed Contact form. The old two-column `.mb-hero` + `.mcq-specimen`, the six `.feature-showcase-card`s, the four-tier `.pricing-tier` table, and the About timeline were removed from the landing.
+2. **Two dedicated product pages.** Added marketing routes `mcqs` (MCQ Bank) and `courses-platform` (Courses) — chosen to avoid colliding with the existing student `courses` route. Each renders both as a scroll section on the landing (`#landing-mcqs`, `#landing-courses-platform`, so the scroll-spy in `wireLanding` keeps working) and as a standalone route via `renderMcqBankPage()` / `renderCoursesPlatformPage()`. Shared markup lives in `landingMcqBankSectionHtml()` / `landingCoursesSectionHtml()`. Both routes were added to `KNOWN_ROUTES` and `PUBLIC_MARKETING_ROUTE_SET`, with `switch(state.route)` cases.
+3. **Nav trimmed.** `index.html` `#public-nav` is now Home / MCQ Bank / Courses / Contact. The `features` / `pricing` / `about` routes + `renderFeatures`/`renderPricing`/`renderAbout` are **retained** (still reachable by direct `#features` / `#pricing` / `#about` URL) but unlinked — nothing deleted, so this is reversible. Follow-up option: delete those three functions/routes if the simpler site is confirmed.
+4. **CSS scoped.** New styles live under `.landing-simple` in `styles.css` (appended after `#landing-home`), using existing tokens (`--brand`, `--text`, `--muted`, `--line`, `--surface-strong`, `--radius-md`, `--font-display`). The older `.mb-hero` / `.mcq-specimen` / `.feature-showcase` / `.pricing-*` / `.about-*` classes are left in place, now unused by the landing.
+5. **Verified** at 1200px and 375px (home, both product sections, contact, nav scroll + scroll-spy, standalone `#mcqs`) with no console errors. `node --check main.js` passed.
+6. **Static cache bust bumped.** `index.html` app-version is `2026-07-06.02-local` (preview/local; drop `-local` before production).
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-07-06 — Mobile exam-session visual refresh
+Calmed the mobile MCQ exam screen after a visual review flagged it as loud and cramped. Design-only; no exam logic, scoring, sync, or access behavior changed.
+
+1. **Eliminate ("strike") control redesigned.** The per-option eliminate button rendered a bordered box containing a struck-through "S" (`.exam-choice-strike`), top-aligned down the right edge of every option — it read as broken/mysterious. It is now a quiet ghost control: transparent border, `opacity: 0.45` at rest, vertically centered (`align-self: center`), with a subtle hover/focus background and a red active state only when a choice is eliminated. The ambiguous `<span>S</span>` glyph in `main.js` (choice render ~L25592) was replaced with an inline strikethrough SVG.
+2. **Question card softened.** `.exam-question-card` changed from a saturated teal fill (`background: #c4dde5; border: #b9d3da`) to a white surface with a hairline border (`rgba(35,52,102,0.1)`) and a subtle shadow, so it no longer competes with the blue selected / green correct / red wrong states. Added faint per-row dividers, rounded padded option rows, and bumped the selected tint (`0.06 → 0.10`) so the chosen option reads as a clear blue pill. The `body.theme-dark`/`body.theme-comfort` `.exam-question-card` overrides (styles.css ~L8561/8583) were left intact.
+3. **Quiz-nav cells rounded.** `.exam-nav-item` radius `6px → 9px` for cohesion with the refreshed card.
+4. **Verification.** The exam session is behind auth + live Supabase data, so it was verified via a temporary standalone mock rendered against the real `styles.css` at 375px in the preview tooling (mock file removed after). `node --check main.js` passed.
+5. **Static cache bust bumped.** `index.html` app-version is `2026-07-06.01-local` (preview/local; drop `-local` before production).
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-05 — CSS custom-property alias fix
 Fixed 7 orphan `var()` references in `styles.css`, found via a `/design-sync` re-sync.
 

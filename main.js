@@ -24,6 +24,7 @@ const STORAGE_KEYS = {
   appVersionSeen: "mcq_app_version_seen",
   appVersionForced: "mcq_app_version_forced",
   questionCatalogRefreshVersion: "mcq_question_catalog_refresh_version",
+  questionContentVersion: "mcq_question_content_version",
   studentRefreshTrigger: "mcq_student_refresh_trigger",
   studentRefreshTriggerSeen: "mcq_student_refresh_trigger_seen",
   pendingAdminActions: "mcq_pending_admin_actions",
@@ -59,6 +60,8 @@ const GOOGLE_OAUTH_PENDING_KEY = "mcq_google_oauth_pending";
 const PASSWORD_RECOVERY_PENDING_KEY = "mcq_password_recovery_pending";
 const KNOWN_ROUTES = new Set([
   "landing",
+  "mcqs",
+  "courses-platform",
   "features",
   "pricing",
   "about",
@@ -96,7 +99,7 @@ const PRIVATE_ROUTE_SET = new Set([
   "profile",
   "admin",
 ]);
-const PUBLIC_MARKETING_ROUTE_SET = new Set(["landing", "features", "pricing", "about", "contact"]);
+const PUBLIC_MARKETING_ROUTE_SET = new Set(["landing", "mcqs", "courses-platform", "features", "pricing", "about", "contact"]);
 const AUTH_ENTRY_ROUTE_SET = new Set(["landing", "features", "pricing", "about", "contact", "login", "signup", "forgot"]);
 const ADMIN_DATA_PAGES = ["dashboard", "users", "courses", "questions", "bulk-import", "notifications", "site-access", "ai-agents", "activity", "logs"];
 const ADMIN_COURSES_PLATFORM_PAGE = "course-platform";
@@ -7608,6 +7611,7 @@ function resetRelationalSyncState() {
   relationalSync.enrollmentWriteAccessDenied = false;
   relationalSync.enrollmentBackfillRetryAt = 0;
   relationalSync.lastUserLocalWriteAt = 0;
+  relationalSync.adminProfilesChangeCursor = null;
   pendingEnrollmentScopeOverrides.clear();
   relationalQuestionColumnSupport.checked = false;
   relationalQuestionColumnSupport.questionImageUrl = false;
@@ -7788,7 +7792,10 @@ function scheduleRelationalWrite(storageKey, value, options = {}) {
   }
   const forceWrite = Boolean(options?.force);
   if (relationalSync.blockedStorageKeys.has(storageKey)) {
-    return false;
+    if (!forceWrite) {
+      return false;
+    }
+    relationalSync.blockedStorageKeys.delete(storageKey);
   }
   const currentUser = getCurrentUser();
   const profileId = String(getUserProfileId(currentUser) || "").trim();
@@ -8245,7 +8252,7 @@ async function updateRelationalProfileApproval(profileIds, approved) {
       .from("profiles")
       .update({ approved: targetApproved })
       .in("id", targetIds)
-      .select("id,approved"),
+      .select("id,approved,updated_at"),
     SUPABASE_QUERY_TIMEOUT_MS,
     "Profile approval update timed out.",
   );
@@ -8261,6 +8268,12 @@ async function updateRelationalProfileApproval(profileIds, approved) {
   }
 
   const appliedById = new Map((updatedRows || []).map((row) => [row.id, Boolean(row.approved)]));
+  const updatedAtById = {};
+  (updatedRows || []).forEach((row) => {
+    if (row?.id && row?.updated_at) {
+      updatedAtById[row.id] = row.updated_at;
+    }
+  });
   const unresolvedIds = targetIds.filter((id) => appliedById.get(id) !== targetApproved);
   if (unresolvedIds.length) {
     const { data: verifyRows, error: verifyError } = await runWithTimeoutResult(
@@ -8299,7 +8312,7 @@ async function updateRelationalProfileApproval(profileIds, approved) {
     };
   }
 
-  return { ok: true, updatedIds, skippedIds, missingIds, failedIds: [...unresolvedSet] };
+  return { ok: true, updatedIds, skippedIds, missingIds, failedIds: [...unresolvedSet], updatedAtById };
 }
 
 async function syncUsersBackupState(usersPayload) {
@@ -9074,10 +9087,40 @@ async function fetchEnrollmentCourseMapForUsers(userIds) {
   }
 }
 
-async function hydrateRelationalProfiles(currentUser) {
+async function hydrateRelationalProfiles(currentUser, options = {}) {
   const client = getRelationalClient();
   if (!client || !relationalSync.enabled) {
     return;
+  }
+  // Background-poll fast path: one cheap head query (newest updated_at + exact
+  // count) decides whether the full paged profile hydration is needed at all.
+  if (options?.skipIfUnchanged && currentUser.role === "admin" && relationalSync.adminProfilesChangeCursor) {
+    try {
+      const probe = await runWithTimeoutResult(
+        client
+          .from("profiles")
+          .select("updated_at", { count: "exact" })
+          .order("updated_at", { ascending: false })
+          .limit(1),
+        SUPABASE_QUERY_TIMEOUT_MS,
+        "Profile change probe timed out.",
+      );
+      if (!probe.error) {
+        const newestUpdatedAt = String(probe.data?.[0]?.updated_at || "");
+        const totalCount = Number(probe.count);
+        const cursor = relationalSync.adminProfilesChangeCursor;
+        if (
+          newestUpdatedAt
+          && Number.isFinite(totalCount)
+          && cursor.maxUpdatedAt === newestUpdatedAt
+          && cursor.count === totalCount
+        ) {
+          return;
+        }
+      }
+    } catch {
+      // Probe failures fall through to the full hydration.
+    }
   }
 
   // Timestamp taken BEFORE any reads. This hydration snapshots local users and
@@ -9102,6 +9145,13 @@ async function hydrateRelationalProfiles(currentUser) {
       return;
     }
     profileRows = Array.isArray(profilesResult.data) ? profilesResult.data : [];
+    relationalSync.adminProfilesChangeCursor = {
+      maxUpdatedAt: profileRows.reduce(
+        (max, row) => (String(row?.updated_at || "") > max ? String(row.updated_at) : max),
+        "",
+      ),
+      count: profileRows.length,
+    };
   } else {
     const { data: profile, error } = await client
       .from("profiles")
@@ -9170,7 +9220,7 @@ async function hydrateRelationalProfiles(currentUser) {
     if (existing) {
       matchedLocalUserByProfileId.set(String(profile.id || "").trim(), existing);
     }
-    const preferLocalOverDb = shouldPreferRecentLocalUserData(existing);
+    const preferLocalOverDb = shouldPreferRecentLocalUserData(existing, profile.updated_at);
     const dbRole = String(profile.role || "student") === "admin" ? "admin" : "student";
     const localRole = String(existing?.role || "").trim().toLowerCase() === "admin" ? "admin" : "student";
     const role = preferLocalOverDb && existing ? localRole : dbRole;
@@ -9353,6 +9403,7 @@ async function hydrateRelationalProfiles(currentUser) {
         ? true
         : (typeof existing?.profileCompleted === "boolean" ? existing.profileCompleted : false),
       createdAt: existing?.createdAt || profile.created_at || nowISO(),
+      profileUpdatedAt: maxIsoTimestamp(existing?.profileUpdatedAt, profile.updated_at),
       supabaseAuthId: profile.id,
       identityAliases: normalizeUserIdentityAliasList([
         ...getStoredUserIdentityAliases(existing),
@@ -10749,16 +10800,35 @@ function clearPendingEnrollmentScopeOverridesForUsers(users = []) {
   });
 }
 
-function shouldPreferRecentLocalUserData(user = null) {
+function parseIsoTimestampMs(value) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function maxIsoTimestamp(a, b) {
+  return parseIsoTimestampMs(a) >= parseIsoTimestampMs(b) ? (a || b || null) : b;
+}
+
+// Admin mutations stamp profileUpdatedAt on the local user row (see save()); the
+// server row carries profiles.updated_at. Comparing the two per-user replaces the
+// old global 30-second wall clock: a hydration snapshot only wins when the server
+// row is genuinely newer than the last local admin write for that user.
+function shouldPreferRecentLocalUserData(user = null, serverUpdatedAtIso = null) {
+  if (!user) {
+    return false;
+  }
+  if (hasPendingEnrollmentScopeOverride(user)) {
+    return true;
+  }
+  const localStamp = parseIsoTimestampMs(user.profileUpdatedAt);
+  const serverStamp = parseIsoTimestampMs(serverUpdatedAtIso);
+  if (localStamp && serverStamp) {
+    return localStamp > serverStamp;
+  }
+  // Legacy fallback for rows without per-user stamps yet.
   return Boolean(
-    user
-    && (
-      hasPendingEnrollmentScopeOverride(user)
-      || (
-        relationalSync.lastUserLocalWriteAt
-        && (Date.now() - relationalSync.lastUserLocalWriteAt) < 30000
-      )
-    )
+    relationalSync.lastUserLocalWriteAt
+    && (Date.now() - relationalSync.lastUserLocalWriteAt) < 30000
   );
 }
 
@@ -10795,6 +10865,21 @@ function overlayConcurrentAdminUserWrites(nextUsers, hydrationStartedAt) {
       return entry;
     }
     const overlay = { ...entry };
+    const freshName = String(fresh.name || "").trim();
+    if (freshName) {
+      overlay.name = freshName;
+    }
+    const freshEmail = String(fresh.email || "").trim().toLowerCase();
+    if (freshEmail) {
+      overlay.email = freshEmail;
+    }
+    const freshPhone = String(fresh.phone || "").trim();
+    if (freshPhone) {
+      overlay.phone = freshPhone;
+    }
+    if (fresh.profileUpdatedAt) {
+      overlay.profileUpdatedAt = maxIsoTimestamp(entry.profileUpdatedAt, fresh.profileUpdatedAt);
+    }
     if (typeof fresh.isApproved === "boolean") {
       overlay.isApproved = fresh.isApproved;
       overlay.approvedAt = fresh.approvedAt ?? null;
@@ -12379,8 +12464,12 @@ async function flushRelationalWrites(options = {}) {
   const syncedStorageKeys = new Set();
 
   try {
-    for (const [storageKey, payload] of entries) {
+    for (const [storageKey, queuedPayload] of entries) {
       const entryMeta = entryMetaMap.get(storageKey) || null;
+      // Users flush always sends the freshest local snapshot: local storage is
+      // written before writes are queued, so the queued snapshot can only be
+      // equal or staler — pushing it could re-send outdated approval/access.
+      const payload = storageKey === STORAGE_KEYS.users ? getUsers() : queuedPayload;
       try {
         await syncRelationalKey(storageKey, payload, entryMeta || {});
         succeededCount += 1;
@@ -12696,27 +12785,50 @@ async function fetchRowsPaged(fetchPage, options = {}) {
   const pageSize = Math.max(1, Number(options?.pageSize) || 1000);
   const timeoutMs = Math.max(1, Number(options?.timeoutMs) || SUPABASE_QUERY_TIMEOUT_MS);
   const timeoutMessage = String(options?.timeoutMessage || "Supabase query timed out.").trim() || "Supabase query timed out.";
+  const concurrency = Math.max(1, Math.min(8, Number(options?.concurrency) || 4));
   const rows = [];
   let from = 0;
 
-  while (true) {
+  const fetchOnePage = async (pageFrom) => {
     const { data, error } = await runWithTimeoutResult(
-      fetchPage(from, from + pageSize - 1),
+      fetchPage(pageFrom, pageFrom + pageSize - 1),
       timeoutMs,
       timeoutMessage,
     );
     if (error) {
-      return { data: null, error };
+      throw error;
     }
-    const batch = Array.isArray(data) ? data : [];
-    if (!batch.length) {
-      break;
+    return Array.isArray(data) ? data : [];
+  };
+
+  try {
+    // First page sequentially: most collections fit in one page, so small
+    // reads stay a single request. Only when the first page is full do we
+    // fetch subsequent pages in parallel waves.
+    const firstBatch = await fetchOnePage(0);
+    rows.push(...firstBatch);
+    if (firstBatch.length < pageSize) {
+      return { data: rows, error: null };
     }
-    rows.push(...batch);
-    if (batch.length < pageSize) {
-      break;
+    from = pageSize;
+    while (true) {
+      const waveOffsets = Array.from({ length: concurrency }, (_, index) => from + index * pageSize);
+      const waveBatches = await Promise.all(waveOffsets.map((offset) => fetchOnePage(offset)));
+      let sawShortPage = false;
+      for (const batch of waveBatches) {
+        rows.push(...batch);
+        if (batch.length < pageSize) {
+          sawShortPage = true;
+          break;
+        }
+      }
+      if (sawShortPage) {
+        break;
+      }
+      from += concurrency * pageSize;
     }
-    from += pageSize;
+  } catch (error) {
+    return { data: null, error };
   }
 
   return { data: rows, error: null };
@@ -17016,7 +17128,7 @@ function ensureAdminDashboardPolling() {
     if (state.adminDataRefreshing) {
       return;
     }
-    refreshAdminDataSnapshot(currentUser, { force: true, surfaceErrors: false, includeHeavyData: false })
+    refreshAdminDataSnapshot(currentUser, { force: true, surfaceErrors: false, includeHeavyData: false, skipUnchangedProfiles: true })
       .then((ok) => {
         if (!ok) {
           return;
@@ -18223,6 +18335,17 @@ function ensureContentRealtimeSubscription(user = null) {
       scheduleContentRealtimeHydration();
     },
   );
+  // content_versions is a one-row table bumped by DB triggers on any
+  // questions/question_choices statement. Unlike per-row question events, this
+  // signal is visible to every authenticated user, so it catches bulk imports
+  // and choice-only edits that row-level events can miss.
+  channel.on(
+    "postgres_changes",
+    { event: "UPDATE", schema: "public", table: "content_versions" },
+    () => {
+      scheduleContentRealtimeHydration();
+    },
+  );
   // Subscribe to topic changes so newly-added topics appear without any poll delay.
   channel.on(
     "postgres_changes",
@@ -19174,6 +19297,40 @@ function shouldForceStudentQuestionCatalogRefresh(user = null) {
   return String(load(STORAGE_KEYS.questionCatalogRefreshVersion, "") || "").trim() !== REQUIRED_QUESTION_CATALOG_REFRESH_VERSION;
 }
 
+// Server-side question content version (bumped by DB triggers on any
+// questions/question_choices change). Lets students detect new content
+// automatically instead of relying on the legacy hardcoded
+// REQUIRED_QUESTION_CATALOG_REFRESH_VERSION constant or manual admin signals.
+async function fetchRemoteQuestionContentVersion() {
+  const client = getRelationalClient();
+  if (!client || !relationalSync.enabled) {
+    return null;
+  }
+  try {
+    const { data, error } = await runWithTimeoutResult(
+      client
+        .from("content_versions")
+        .select("version")
+        .eq("scope", "questions")
+        .maybeSingle(),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Question content version check timed out.",
+    );
+    if (error || !data) {
+      return null;
+    }
+    const version = Number(data.version);
+    return Number.isFinite(version) && version > 0 ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalQuestionContentVersion() {
+  const version = Number(load(STORAGE_KEYS.questionContentVersion, 0) || 0);
+  return Number.isFinite(version) && version > 0 ? version : 0;
+}
+
 function markStudentQuestionCatalogRefreshComplete() {
   if (!REQUIRED_QUESTION_CATALOG_REFRESH_VERSION) {
     return false;
@@ -19383,8 +19540,15 @@ async function refreshStudentDataSnapshot(user, options = {}) {
       }
       flushPendingSyncInBackground();
     }
+    // Cheap one-row read: if the server-side question content version moved
+    // past what this client last hydrated, force a full question re-sync even
+    // when nothing else would trigger one (fixes "stuck on stale bank").
+    const remoteQuestionContentVersion = await fetchRemoteQuestionContentVersion();
+    const questionContentVersionMoved = remoteQuestionContentVersion !== null
+      && remoteQuestionContentVersion > getLocalQuestionContentVersion();
     const now = Date.now();
     const needsFullSync = effectiveForce
+      || questionContentVersionMoved
       || !state.studentDataLastFullSyncAt
       || (now - state.studentDataLastFullSyncAt) > STUDENT_FULL_DATA_REFRESH_MS;
     const hasPendingUserWrites = isRelationalStorageKeyBusy(STORAGE_KEYS.users);
@@ -19405,6 +19569,9 @@ async function refreshStudentDataSnapshot(user, options = {}) {
       const hasFreshQuestions = hasPendingQuestionWrites || questionsHydrated !== false;
       completedFullSync = hasFreshCoursesAndTopics && hasFreshProfiles && hasFreshQuestions && !hasPendingUserWrites && !hasPendingQuestionWrites;
       completedQuestionCatalogRefresh = forceQuestionCatalogRefresh && hasFreshQuestions && !hasPendingQuestionWrites;
+      if (remoteQuestionContentVersion !== null && hasFreshQuestions && !hasPendingQuestionWrites) {
+        saveLocalOnly(STORAGE_KEYS.questionContentVersion, remoteQuestionContentVersion);
+      }
       if (requireFreshContent && (!hasFreshCoursesAndTopics || !hasFreshProfiles || !hasFreshQuestions)) {
         return false;
       }
@@ -19577,7 +19744,9 @@ async function refreshAdminDataSnapshot(user, options = {}) {
       hydrateTasks.push(hydrateRelationalCoursesAndTopics());
     }
     if (!hasPendingUserWrites) {
-      hydrateTasks.push(hydrateRelationalProfiles(user));
+      hydrateTasks.push(hydrateRelationalProfiles(user, {
+        skipIfUnchanged: options?.skipUnchangedProfiles === true,
+      }));
     }
     hydrateTasks.push(refreshAdminQuestionCountSnapshot({ force }).catch(() => false));
     hydrateTasks.push(hydrateRelationalNotifications(user));
@@ -20067,6 +20236,12 @@ function render() {
       case "landing":
         appEl.innerHTML = renderLanding();
         wireLanding();
+        break;
+      case "mcqs":
+        appEl.innerHTML = renderMcqBankPage();
+        break;
+      case "courses-platform":
+        appEl.innerHTML = renderCoursesPlatformPage();
         break;
       case "features":
         appEl.innerHTML = renderFeatures();
@@ -20602,6 +20777,9 @@ function getGsapRouteRevealTargets() {
     ".contact-faq-item",
     ".landing-proof-card",
     ".landing-auth-card",
+    ".lp-product-head",
+    ".lp-points li",
+    ".lp-contact-card",
   ].join(", ");
   const seen = new Set();
   return Array.from(appEl.querySelectorAll(selectors))
@@ -20712,7 +20890,9 @@ function setupGsapMarketingPageMotion(gsap = getGsapMotionApi()) {
   const _vp = window.innerHeight || document.documentElement.clientHeight || 0;
   const _inVp = (el) => el.getBoundingClientRect().top < _vp * 1.1;
   const heroItems = Array.from(marketingPage.querySelectorAll(
-    ".marketing-page-kicker, .marketing-page-title, .marketing-page-lede, .marketing-page-stat"
+    ".marketing-page-kicker, .marketing-page-title, .marketing-page-lede, .marketing-page-stat, "
+    + ".lp-eyebrow, .lp-hero-title, .lp-hero-lede, .lp-hero-actions, .lp-hero-note, "
+    + ".lp-kicker, .lp-product-title, .lp-product-lede"
   )).filter(_inVp);
   if (heroItems.length) {
     gsap.fromTo(heroItems,
@@ -20729,7 +20909,8 @@ function setupGsapMarketingPageMotion(gsap = getGsapMotionApi()) {
   }
 
   const featureCards = Array.from(marketingPage.querySelectorAll(
-    ".feature-showcase-card, .pricing-plan-card, .pricing-step-card, .contact-method-card, .landing-proof-card"
+    ".feature-showcase-card, .pricing-plan-card, .pricing-step-card, .contact-method-card, .landing-proof-card, "
+    + ".lp-points li, .lp-contact-card"
   )).filter(_inVp);
   if (featureCards.length) {
     gsap.fromTo(featureCards,
@@ -21060,207 +21241,142 @@ function applyStaggerIndices() {
   });
 }
 
+function landingMcqBankSectionHtml() {
+  return `
+    <div class="lp-product">
+      <div class="lp-product-head">
+        <p class="lp-kicker">MCQ Bank</p>
+        <h2 class="lp-product-title">A medical MCQ bank made for real exam practice.</h2>
+        <p class="lp-product-lede">Build focused blocks by course and topic, answer in tutor or timed mode, and read a clear explanation after every question.</p>
+      </div>
+      <ul class="lp-points">
+        <li>
+          <h3>Course-aligned questions</h3>
+          <p>Every question maps to a course and topic, so you practise exactly what you're studying.</p>
+        </li>
+        <li>
+          <h3>Exam-style sessions</h3>
+          <p>Tutor mode to learn, timed mode for pressure. Flag, eliminate, and review as you go.</p>
+        </li>
+        <li>
+          <h3>Progress you can see</h3>
+          <p>Track accuracy and timing by topic to find the weak areas worth another pass.</p>
+        </li>
+      </ul>
+      <div class="lp-product-actions">
+        <button class="btn" data-nav="signup">Create account</button>
+      </div>
+    </div>
+  `;
+}
+
+function landingCoursesSectionHtml() {
+  return `
+    <div class="lp-product">
+      <div class="lp-product-head">
+        <p class="lp-kicker">Courses</p>
+        <h2 class="lp-product-title">Secure course video, on any device.</h2>
+        <p class="lp-product-lede">Watch lectures through a protected streaming pipeline, with access controlled by your course admin.</p>
+      </div>
+      <ul class="lp-points">
+        <li>
+          <h3>Protected streaming</h3>
+          <p>Lectures play inside the platform through a token-protected pipeline, tied to each enrolled student.</p>
+        </li>
+        <li>
+          <h3>Study anywhere</h3>
+          <p>Pick up courses on desktop or mobile with your progress saved automatically.</p>
+        </li>
+        <li>
+          <h3>Admin-approved access</h3>
+          <p>New students join once a course admin approves them — no open sign-ups.</p>
+        </li>
+      </ul>
+      <div class="lp-product-actions">
+        <button class="btn" data-nav="contact">Contact us about courses</button>
+      </div>
+    </div>
+  `;
+}
+
+function landingContactBodyHtml() {
+  return `
+    <div class="lp-product-head">
+      <p class="lp-kicker">Contact</p>
+      <h2 class="lp-product-title">Get in touch.</h2>
+      <p class="lp-product-lede">To bring your courses to MedBank, or for access and pricing details, reach the platform owner directly.</p>
+    </div>
+    <div class="lp-contact-card">
+      <p class="lp-contact-name">Youssef Ayoub <span>· MedBank owner</span></p>
+      <div class="lp-contact-lines">
+        <a class="lp-contact-line" href="tel:+201004532728">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <span>+20 100 453 2728</span>
+        </a>
+        <a class="lp-contact-line" href="mailto:youssefayoub2525@gmail.com">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+          <span>youssefayoub2525@gmail.com</span>
+        </a>
+      </div>
+      <p class="lp-contact-hint">Message or call for contact and pricing details.</p>
+    </div>
+  `;
+}
+
+function landingContactSectionHtml() {
+  return `
+    <div class="lp-contact">
+      ${landingContactBodyHtml()}
+    </div>
+  `;
+}
+
 function renderLanding() {
   return `
-    <div class="panel marketing-page landing-page landing-page-scroll">
+    <div class="panel marketing-page landing-page landing-page-scroll landing-simple">
 
-      <section id="landing-home" class="landing-scroll-section">
-        <div class="mb-hero">
-          <div class="mb-hero-copy">
-            <p class="mb-eyebrow"><span class="mb-eyebrow-tick" aria-hidden="true"></span>MedBank — secure medical learning</p>
-            <h1 class="mb-hero-title">Protected course video — plus <em>the MCQ bank no other platform has.</em></h1>
-            <p class="mb-hero-lede">Stream lectures securely, study on any device, and practise course-aligned MCQs with instant explanations. One platform, built for medical students and doctors.</p>
-            <div class="mb-hero-actions">
-              <button class="btn" data-nav="signup">Create account</button>
-              <button class="btn ghost" data-nav="login">Log in</button>
-            </div>
-            <p class="mb-hero-note">New students sign up and get in once a course admin approves them.</p>
-            <dl class="mb-datastrip" aria-label="MedBank at a glance">
-              <div><dt>Questions</dt><dd>3,024</dd></div>
-              <div><dt>Course video</dt><dd>Protected</dd></div>
-              <div><dt>Study</dt><dd>Any device</dd></div>
-            </dl>
+      <section id="landing-home" class="landing-scroll-section lp-home">
+        <div class="lp-hero">
+          <p class="lp-eyebrow">MedBank</p>
+          <h1 class="lp-hero-title">Protected courses <span class="lp-plus" aria-hidden="true">+</span> a medical MCQ bank.</h1>
+          <p class="lp-hero-lede">Stream lectures securely and practise course-aligned MCQs with instant explanations. One simple platform.</p>
+          <div class="lp-hero-actions">
+            <button class="btn" data-nav="login">Log in</button>
+            <button class="btn ghost" data-nav="signup">Sign up</button>
           </div>
-          <aside class="mcq-specimen" aria-label="Example MedBank question">
-            <header class="mcq-specimen-head">
-              <span class="mcq-tag">Q · Cardiology</span>
-              <span class="mcq-tag is-muted">1 / 3,024</span>
-            </header>
-            <p class="mcq-stem">A 58-year-old man has central chest pain and ST-elevation in leads II, III and aVF. Which coronary artery is most likely occluded?</p>
-            <ol class="mcq-options">
-              <li class="mcq-option"><span class="mcq-key">A</span><span class="mcq-label">Left anterior descending</span></li>
-              <li class="mcq-option is-correct"><span class="mcq-key">B</span><span class="mcq-label">Right coronary artery</span><span class="mcq-check" aria-hidden="true"></span></li>
-              <li class="mcq-option"><span class="mcq-key">C</span><span class="mcq-label">Left circumflex</span></li>
-              <li class="mcq-option"><span class="mcq-key">D</span><span class="mcq-label">Left main stem</span></li>
-              <li class="mcq-option"><span class="mcq-key">E</span><span class="mcq-label">Posterior descending</span></li>
-            </ol>
-            <div class="mcq-explain">
-              <span class="mcq-explain-label">Explanation</span>
-              <p>Inferior STEMI (II, III, aVF) maps to the right coronary artery in most patients.</p>
-            </div>
-          </aside>
+          <p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>
         </div>
       </section>
 
-      <section id="landing-features" class="landing-scroll-section">
-        <div class="marketing-page-hero">
-          <p class="kicker marketing-page-kicker">Features</p>
-          <h2 class="marketing-page-title">A complete medical learning platform — protected courses and the MCQ bank built in.</h2>
-          <p class="marketing-page-lede">MedBank brings secure course streaming, cross-device study, exam-style practice, and clean admin workflows together in one place. The integrated MCQ bank is what no other course platform offers.</p>
-          <div class="marketing-page-stats" aria-label="MedBank feature highlights">
-            <span class="marketing-page-stat"><b>Protected</b> course video</span>
-            <span class="marketing-page-stat"><b>Integrated</b> MCQ bank</span>
-            <span class="marketing-page-stat"><b>Clear</b> progress analytics</span>
-          </div>
-        </div>
-        <div class="feature-showcase-grid">
-          <article class="feature-showcase-card is-emphasis">
-            <span class="feature-code" aria-hidden="true">MCQ</span>
-            <h3>The integrated MCQ bank — only on MedBank</h3>
-            <p>Practice course-aligned MCQs with instant explanations right alongside your lectures. No other medical course platform builds the question bank into the courses themselves.</p>
-            <div class="feature-pill-row">
-              <span class="feature-pill">Course-aligned</span>
-              <span class="feature-pill">Instant explanations</span>
-              <span class="feature-pill">Unique to MedBank</span>
-            </div>
-          </article>
-          <article class="feature-showcase-card is-emphasis">
-            <span class="feature-code" aria-hidden="true">Video</span>
-            <h3>Stream course videos securely</h3>
-            <p>Lectures play through a token-protected streaming pipeline so content stays inside the platform. Access is tied to each enrolled student and controlled by the course admin.</p>
-            <div class="feature-pill-row">
-              <span class="feature-pill">Protected streaming</span>
-              <span class="feature-pill">Access-controlled</span>
-              <span class="feature-pill">Cross-device</span>
-            </div>
-          </article>
-          <article class="feature-showcase-card">
-            <span class="feature-code" aria-hidden="true">Blocks</span>
-            <h3>Build the exact practice block you need</h3>
-            <p>Choose course, topic, source, mode, and question count so every session matches the chapter, lecture, or weak area you are trying to fix — in tutor or timed exam mode.</p>
-          </article>
-          <article class="feature-showcase-card">
-            <span class="feature-code" aria-hidden="true">Review</span>
-            <h3>Review while the memory is fresh</h3>
-            <p>Each answer opens the explanation, references, and feedback context immediately, helping students understand the reasoning instead of memorizing a letter.</p>
-          </article>
-          <article class="feature-showcase-card">
-            <span class="feature-code" aria-hidden="true">Devices</span>
-            <h3>Study on any device</h3>
-            <p>Pick up courses and question blocks on desktop or mobile with autosaved progress, so learning continues wherever the student is — under the access their admin approved.</p>
-          </article>
-          <article class="feature-showcase-card">
-            <span class="feature-code" aria-hidden="true">Admin</span>
-            <h3>Analytics and admin control</h3>
-            <p>Track accuracy, timing, and topic trends, while editors manage users, courses, questions, enrollment, and access without scattering the work across spreadsheets.</p>
-          </article>
-        </div>
+      <section id="landing-mcqs" class="landing-scroll-section lp-section">
+        ${landingMcqBankSectionHtml()}
       </section>
 
-      <section id="landing-pricing" class="landing-scroll-section">
-        <div class="marketing-page-hero">
-          <p class="kicker marketing-page-kicker">Pricing</p>
-          <h2 class="marketing-page-title">Pay only for active students.</h2>
-          <p class="marketing-page-lede">No fixed monthly subscription and no revenue sharing. You only pay for the students who are actually enrolled and active each month — with unlimited courses, storage, and features.</p>
-          <div class="marketing-page-stats" aria-label="MedBank pricing highlights">
-            <span class="marketing-page-stat"><b>No</b> fixed subscription</span>
-            <span class="marketing-page-stat"><b>No</b> revenue sharing</span>
-            <span class="marketing-page-stat"><b>14-day</b> money-back</span>
-          </div>
-        </div>
-        <div class="pricing-plan-grid pricing-tier-grid">
-          <article class="pricing-plan-card">
-            <p class="pricing-plan-label">1–100 students</p>
-            <h3>Starter</h3>
-            <p class="pricing-price">15 <span>EGP / active student / mo</span></p>
-            <p>For new instructors and small cohorts launching their first protected courses.</p>
-            <button class="btn ghost" data-nav="signup">Get started</button>
-          </article>
-          <article class="pricing-plan-card is-featured">
-            <p class="pricing-plan-label">101–500 students</p>
-            <h3>Growth</h3>
-            <p class="pricing-price">5 <span>EGP / active student / mo</span></p>
-            <p>For growing courses and active student groups scaling their content and exams.</p>
-            <button class="btn" data-nav="signup">Get started</button>
-          </article>
-          <article class="pricing-plan-card">
-            <p class="pricing-plan-label">501–1,000 students</p>
-            <h3>Scale</h3>
-            <p class="pricing-price">4 <span>EGP / active student / mo</span></p>
-            <p>For large courses scaling across multiple departments and faculty teams.</p>
-            <button class="btn ghost" data-scroll-to="landing-contact">Talk to us</button>
-          </article>
-          <article class="pricing-plan-card">
-            <p class="pricing-plan-label">1,001+ students</p>
-            <h3>Institution</h3>
-            <p class="pricing-price">3 <span>EGP / active student / mo</span></p>
-            <p>For faculty-wide rollouts — storage is included free at this scale.</p>
-            <button class="btn ghost" data-scroll-to="landing-contact">Talk to us</button>
-          </article>
-        </div>
-        <ul class="pricing-notes" aria-label="Billing details">
-          <li><span class="pricing-note-key">Storage</span><p>80 EGP / GB, one-time. 5% off per 5 GB, up to 50%. Free for 1,000+ active students.</p></li>
-          <li><span class="pricing-note-key">Wallet</span><p>Top up and pay as students activate. Minimum activation balance 1,000 EGP.</p></li>
-          <li><span class="pricing-note-key">Money-back</span><p>14-day refund from your subscription date. No revenue sharing, ever.</p></li>
-        </ul>
+      <section id="landing-courses-platform" class="landing-scroll-section lp-section">
+        ${landingCoursesSectionHtml()}
       </section>
 
-      <section id="landing-about" class="landing-scroll-section">
-        <div class="marketing-page-hero about-hero">
-          <p class="kicker marketing-page-kicker">About MedBank</p>
-          <h2 class="marketing-page-title">MCQ practice and course study, in one focused place.</h2>
-          <p class="marketing-page-lede">MedBank is built for students who want to practice course-aligned MCQs, review every explanation, and track which topics still need work — without a cluttered dashboard getting in the way.</p>
-          <div class="marketing-page-stats" aria-label="MedBank product principles">
-            <span class="marketing-page-stat"><b>Course-aligned</b> MCQ banks</span>
-            <span class="marketing-page-stat"><b>Focused</b> exam practice</span>
-            <span class="marketing-page-stat"><b>Clear</b> progress tracking</span>
-          </div>
-        </div>
-        <div class="about-visual-grid about-visual-grid-three" aria-label="MedBank visual study flow">
-          <figure class="about-visual-card">
-            <img src="Assets/branding/about-study-workspace.svg" alt="Calm MedBank study workspace with MCQ cards and notes" loading="lazy" />
-            <figcaption>One quiet place to study.</figcaption>
-          </figure>
-          <figure class="about-visual-card">
-            <img src="Assets/branding/about-review-flow.svg" alt="Question to explanation to next study step flow" loading="lazy" />
-            <figcaption>Reasoning first, memorization second.</figcaption>
-          </figure>
-          <figure class="about-visual-card">
-            <img src="Assets/branding/about-analytics.svg" alt="Topic progress analytics and accuracy chart" loading="lazy" />
-            <figcaption>Weak topics become visible.</figcaption>
-          </figure>
-        </div>
-        <div class="about-story-layout">
-          <div class="about-story-heading">
-            <p class="kicker">Our start</p>
-            <h3>Built for students studying MCQ-based courses.</h3>
-            <p>MedBank started from a simple problem: students needed one reliable place to practice course-specific MCQs, revisit wrong answers, and understand the reasoning — without juggling scattered files or unclear tools.</p>
-          </div>
-          <div class="about-story-timeline" aria-label="MedBank story timeline">
-            <span class="about-story-rail" aria-hidden="true"></span>
-            <article class="about-story-node"><span class="about-story-date">2026 · Start</span><h4>A focused MCQ bank</h4></article>
-            <article class="about-story-node"><span class="about-story-date">2026 · Build</span><h4>Exam-style sessions</h4></article>
-            <article class="about-story-node"><span class="about-story-date">Today</span><h4>A complete study loop</h4></article>
-            <article class="about-story-node"><span class="about-story-date">Next</span><h4>Smarter learning support</h4></article>
-          </div>
-        </div>
-      </section>
-
-      <section id="landing-contact" class="landing-scroll-section">
-        <div class="marketing-page-hero contact-hero">
-          <p class="kicker marketing-page-kicker">Contact</p>
-          <h2 class="marketing-page-title">Get in touch.</h2>
-          <p class="marketing-page-lede">Questions about access, course content, or product feedback — send a note and we'll respond.</p>
-        </div>
-        <form id="support-form" class="contact-form-card" autocomplete="on">
-          <label>Name <input name="name" autocomplete="name" required /></label>
-          <label>Email <input type="email" name="email" autocomplete="email" required /></label>
-          <label>Message <textarea name="message" autocomplete="off" required></textarea></label>
-          <button class="btn" type="submit">Send message</button>
-        </form>
+      <section id="landing-contact" class="landing-scroll-section lp-section">
+        ${landingContactSectionHtml()}
       </section>
 
     </div>
+  `;
+}
+
+function renderMcqBankPage() {
+  return `
+    <section class="panel marketing-page landing-page landing-simple lp-standalone">
+      ${landingMcqBankSectionHtml()}
+    </section>
+  `;
+}
+
+function renderCoursesPlatformPage() {
+  return `
+    <section class="panel marketing-page landing-page landing-simple lp-standalone">
+      ${landingCoursesSectionHtml()}
+    </section>
   `;
 }
 
@@ -21455,18 +21571,10 @@ function renderAbout() {
 
 function renderContact() {
   return `
-    <section class="panel marketing-page contact-page">
-      <div class="marketing-page-hero contact-hero">
-        <p class="kicker marketing-page-kicker">Contact</p>
-        <h2 class="marketing-page-title">Get in touch.</h2>
-        <p class="marketing-page-lede">Questions about access, course content, or product feedback — send a note and we'll respond.</p>
+    <section class="panel marketing-page landing-page landing-simple lp-standalone">
+      <div class="lp-contact">
+        ${landingContactBodyHtml()}
       </div>
-      <form id="support-form" class="contact-form-card" autocomplete="on">
-        <label>Name <input name="name" autocomplete="name" required /></label>
-        <label>Email <input type="email" name="email" autocomplete="email" required /></label>
-        <label>Message <textarea name="message" autocomplete="off" required></textarea></label>
-        <button class="btn" type="submit">Send message</button>
-      </form>
     </section>
   `;
 }
@@ -25589,7 +25697,7 @@ function renderSession() {
             aria-pressed="${struck ? "true" : "false"}"
             aria-label="${struck ? "Restore" : "Eliminate"} choice ${choice.id}"
             title="${struck ? "Restore this option" : "Eliminate this option"}"
-          ><span aria-hidden="true">S</span></button>
+          ><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg></button>
         </div>
       `;
     })
@@ -32988,6 +33096,10 @@ function wireAdmin() {
         users[idx].approvedAt = nextApproved ? nowISO() : null;
         users[idx].approvedBy = nextApproved ? current?.email || "admin" : null;
         users[idx].authAccessKnownActive = false;
+        if (dbResult?.updatedAtById?.[targetProfileId]) {
+          // Server-clock stamp from the write itself — skew-free merge key.
+          users[idx].profileUpdatedAt = maxIsoTimestamp(users[idx].profileUpdatedAt, dbResult.updatedAtById[targetProfileId]);
+        }
         save(STORAGE_KEYS.users, users, {
           userSyncScope: USER_RELATIONAL_SYNC_SCOPE_ADMIN,
           profileSyncIds: isUuidValue(targetProfileId) ? [targetProfileId] : [],
@@ -42185,9 +42297,30 @@ function load(key, fallback) {
   }
 }
 
+function stampAdminProfileWriteTimestamps(users, profileSyncIds) {
+  const ids = new Set(
+    (Array.isArray(profileSyncIds) ? profileSyncIds : [])
+      .map((id) => String(id || "").trim())
+      .filter((id) => isUuidValue(id)),
+  );
+  if (!ids.size || !Array.isArray(users)) {
+    return;
+  }
+  const stamp = nowISO();
+  users.forEach((user) => {
+    const profileId = String(getUserProfileId(user) || "").trim();
+    if (ids.has(profileId)) {
+      user.profileUpdatedAt = maxIsoTimestamp(user.profileUpdatedAt, stamp);
+    }
+  });
+}
+
 function save(key, value, options = {}) {
   if (key === STORAGE_KEYS.users) {
     syncPendingEnrollmentScopeOverrides(load(STORAGE_KEYS.users, []), value);
+    if (normalizeRelationalUserSyncScope(options?.userSyncScope) === USER_RELATIONAL_SYNC_SCOPE_ADMIN) {
+      stampAdminProfileWriteTimestamps(value, options?.profileSyncIds);
+    }
   }
   writeStorageKey(key, value);
   invalidateAnalyticsCacheForStorageKey(key);

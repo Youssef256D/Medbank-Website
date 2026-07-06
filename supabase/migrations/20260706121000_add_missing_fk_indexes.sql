@@ -1,0 +1,21 @@
+-- Covering indexes for advisor-flagged unindexed foreign keys (performance
+-- linter 0001). Pure additive; no behavior change.
+create index if not exists idx_admin_agent_approval_requests_agent_id on public.admin_agent_approval_requests (agent_id);
+create index if not exists idx_admin_agent_approval_requests_execution_log_id on public.admin_agent_approval_requests (execution_log_id);
+create index if not exists idx_admin_agent_approval_requests_reviewed_by on public.admin_agent_approval_requests (reviewed_by);
+create index if not exists idx_admin_agent_permissions_created_by on public.admin_agent_permissions (created_by);
+create index if not exists idx_admin_agents_created_by on public.admin_agents (created_by);
+create index if not exists idx_app_feature_flags_updated_by on public.app_feature_flags (updated_by);
+create index if not exists idx_notifications_created_by on public.notifications (created_by);
+create index if not exists idx_platform_course_announcements_created_by on public.platform_course_announcements (created_by);
+create index if not exists idx_platform_course_enrollments_assigned_by on public.platform_course_enrollments (assigned_by);
+create index if not exists idx_platform_course_lessons_module_id on public.platform_course_lessons (module_id);
+create index if not exists idx_platform_course_resources_course_id on public.platform_course_resources (course_id);
+create index if not exists idx_platform_course_resources_module_id on public.platform_course_resources (module_id);
+create index if not exists idx_platform_course_suggestions_created_by on public.platform_course_suggestions (created_by);
+create index if not exists idx_platform_courses_created_by on public.platform_courses (created_by);
+create index if not exists idx_platform_lesson_progress_course_id on public.platform_lesson_progress (course_id);
+create index if not exists idx_platform_lesson_progress_lesson_id on public.platform_lesson_progress (lesson_id);
+create index if not exists idx_test_history_entries_course_id on public.test_history_entries (course_id);
+create index if not exists idx_user_activity_sessions_user_id on public.user_activity_sessions (user_id);
+create index if not exists idx_user_course_enrollments_assigned_by on public.user_course_enrollments (assigned_by);

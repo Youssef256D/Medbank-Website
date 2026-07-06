@@ -101,28 +101,42 @@ async function applyAuthAccessUpdatesInParallel(
       const currentIndex = nextIndex;
       nextIndex += 1;
       const targetAuthId = targetAuthIds[currentIndex];
-      try {
-        const { error: updateError } = await adminClient.auth.admin.updateUserById(targetAuthId, {
-          ban_duration: approved ? "none" : ACCOUNT_DEACTIVATION_BAN_DURATION,
-        });
-        if (!updateError) {
-          updatedIds.push(targetAuthId);
-          continue;
+      // One retry with a short backoff: a transient Auth API failure must not
+      // leave profiles.approved and the auth ban state inconsistent.
+      let resolved = false;
+      for (let attempt = 0; attempt < 2 && !resolved; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 400));
         }
-        const details = String(updateError.message || "").trim();
-        if (/not found|user not found/i.test(details)) {
-          notFoundIds.push(targetAuthId);
-          continue;
-        }
-        failedIds.push(targetAuthId);
-        if (!firstFailureMessage) {
-          firstFailureMessage = details || "Supabase admin access update failed.";
-        }
-      } catch (error) {
-        failedIds.push(targetAuthId);
-        if (!firstFailureMessage) {
-          firstFailureMessage = String(error instanceof Error ? error.message : error || "").trim()
-            || "Unexpected error while updating user access.";
+        try {
+          const { error: updateError } = await adminClient.auth.admin.updateUserById(targetAuthId, {
+            ban_duration: approved ? "none" : ACCOUNT_DEACTIVATION_BAN_DURATION,
+          });
+          if (!updateError) {
+            updatedIds.push(targetAuthId);
+            resolved = true;
+            break;
+          }
+          const details = String(updateError.message || "").trim();
+          if (/not found|user not found/i.test(details)) {
+            notFoundIds.push(targetAuthId);
+            resolved = true;
+            break;
+          }
+          if (attempt === 1) {
+            failedIds.push(targetAuthId);
+            if (!firstFailureMessage) {
+              firstFailureMessage = details || "Supabase admin access update failed.";
+            }
+          }
+        } catch (error) {
+          if (attempt === 1) {
+            failedIds.push(targetAuthId);
+            if (!firstFailureMessage) {
+              firstFailureMessage = String(error instanceof Error ? error.message : error || "").trim()
+                || "Unexpected error while updating user access.";
+            }
+          }
         }
       }
     }
@@ -310,6 +324,30 @@ Deno.serve(async (req) => {
   const profileSucceededForAccess = (id: string): boolean => (
     profileUpdatedIdSet.has(id) || (!approved && profileMissingIdSet.has(id))
   );
+  // Consistent-deny: approving a profile whose auth ban could not be lifted
+  // would leave the account "approved" but unable to log in. Revert those
+  // profiles back to unapproved and report them so the admin can retry.
+  const revertedProfileIds: string[] = [];
+  if (approved && authFailedIds.length) {
+    const revertTargets = authFailedIds.filter((id) => profileUpdatedIdSet.has(id));
+    if (revertTargets.length) {
+      const { data: revertedRows, error: revertError } = await adminClient
+        .from("profiles")
+        .update({ approved: false })
+        .in("id", revertTargets)
+        .select("id");
+      if (!revertError) {
+        (Array.isArray(revertedRows) ? revertedRows : []).forEach((row) => {
+          const id = String(row?.id || "").trim();
+          if (isUuid(id)) {
+            revertedProfileIds.push(id);
+            profileUpdatedIdSet.delete(id);
+          }
+        });
+      }
+    }
+  }
+
   const updatedIds = authUpdatedIds.filter((id) => profileSucceededForAccess(id));
   const notFoundIds = authNotFoundIds.filter((id) => profileSucceededForAccess(id));
   const failedIds = [...new Set([
@@ -318,14 +356,17 @@ Deno.serve(async (req) => {
     ...authFailedIds,
   ])];
 
+  const effectiveProfileUpdatedIds = (profileUpdate.updatedIds || []).filter((id) => profileUpdatedIdSet.has(id));
+
   if (!failedIds.length) {
     return jsonResponse(200, {
       ok: true,
       updatedIds,
       notFoundIds,
       failedIds: [],
-      profileUpdatedIds: profileUpdate.updatedIds || [],
+      profileUpdatedIds: effectiveProfileUpdatedIds,
       profileMissingIds: profileUpdate.missingIds || [],
+      revertedProfileIds,
     }, requestOrigin);
   }
 
@@ -336,8 +377,9 @@ Deno.serve(async (req) => {
       updatedIds,
       notFoundIds,
       failedIds,
-      profileUpdatedIds: profileUpdate.updatedIds || [],
+      profileUpdatedIds: effectiveProfileUpdatedIds,
       profileMissingIds: profileUpdate.missingIds || [],
+      revertedProfileIds,
       error: profileUpdate.firstFailureMessage || firstFailureMessage || `${failedIds.length} account(s) could not be updated.`,
     },
     requestOrigin,
