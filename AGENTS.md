@@ -188,6 +188,13 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-06 — Restore MCQ card green
+Visual-only reversal after owner review: restored the light-theme `.exam-question-card` background to the prior soft green-blue (`#c4dde5`) and border (`#b9d3da`) from the older MCQ screen. Selected/correct/wrong answer colors and exam logic were not changed.
+
+1. **Static cache bust bumped.** `index.html` app-version is `2026-07-06.05-local` (preview/local; drop `-local` before production).
+
+**Files touched:** `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-06 — Supabase sync overhaul (approval reverts, stale banks, admin speed, DB hardening)
 Fixed the reported sync problems: approvals reverting to pending, slow admin dashboard sync, and students stuck on stale question banks. Touches `main.js`, `supabase/functions/admin-set-user-access` (deployed v6), and three new hosted migrations.
 

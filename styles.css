@@ -6741,9 +6741,9 @@ th {
 }
 
 .exam-question-card {
-  border: 1px solid rgba(35, 52, 102, 0.1);
+  border: 1px solid #b9d3da;
   border-radius: 16px;
-  background: #ffffff;
+  background: #c4dde5;
   box-shadow: 0 1px 3px rgba(16, 24, 40, 0.05);
   padding: 1.2rem 1.25rem;
 }

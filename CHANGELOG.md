@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-06 — Restore MCQ card green
+- Restored the light-theme MCQ solving card to the previous soft green-blue panel (`#c4dde5` with `#b9d3da` border), matching the older question-screen look the owner preferred. Answer selection/correct/wrong state colors remain unchanged.
+- Bumped `app-version` to `2026-07-06.05-local`.
+
 ### 2026-07-06 — Supabase sync overhaul: approval reverts, stale question banks, admin/DB speed
 - **Approval state is now server-authoritative (fixes "approved user snaps back to pending").** Every admin user mutation stamps a per-user `profileUpdatedAt` on the local row (centrally in `save()` for ADMIN-scoped writes; the approval path additionally stamps the server's own `profiles.updated_at` returned by the update). `hydrateRelationalProfiles()` / `shouldPreferRecentLocalUserData()` now compare that per-user timestamp against the server row's `updated_at` instead of a global 30-second wall clock, so the merge survives reloads, slow hydrations, and multiple tabs. The `overlayConcurrentAdminUserWrites` fallback also covers name/email/phone now.
 - **Stale pending writes can no longer re-push old approval/access data.** The relational flush sends the freshest local users snapshot instead of the queued (possibly stale) one, and `force`-scheduled writes can bypass/unblock a previously access-denied storage key.
