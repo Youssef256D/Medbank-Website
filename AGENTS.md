@@ -188,6 +188,17 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-16 — Supabase backend bug fixes (4 diagnosed bugs)
+Backend/database only; **no served file changed** (no `app-version` bump). Five hosted migrations, one per bug, each re-verified with SQL and against the security + performance advisors. RLS was not weakened/disabled and the access-control functions (`private.can_current_user_access_*`) were not touched.
+
+1. **BUG 1 — test results permanent.** The 20-day retention silently dropped old results. Unscheduled the daily `pg_cron` job (`17 2 * * *` → `delete_old_test_history_entries(20)`) and dropped trigger `trg_test_history_entries_retention_window` + function `enforce_test_history_retention_window()` (returned NULL for `completed_at` older than 20 days). Pruning function kept but unscheduled. Verified via a rolled-back 400-day-backdated insert that now survives. `test_history_entries` shape/constraints/unique index unchanged. Migration `20260716151050`.
+2. **BUG 2 — phantom test_blocks.** 2489/2647 blocks had no items (historical, non-atomic client write). New **SECURITY INVOKER** RPC `create_test_block_with_items(...)` inserts block+items+state atomically under existing RLS (`user_id=auth.uid()` + `private.can_current_user_access_mcq()`), de-dupes ids, uses 1-based contiguous `position` (matches `test_block_items_position_check`), and upserts on `external_id` for retry-safety. Verified: happy path, dedupe, unauth rejection, atomic rollback on bad FK. Existing phantom rows left as-is (owner decision). Migrations `20260716151251` (add) + `20260716151849` (position fix; also revokes anon EXECUTE that Supabase default privileges re-grant). Frontend adoption in `main.js` is a separate follow-up — the client still does the non-atomic insert; switching it to `client.rpc("create_test_block_with_items", …)` is the remaining step to stop *new* phantoms.
+3. **BUG 3 — junk image URLs.** All non-null `questions.question_image_url` (4) + `explanation_image_url` (234) were pasted CSV text. NULLed non-`^https?://` values and added validated CHECK constraints (`questions_{question,explanation}_image_url_http_ck`). Migration `20260716152031`.
+4. **BUG 4 — admin summary RPC.** Kept `authenticated` EXECUTE on `get_admin_question_count_summary()` (owner-confirmed) — the admin dashboard calls it from the browser as `authenticated` and it self-gates on `profiles.role='admin'`; revoking breaks the dashboard. Revoked PUBLIC+anon (defense-in-depth). The advisor lint for it is accepted by design. Migration `20260716152106`.
+5. **Owner manual step:** enable leaked-password protection in the Supabase Auth dashboard (not settable via SQL/MCP).
+
+**Files touched:** `supabase/migrations/20260716{151050,151251,151849,152031,152106}_*.sql`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-06 — Landing first-paint fallback fix
 Visual-only startup fix: the static `index.html` `#app` fallback still contained the old "Medical MCQ practice platform." hero, which could flash on refresh/first load before `main.js` replaced it with `renderLanding()`. Replaced the fallback with the current simplified landing hero so the first paint and hydrated render match.
 
