@@ -188,6 +188,78 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-10 — MCQ section nav bar
+Navigation/design only; no auth/access/sync/data behavior changed.
+
+1. **`renderMcqSectionTabs(activeRoute)`** (`main.js`, next to
+   `renderCoursePlatformTabs`) renders a `.courses-tabs .mcq-tabs` pill row —
+   Dashboard / Create Test / Analytics — using `data-nav` so the existing
+   body-level nav delegation handles it. Reuses `.courses-tabs` CSS for an exact
+   style match (no new styles needed).
+2. **Inserted** at the top of `renderDashboard()` (after the Back-to-Apps
+   button), `renderCreateTest()`, and `renderAnalytics()` main panels.
+3. **Verified** in preview: bar renders on all three MCQ routes, active pill
+   moves on click. Completes the earlier "MCQ nav bar" TODO.
+4. **Static cache bust bumped.** `index.html` app-version is `2026-07-10.04-local`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-07-10 — Mobile app polish batch (auth, courses, privacy, demo MCQs)
+Mobile/native-focused. No auth/access/sync/data-model behavior changed.
+
+1. **Compact OAuth row.** Login + signup wrap the Google/Apple buttons in
+   `.auth-oauth-row`; new CSS makes them side-by-side, icon-only ≤640px (label
+   in `.auth-oauth-label`, visually hidden on mobile). `styles.css`, `main.js`.
+2. **Mobile Courses default = list.** `state.coursesLayout` initializer returns
+   `list` when `matchMedia("(max-width: 640px)")` matches and no saved choice.
+3. **Native privacy screen app-wide.** `setCoursePrivacyObscured()` eligibility
+   now also true for `isNativeMobileAppShell() && getCurrentUser()`, so the
+   `is-course-privacy-obscured` overlay covers all routes when backgrounded.
+4. **Floating back button.** `.course-back-btn` mobile block: `position:relative;
+   z-index:4; margin-bottom:-40px` so it overlaps the card below.
+5. **Demo MCQs.** `DEMO_MCQ_QUESTIONS` (8 published, course
+   "Introduction to Body Structure (BOS 101)" = Year 1 Sem 1) seeded in the
+   demo-user init path when `isLocalDemoAuthEnabled()` and no local questions.
+   Verified: create-test shows 8 usable questions + 4 topics for the demo student.
+6. **Still TODO (not in this batch):** YouTube-style lesson layout (full-width
+   video on top, then title/description/mark-complete, then course nav) and an
+   MCQ section nav bar mirroring the courses tabs for create-test/analytics/MCQ.
+7. **Static cache bust bumped.** `index.html` app-version is `2026-07-10.03-local`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-07-10 — Native app opens on login (no marketing site)
+Routing-only change for the Capacitor native shell. Web (GitHub Pages) is
+unchanged — it still opens on `landing`. No auth/access/sync/data behavior changed.
+
+1. **New helper `isNativeMobileAppShell()`** (`main.js`, right after
+   `AUTH_ENTRY_ROUTE_SET`). Detects the native shell from window/location only
+   (no `SUPABASE_CONFIG` dependency, since it runs before that const): true for
+   `window.__MEDBANK_MOBILE_APP__`, `window.__SUPABASE_CONFIG.forceMobileAuthRedirect`,
+   `Capacitor.isNativePlatform()`/`cordova`/`ReactNativeWebView`, or a
+   `capacitor:`/`ionic:`/`file:` protocol.
+2. **Initial route.** `resolveInitialRoute()` maps any `PUBLIC_MARKETING_ROUTE_SET`
+   route to `login` and defaults to `login` (instead of `landing`) in the native shell.
+3. **Runtime guard.** `render()` redirects any marketing route to `login`
+   (signed out) or the app (`admin`/`app-launcher`, signed in) when native.
+4. **Verified** in preview by toggling `window.__MEDBANK_MOBILE_APP__`: native →
+   `/landing` no longer renders `.landing-simple`; web (flag off) still shows it.
+5. **Static cache bust bumped.** `index.html` app-version is `2026-07-10.01-local`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-07-07 — Mobile native app shell (Capacitor prep), phase 1
+Design/structure only; no auth, access, sync, or data behavior changed. The app is being wrapped with Capacitor, so the mobile view is moving toward native app-shell patterns. All changes are mobile-scoped (`@media (max-width: 640px)`); tablet/desktop are untouched.
+
+1. **Courses redesign confined to mobile.** The earlier uncommitted Courses changes (flattened `.panel.courses-shell` + `.courses-toolbar-card`, single-row `.courses-stats-row`, and the Cards/List `renderCoursesLayoutToggle`) applied to all sizes; they are now wrapped in mobile media queries. `renderCoursePlatformRowsMarkup` gates the list layout behind `isCoursesMobileViewport()` (`matchMedia("(max-width: 640px)")`) so desktop/tablet always render the card grid; the toggle bar is `display:none` above 640px.
+2. **Bottom tab bar.** Added `<nav id="mobile-tabbar">` in `index.html` (after `</main>`), populated by `syncMobileTabBar()` in `main.js` (called at the end of `syncTopbar()` + its restore-pending early return). Student-only, hidden on public/auth routes and `session`/`review`. Tabs: Apps (`data-nav="app-launcher"`), MCQ Bank (`data-action="open-mcq-bank"`, if `isUserMcqAccessEnabled`), Courses (`data-action="courses-home-tab"`), Profile. Uses the existing body-level click delegation (`main.js` ~L16541/16730) — no new listeners.
+3. **Safe area + clearance.** `index.html` viewport gained `viewport-fit=cover`. CSS: `.mobile-tabbar` uses `env(safe-area-inset-bottom)`; `body.has-mobile-tabbar .app-shell` reserves bottom padding so the fixed bar never covers content (session route keeps its own padding).
+4. **Touch/press.** 44px min-height floor for `.top-nav button`/`.btn`/`.user-menu-trigger` on mobile; tab press-scale + `prefers-reduced-motion` guard. Tab-bar styling is token-based (`--surface`/`--line`/`--brand`/`--muted`) so light/dark/comfort all work.
+5. **Single navigation path (mobile).** With the bottom bar as the one primary path, the top `#private-nav` is hidden via `body.has-mobile-tabbar #private-nav { display:none }` (≤640px only). It was pure duplication: app-launcher tabs mirror the bottom bar, Courses section tabs also render in-page via `renderCoursePlatformTabs` → `.courses-tabs` (`main.js` ~L44284/44837), and MCQ Create/Analytics live in the dashboard `.dash-quick-actions` (`main.js` ~L23603). Admins have no bottom bar, so their top nav is untouched. Also: compact app-bar `env(safe-area-inset-top)` padding, `-webkit-overflow-scrolling`/`overscroll-behavior-y: contain`, tap-highlight removal — all mobile-scoped.
+6. **Static cache bust bumped.** `index.html` app-version is `2026-07-07.24-local` (drop `-local` before production).
+
+**Files touched:** `index.html`, `main.js`, `styles.css`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-06 — Landing first-paint fallback fix
 Visual-only startup fix: the static `index.html` `#app` fallback still contained the old "Medical MCQ practice platform." hero, which could flash on refresh/first load before `main.js` replaced it with `renderLanding()`. Replaced the fallback with the current simplified landing hero so the first paint and hydrated render match.
 

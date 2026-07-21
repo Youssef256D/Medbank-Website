@@ -101,6 +101,38 @@ const PRIVATE_ROUTE_SET = new Set([
 ]);
 const PUBLIC_MARKETING_ROUTE_SET = new Set(["landing", "mcqs", "courses-platform", "features", "pricing", "about", "contact"]);
 const AUTH_ENTRY_ROUTE_SET = new Set(["landing", "features", "pricing", "about", "contact", "login", "signup", "forgot"]);
+// The native mobile app (Capacitor) has no public marketing site — it opens
+// straight to the login page. Detect the native/app shell from window/location
+// signals only (no dependency on SUPABASE_CONFIG, which is defined later).
+function isNativeMobileAppShell() {
+  try {
+    if (window.__MEDBANK_MOBILE_APP__ === true) return true;
+    if (window.__SUPABASE_CONFIG?.forceMobileAuthRedirect === true) return true;
+    if (window.Capacitor?.isNativePlatform?.() || window.cordova || window.ReactNativeWebView) return true;
+    return /^(capacitor|ionic|file):$/i.test(window.location.protocol);
+  } catch (error) {
+    return false;
+  }
+}
+
+// Visual changes for the installed app must use the real Capacitor platform
+// signal. Broader shell heuristics above are intentionally limited to routing.
+function isNativeAppUi() {
+  try {
+    return window.Capacitor?.isNativePlatform?.() === true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function syncNativeAppBodyClass() {
+  if (!document.body) return false;
+  const native = isNativeAppUi();
+  document.body.classList.toggle("native-app", native);
+  return native;
+}
+
+syncNativeAppBodyClass();
 const ADMIN_DATA_PAGES = ["dashboard", "users", "courses", "questions", "bulk-import", "notifications", "site-access", "ai-agents", "activity", "logs"];
 const ADMIN_COURSES_PLATFORM_PAGE = "course-platform";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "enrollments", "suggestions", "announcements", "requests", "availability"]);
@@ -340,6 +372,7 @@ const state = {
   coursesYearFilter: "",
   coursesSemesterFilter: "",
   coursesStatusFilter: "all",
+  coursesLayout: (() => { try { const saved = localStorage.getItem("mcq_courses_layout"); if (saved === "list" || saved === "grid") return saved; /* Mobile app defaults to the list view; desktop keeps the card grid. */ return (window.matchMedia && window.matchMedia("(max-width: 640px)").matches) ? "list" : "grid"; } catch { return "grid"; } })(),
   coursesLoading: false,
   coursesError: "",
   coursesLoadedAt: 0,
@@ -1741,6 +1774,126 @@ const SAMPLE_QUESTIONS = [
   },
 ];
 
+// Working demo questions for local testing of the MCQ screens (create-test,
+// session, review, analytics). These are mapped to a real Year 1 / Semester 1
+// curriculum course so they surface for the seeded demo student without any
+// Supabase content. Course = "Introduction to Body Structure (BOS 101)".
+const DEMO_MCQ_COURSE = "Introduction to Body Structure (BOS 101)";
+const DEMO_MCQ_QUESTIONS = [
+  {
+    id: "demo-bos-1", course: DEMO_MCQ_COURSE, system: "Anatomy", topic: "Anatomical Terminology",
+    difficulty: "Easy", tags: ["planes", "orientation"], author: "Demo", dateAdded: "2026-02-01",
+    stem: "Which anatomical plane divides the body into left and right halves?",
+    choices: [
+      { id: "A", text: "Coronal (frontal) plane" },
+      { id: "B", text: "Transverse (axial) plane" },
+      { id: "C", text: "Midsagittal plane" },
+      { id: "D", text: "Oblique plane" },
+    ],
+    correct: ["C"],
+    explanation: "The midsagittal (median) plane runs vertically through the midline, dividing the body into equal left and right halves.",
+    objective: "Identify the standard anatomical planes.", references: "Gray's Anatomy for Students", status: "published",
+  },
+  {
+    id: "demo-bos-2", course: DEMO_MCQ_COURSE, system: "Anatomy", topic: "Anatomical Terminology",
+    difficulty: "Easy", tags: ["position", "directional"], author: "Demo", dateAdded: "2026-02-01",
+    stem: "In standard anatomical position, the term 'distal' refers to a structure that is:",
+    choices: [
+      { id: "A", text: "Closer to the trunk or point of origin" },
+      { id: "B", text: "Farther from the trunk or point of origin" },
+      { id: "C", text: "Toward the front of the body" },
+      { id: "D", text: "Toward the midline" },
+    ],
+    correct: ["B"],
+    explanation: "Distal means farther from the point of attachment or origin of a limb; proximal is the opposite.",
+    objective: "Apply directional terminology.", references: "Moore Clinically Oriented Anatomy", status: "published",
+  },
+  {
+    id: "demo-bos-3", course: DEMO_MCQ_COURSE, system: "Histology", topic: "Basic Tissues",
+    difficulty: "Easy", tags: ["epithelium"], author: "Demo", dateAdded: "2026-02-02",
+    stem: "Which epithelial type lines the alveoli of the lungs to allow efficient gas exchange?",
+    choices: [
+      { id: "A", text: "Simple squamous epithelium" },
+      { id: "B", text: "Stratified squamous epithelium" },
+      { id: "C", text: "Simple columnar epithelium" },
+      { id: "D", text: "Transitional epithelium" },
+    ],
+    correct: ["A"],
+    explanation: "Simple squamous epithelium is a single thin layer, ideal for diffusion across the alveolar membrane.",
+    objective: "Match epithelial type to function.", references: "Junqueira's Basic Histology", status: "published",
+  },
+  {
+    id: "demo-bos-4", course: DEMO_MCQ_COURSE, system: "Histology", topic: "Basic Tissues",
+    difficulty: "Medium", tags: ["connective tissue"], author: "Demo", dateAdded: "2026-02-02",
+    stem: "The most abundant protein fiber providing tensile strength in connective tissue is:",
+    choices: [
+      { id: "A", text: "Elastin" },
+      { id: "B", text: "Type I collagen" },
+      { id: "C", text: "Reticular fiber (type III collagen)" },
+      { id: "D", text: "Fibrillin" },
+    ],
+    correct: ["B"],
+    explanation: "Type I collagen is the most abundant collagen and provides high tensile strength in skin, bone, and tendon.",
+    objective: "Recall connective tissue fiber types.", references: "Junqueira's Basic Histology", status: "published",
+  },
+  {
+    id: "demo-bos-5", course: DEMO_MCQ_COURSE, system: "Anatomy", topic: "Musculoskeletal Basics",
+    difficulty: "Medium", tags: ["bone", "joints"], author: "Demo", dateAdded: "2026-02-03",
+    stem: "Which of the following is a classic example of a synovial ball-and-socket joint?",
+    choices: [
+      { id: "A", text: "Knee joint" },
+      { id: "B", text: "Elbow joint" },
+      { id: "C", text: "Shoulder (glenohumeral) joint" },
+      { id: "D", text: "Sutures of the skull" },
+    ],
+    correct: ["C"],
+    explanation: "The glenohumeral joint is a ball-and-socket synovial joint allowing movement in multiple axes.",
+    objective: "Classify joints by structure and movement.", references: "Gray's Anatomy for Students", status: "published",
+  },
+  {
+    id: "demo-bos-6", course: DEMO_MCQ_COURSE, system: "Embryology", topic: "Early Development",
+    difficulty: "Medium", tags: ["germ layers"], author: "Demo", dateAdded: "2026-02-03",
+    stem: "The nervous system is primarily derived from which embryonic germ layer?",
+    choices: [
+      { id: "A", text: "Endoderm" },
+      { id: "B", text: "Mesoderm" },
+      { id: "C", text: "Ectoderm" },
+      { id: "D", text: "Trophoblast" },
+    ],
+    correct: ["C"],
+    explanation: "The neuroectoderm, derived from ectoderm, gives rise to the central and peripheral nervous systems.",
+    objective: "Link germ layers to derived tissues.", references: "Langman's Medical Embryology", status: "published",
+  },
+  {
+    id: "demo-bos-7", course: DEMO_MCQ_COURSE, system: "Anatomy", topic: "Musculoskeletal Basics",
+    difficulty: "Hard", tags: ["muscle", "innervation"], author: "Demo", dateAdded: "2026-02-04",
+    stem: "Contraction of skeletal muscle is directly triggered by the release of which ion into the sarcoplasm?",
+    choices: [
+      { id: "A", text: "Sodium" },
+      { id: "B", text: "Potassium" },
+      { id: "C", text: "Calcium" },
+      { id: "D", text: "Chloride" },
+    ],
+    correct: ["C"],
+    explanation: "Calcium released from the sarcoplasmic reticulum binds troponin C, exposing actin binding sites for contraction.",
+    objective: "Describe excitation-contraction coupling.", references: "Guyton & Hall Physiology", status: "published",
+  },
+  {
+    id: "demo-bos-8", course: DEMO_MCQ_COURSE, system: "Histology", topic: "Basic Tissues",
+    difficulty: "Easy", tags: ["nervous tissue"], author: "Demo", dateAdded: "2026-02-04",
+    stem: "Which cell is the principal signal-conducting unit of nervous tissue?",
+    choices: [
+      { id: "A", text: "Astrocyte" },
+      { id: "B", text: "Neuron" },
+      { id: "C", text: "Oligodendrocyte" },
+      { id: "D", text: "Microglia" },
+    ],
+    correct: ["B"],
+    explanation: "Neurons transmit electrical and chemical signals; glial cells support and protect them.",
+    objective: "Identify the functional cell of nervous tissue.", references: "Junqueira's Basic Histology", status: "published",
+  },
+];
+
 function initVersionTracking() {
   const seen = String(load(STORAGE_KEYS.appVersionSeen, "") || "").trim();
   if (!seen) {
@@ -2319,23 +2472,32 @@ function syncRouteHash(route) {
 }
 
 function resolveInitialRoute() {
+  // On the native mobile app there is no public marketing site — any marketing
+  // route (landing/mcqs/features/etc.) resolves to the login page instead.
+  const nativeApp = isNativeMobileAppShell();
+  const normalizeRoute = (route) => {
+    if (nativeApp && PUBLIC_MARKETING_ROUTE_SET.has(route)) {
+      return "login";
+    }
+    return route;
+  };
   const hashRoute = readRouteFromHash();
   if (KNOWN_ROUTES.has(hashRoute)) {
-    return hashRoute;
+    return normalizeRoute(hashRoute);
   }
   const persisted = String(readSessionStorageKey(ROUTE_STATE_ROUTE_KEY) || "").trim().toLowerCase();
   if (KNOWN_ROUTES.has(persisted) && persisted !== "dashboard") {
-    return persisted;
+    return normalizeRoute(persisted);
   }
   const persistedLocal = String(load(ROUTE_STATE_ROUTE_LOCAL_KEY, "") || "").trim().toLowerCase();
   if (KNOWN_ROUTES.has(persistedLocal) && persistedLocal !== "dashboard") {
-    return persistedLocal;
+    return normalizeRoute(persistedLocal);
   }
   const hinted = String(window.__APP_INITIAL_ROUTE__ || "").trim().toLowerCase();
   if (KNOWN_ROUTES.has(hinted)) {
-    return hinted;
+    return normalizeRoute(hinted);
   }
-  return "landing";
+  return nativeApp ? "login" : "landing";
 }
 
 function resolveInitialAdminPage() {
@@ -16175,6 +16337,10 @@ function seedData() {
 
   if (!SUPABASE_CONFIG.enabled && !load(STORAGE_KEYS.questions, null)) {
     save(STORAGE_KEYS.questions, SAMPLE_QUESTIONS);
+  } else if (isLocalDemoAuthEnabled() && !load(STORAGE_KEYS.questions, null)) {
+    // Localhost demo (hosted Supabase build): seed curriculum-matched demo MCQs
+    // so the demo student can exercise create-test / session / review / analytics.
+    save(STORAGE_KEYS.questions, DEMO_MCQ_QUESTIONS);
   }
 
   if (!load(STORAGE_KEYS.sessions, null)) {
@@ -16520,7 +16686,12 @@ function handleProtectedCoursesKeydown(event) {
 }
 
 function setCoursePrivacyObscured(obscured) {
-  document.body.classList.toggle("is-course-privacy-obscured", Boolean(obscured) && isProtectedCoursesRoute());
+  // The privacy screen shows on protected course routes, and — in the native
+  // mobile app — across the whole app while signed in, so the app-switcher
+  // preview never leaks content when the user backgrounds the app.
+  const eligible = isProtectedCoursesRoute()
+    || (isNativeMobileAppShell() && Boolean(getCurrentUser()));
+  document.body.classList.toggle("is-course-privacy-obscured", Boolean(obscured) && eligible);
 }
 
 function syncCourseProtectionUi() {
@@ -16667,6 +16838,18 @@ function bindGlobalEvents() {
       if (state.route !== "courses") {
         navigate("courses");
       } else {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+      return;
+    }
+
+    if (action === "courses-layout") {
+      const requestedLayout = String(actionTarget?.getAttribute("data-layout") || "grid").trim();
+      const nextLayout = requestedLayout === "list" ? "list" : "grid";
+      if (state.coursesLayout !== nextLayout) {
+        state.coursesLayout = nextLayout;
+        try { localStorage.setItem("mcq_courses_layout", nextLayout); } catch {}
         state.skipNextRouteAnimation = true;
         render();
       }
@@ -20093,6 +20276,12 @@ function render() {
     state.route = "login";
   }
 
+  // Native mobile app: the public marketing pages don't exist there — send any
+  // marketing route straight to login (or the app if already signed in).
+  if (isNativeMobileAppShell() && PUBLIC_MARKETING_ROUTE_SET.has(state.route)) {
+    state.route = user ? (user.role === "admin" ? "admin" : "app-launcher") : "login";
+  }
+
   if (shouldShowAppLauncherBeforeMcqBank(user)) {
     state.route = "app-launcher";
   }
@@ -20544,6 +20733,7 @@ function renderTopbarNotificationMenu(user, unreadNotificationCount, unreadNotif
 
 
 function syncTopbar() {
+  const nativeApp = syncNativeAppBodyClass();
   const user = getCurrentUser();
   const authRestorePending = isSupabaseAuthRestorePending(user);
   ensureProfileAccessRealtimeSubscription(user);
@@ -20564,6 +20754,30 @@ function syncTopbar() {
     : 0;
   const unreadNotificationLabel = unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount);
   const canOpenMcqBank = user?.role !== "student" || isUserMcqAccessEnabled(user);
+
+  const brandButton = brandWrapEl?.querySelector(".brand");
+  if (brandButton) {
+    const nativeTitles = {
+      "app-launcher": "MedBank",
+      dashboard: "Practice",
+      "create-test": "Build a Test",
+      courses: state.coursesView === "lesson" ? "Lesson" : state.coursesView === "detail" ? "Course" : "Courses",
+      analytics: "Performance",
+      profile: "Profile",
+      notifications: "Notifications",
+    };
+    brandButton.textContent = nativeApp && user?.role === "student"
+      ? (nativeTitles[state.route] || "MedBank")
+      : "MedBank";
+    if (nativeApp && user?.role === "student") {
+      brandButton.setAttribute("data-nav", "app-launcher");
+    }
+  }
+  if (nativeApp) {
+    document.body.dataset.nativeScreen = String(state.route || "");
+  } else {
+    delete document.body.dataset.nativeScreen;
+  }
 
   topbarEl?.classList.toggle("admin-only-header", isAdminHeader);
   brandWrapEl?.classList.toggle("hidden", false);
@@ -20629,6 +20843,7 @@ function syncTopbar() {
       <span class="subtle">Restoring session...</span>
     `;
     markActiveNav();
+    syncMobileTabBar();
     return;
   }
 
@@ -20678,6 +20893,54 @@ function syncTopbar() {
   }
 
   markActiveNav();
+  syncMobileTabBar();
+}
+
+// Native-style bottom tab bar (mobile only). Reuses the existing body-level
+// [data-nav]/[data-action] click delegation, so no extra wiring is needed.
+function syncMobileTabBar() {
+  const el = document.getElementById("mobile-tabbar");
+  if (!el) return;
+  const nativeApp = isNativeAppUi();
+  const user = getCurrentUser();
+  const isStudent = user?.role === "student";
+  const maintenanceRestricted = isSiteMaintenanceEnabledForUser(user);
+  // Hidden on public/auth routes and during the focused exam session/review.
+  const hiddenRoutes = new Set([
+    "session", "review", "landing", "mcqs", "courses-platform", "contact",
+    "features", "pricing", "about", "login", "signup", "forgot",
+    "reset-password", "complete-profile",
+  ]);
+  const shouldShow = nativeApp && Boolean(isStudent) && !maintenanceRestricted && !hiddenRoutes.has(state.route);
+  el.classList.toggle("hidden", !shouldShow);
+  document.body.classList.toggle("has-mobile-tabbar", shouldShow);
+  if (!shouldShow) { el.innerHTML = ""; return; }
+
+  const canOpenMcqBank = isUserMcqAccessEnabled(user);
+  const canOpenCourses = isUserCoursesAccessEnabled(user) && !shouldBlockStudentCoursesPortal(user);
+  const route = state.route;
+  const mcqActive = ["dashboard", "create-test", "analytics", "qbank"].includes(route);
+  const icon = {
+    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>',
+    mcq: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>',
+    courses: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    performance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20V7"/></svg>',
+    profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg>',
+  };
+  const items = [
+    { label: "Home", attrs: 'data-nav="app-launcher"', active: route === "app-launcher", icon: icon.home },
+    canOpenMcqBank ? { label: "Practice", attrs: 'data-action="open-mcq-bank"', active: mcqActive && route !== "analytics", icon: icon.mcq } : null,
+    canOpenCourses ? { label: "Courses", attrs: 'data-action="courses-home-tab" data-tab="dashboard"', active: route === "courses", icon: icon.courses } : null,
+    canOpenMcqBank ? { label: "Performance", attrs: 'data-nav="analytics"', active: route === "analytics", icon: icon.performance } : null,
+    { label: "Profile", attrs: 'data-nav="profile"', active: route === "profile", icon: icon.profile },
+  ].filter(Boolean);
+
+  el.innerHTML = items.map((item) => `
+    <button type="button" class="mobile-tab ${item.active ? "is-active" : ""}" ${item.attrs} ${item.active ? 'aria-current="page"' : ""} aria-label="${escapeHtml(item.label)}">
+      ${item.icon}
+      <span class="mobile-tab-label">${escapeHtml(item.label)}</span>
+    </button>
+  `).join("");
 }
 
 function markActiveNav() {
@@ -21845,8 +22108,10 @@ function renderAuth(mode) {
               <button class="btn ghost" type="button" data-nav="forgot">Forgot password</button>
             </div>
             <div class="auth-divider"><span>or</span></div>
-            <button class="btn ghost auth-google-btn" id="login-google-btn" type="button">Continue with Google</button>
-            <button class="btn ghost auth-apple-btn" id="login-apple-btn" type="button">Continue with Apple</button>
+            <div class="auth-oauth-row">
+              <button class="btn ghost auth-google-btn" id="login-google-btn" type="button" aria-label="Continue with Google" title="Continue with Google"><span class="auth-oauth-label">Continue with Google</span></button>
+              <button class="btn ghost auth-apple-btn" id="login-apple-btn" type="button" aria-label="Continue with Apple" title="Continue with Apple"><span class="auth-oauth-label">Continue with Apple</span></button>
+            </div>
           </form>
           <div class="auth-inline auth-public-switch">
             <span class="text">Need an account?</span>
@@ -21974,8 +22239,10 @@ function renderAuth(mode) {
           <h3>Create account</h3>
           <p class="subtle">Use Google or sign up with email. Phone examples: 01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode.</p>
           <form id="signup-form" class="auth-form auth-public-form" method="post" autocomplete="on">
-            <button class="btn ghost auth-google-btn" id="signup-google-btn" type="button">Continue with Google</button>
-            <button class="btn ghost auth-apple-btn" id="signup-apple-btn" type="button">Continue with Apple</button>
+            <div class="auth-oauth-row">
+              <button class="btn ghost auth-google-btn" id="signup-google-btn" type="button" aria-label="Continue with Google" title="Continue with Google"><span class="auth-oauth-label">Continue with Google</span></button>
+              <button class="btn ghost auth-apple-btn" id="signup-apple-btn" type="button" aria-label="Continue with Apple" title="Continue with Apple"><span class="auth-oauth-label">Continue with Apple</span></button>
+            </div>
             <div class="auth-divider"><span>or sign up with email</span></div>
             <div class="form-row">
               <label>Full name <input name="name" autocomplete="name" required /></label>
@@ -23511,7 +23778,8 @@ function renderDashboard() {
 
   return `
     <section class="panel">
-      <button class="btn ghost" data-nav="app-launcher" style="margin-bottom: 0.5rem;">← Back to Apps</button>
+      <button class="btn ghost dashboard-back-to-apps" data-nav="app-launcher" style="margin-bottom: 0.5rem;">← Back to Apps</button>
+      ${renderMcqSectionTabs("dashboard")}
       <p class="kicker">Welcome back</p>
       <div class="flex-between">
         <h2 class="title">Dr. ${escapeHtml(user.name)}'s Dashboard</h2>
@@ -24532,6 +24800,7 @@ function renderCreateTest() {
 
   return `
     <section class="panel">
+      ${renderMcqSectionTabs("create-test")}
       <h2 class="title">Create a Test</h2>
       <p class="subtle">Choose course and topics, then generate a test block.</p>
       ${inProgress
@@ -25607,6 +25876,11 @@ function renderSession() {
   const currentCourse = mappedCourse || questionCourse;
   const askAiUrl = resolveAskAiNotebookUrlForQuestion(question);
   const hasAskAiLink = Boolean(askAiUrl);
+  const nativeApp = isNativeAppUi();
+  if (nativeApp && state.nativeSessionNavigatorId !== session.id) {
+    state.nativeSessionNavigatorId = session.id;
+    state.sessionNavCollapsed = true;
+  }
   const navCollapsed = Boolean(state.sessionNavCollapsed);
   const answerAction = isSubmitted && isLastQuestion ? "submit-session" : (isSubmitted ? "next-question" : "submit-answer");
   const answerActionLabel = isSubmitted && isLastQuestion ? "Finish and submit" : (isSubmitted ? "Next" : "Check");
@@ -25707,6 +25981,25 @@ function renderSession() {
     <section class="exam-shell-wrap">
       <div class="${shellClassNames}" style="${shellStyleAttr}">
         <section class="exam-main exam-main-simple">
+          ${nativeApp ? `
+            <header class="native-exam-header">
+              <div class="native-exam-header-row">
+                <button type="button" class="native-exam-icon-btn" data-nav="dashboard" aria-label="Exit to Practice">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <strong>Question ${session.currentIndex + 1} of ${total}</strong>
+                <button type="button" class="native-exam-icon-btn" data-action="toggle-nav-collapse" aria-label="Open question navigator" aria-expanded="${navCollapsed ? "false" : "true"}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                </button>
+              </div>
+              <div class="native-exam-progress-row">
+                <div class="native-exam-progress"><span style="width:${Math.max(4, Math.round(((session.currentIndex + 1) / total) * 100))}%"></span></div>
+                <span class="native-exam-time">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                  ${session.mode === "timed" ? `<b id="countdown">${formatDuration(Math.max(0, Number(session.timeRemainingSec || 0)))}</b>` : `<b id="elapsed-time">${formatElapsed(Math.max(0, Number(session.elapsedSec || 0)))}</b>`}
+                </span>
+              </div>
+            </header>` : ""}
           <div class="exam-content exam-content-moodle ${navCollapsed ? "is-nav-collapsed" : ""}">
             <aside class="exam-question-meta exam-question-meta-moodle">
               <div class="exam-question-meta-primary">
@@ -25763,12 +26056,19 @@ function renderSession() {
                   ${choicesHtml}
                 </div>
 
-                <div class="exam-answer-actions">
-                  <button
-                    class="btn exam-submit-btn"
-                    data-action="${answerAction}"
-                  >${answerActionLabel}</button>
-                </div>
+                ${nativeApp ? `
+                  <div class="native-exam-actions">
+                    <button type="button" class="native-exam-action-secondary" data-action="prev-question" ${session.currentIndex <= 0 ? "disabled" : ""}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>Previous</span>
+                    </button>
+                    <button type="button" class="native-exam-action-secondary ${response.flagged ? "is-active" : ""}" data-action="toggle-flag" aria-pressed="${response.flagged ? "true" : "false"}">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h12l-2 4 2 4H5"/></svg><span>Flag</span>
+                    </button>
+                    <button type="button" class="btn exam-submit-btn" data-action="${answerAction}">${answerActionLabel === "Check" ? "Check Answer" : answerActionLabel}</button>
+                  </div>` : `
+                  <div class="exam-answer-actions">
+                    <button class="btn exam-submit-btn" data-action="${answerAction}">${answerActionLabel}</button>
+                  </div>`}
               </article>
               ${isSubmitted ? renderInlineExplanationPane(question, isCorrect) : ""}
             </section>
@@ -25805,6 +26105,7 @@ function renderSession() {
               <div class="exam-nav-grid">${sideRows}</div>
               <button class="exam-nav-link" data-action="submit-session">Submit all and finish</button>
             </aside>
+            ${nativeApp ? `<button type="button" class="native-exam-sheet-backdrop ${navCollapsed ? "" : "is-open"}" data-action="toggle-nav-collapse" aria-label="Close question navigator"></button>` : ""}
             ${navCollapsed ? `<button
               type="button"
               class="exam-nav-edge-toggle is-visible"
@@ -27345,8 +27646,20 @@ function renderAnalytics() {
 
   return `
     <section class="panel">
+      ${renderMcqSectionTabs("analytics")}
       <h2 class="title">Performance Analytics</h2>
       <p class="subtle">Real insights from your completed tests — what is improving and what to study next.</p>
+      ${isNativeAppUi() ? `
+        <section class="native-performance-hero">
+          <div class="native-performance-ring" style="--native-ring-value:${Math.max(0, Math.min(100, Number(stats.accuracy || 0)))}">
+            <strong>${Math.max(0, Math.round(Number(stats.accuracy || 0)))}%</strong>
+            <span>overall accuracy</span>
+          </div>
+          <div class="native-performance-summary">
+            <article><span>${studentSvgIcon("solved")}</span><div><strong>${Math.max(0, Number(stats.totalAnswered || 0))}</strong><small>Questions done</small></div></article>
+            <article><span>${studentSvgIcon("streak")}</span><div><strong>${Math.max(0, Number(stats.streak || 0))}</strong><small>Perfect-test streak</small></div></article>
+          </div>
+        </section>` : ""}
       <div class="flex-between" style="gap: 0.8rem; align-items: flex-end; flex-wrap: wrap;">
         <form id="analytics-course-form" style="margin-top: 0.8rem; max-width: 520px;" autocomplete="off">
           <label>Course
@@ -44239,6 +44552,24 @@ function renderCoursePlatformTabs(activeTab) {
   `;
 }
 
+// Section nav for the MCQ side of the app (Dashboard / Create Test / Analytics),
+// styled identically to the Courses tabs (.courses-tabs). `activeRoute` is the
+// current state.route.
+function renderMcqSectionTabs(activeRoute) {
+  const tabs = [
+    ["dashboard", "Dashboard"],
+    ["create-test", "Create Test"],
+    ["analytics", "Analytics"],
+  ];
+  return `
+    <div class="courses-tabs mcq-tabs" role="tablist" aria-label="MCQ sections">
+      ${tabs.map(([route, label]) => `
+        <button type="button" role="tab" aria-selected="${activeRoute === route ? "true" : "false"}" class="${activeRoute === route ? "is-active" : ""}" data-nav="${route}">${label}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderCoursePlatformCard(row, options = {}) {
   const { course, enrollment, progress, lessonCount, moduleCount, completedLessons, lastLesson, status, newLessons, newAnnouncements } = row;
   const title = getCoursePlatformCourseTitle(course);
@@ -44313,10 +44644,9 @@ function renderCoursePlatformCard(row, options = {}) {
           `}
 
           ${lastLesson && enrollment.isEnrolled ? `<small class="subtle course-card-last"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Last opened: ${escapeHtml(lastLesson.title)}</span></small>` : ""}
-          ${Number(newLessons?.length || 0) || Number(newAnnouncements?.length || 0) ? `
+          ${Number(newLessons?.length || 0) ? `
             <div class="course-card-badges" style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
-              ${Number(newLessons?.length || 0) ? `<span class="badge good">${newLessons.length} new lesson${newLessons.length === 1 ? "" : "s"}</span>` : ""}
-              ${Number(newAnnouncements?.length || 0) ? `<span class="badge neutral">${newAnnouncements.length} new announcement${newAnnouncements.length === 1 ? "" : "s"}</span>` : ""}
+              <span class="badge good">${newLessons.length} new lesson${newLessons.length === 1 ? "" : "s"}</span>
             </div>
           ` : ""}
 
@@ -44332,15 +44662,90 @@ function renderCoursePlatformCard(row, options = {}) {
   `;
 }
 
+function renderCoursePlatformListRow(row, options = {}) {
+  const { course, enrollment, progress, lessonCount, moduleCount, completedLessons, lastLesson, status } = row;
+  const title = getCoursePlatformCourseTitle(course);
+  const isSuggestion = Boolean(options.suggestion);
+  const actionLabel = enrollment.isEnrolled ? (lastLesson ? "Continue" : "View Course") : "View details";
+  const primaryAction = enrollment.isEnrolled
+    ? (lastLesson ? "courses-open-lesson" : "courses-open-course")
+    : "courses-open-course";
+  const statusText = enrollment.isEnrolled
+    ? (status === "completed" ? "Completed" : status === "in_progress" ? "In progress" : "Not started")
+    : (enrollment.requestStatus === "pending" ? "Pending approval" : "Approval required");
+  const statusClass = enrollment.isEnrolled ? `status-${status}` : (enrollment.requestStatus === "pending" ? "status-request-pending" : "status-request");
+  const courseCode = String(course.course_code || course.code || "").trim();
+  return `
+    <article class="card course-list-row ${isSuggestion ? "course-card-suggestion" : ""}">
+      <button class="course-list-cover" type="button" data-action="courses-open-course" data-course-id="${escapeHtml(course.id)}" aria-label="Open ${escapeHtml(title)}">
+        ${renderCourseCoverHtml(course)}
+      </button>
+      <div class="course-list-main">
+        <h3>${escapeHtml(title)}</h3>
+        <p class="course-list-meta subtle">
+          Y${escapeHtml(course.academic_year || "")} S${escapeHtml(course.academic_semester || "")}
+          ${courseCode ? ` • ${escapeHtml(courseCode)}` : ""}
+          • ${moduleCount || 0} module${moduleCount === 1 ? "" : "s"}
+          • ${completedLessons || 0}/${lessonCount || 0} lessons
+        </p>
+        <div class="course-list-status-row">
+          <span class="course-list-status ${statusClass}">${escapeHtml(statusText)}</span>
+          ${enrollment.isEnrolled && (lessonCount || moduleCount) ? `
+            <div class="course-progress-container course-list-progress">
+              <div class="course-progress-track" aria-label="${progress}% complete"><span style="width: ${Math.max(0, Math.min(100, progress))}%;"></span></div>
+              <span class="course-progress-val">${progress}%</span>
+            </div>
+          ` : ""}
+        </div>
+      </div>
+      <button class="course-list-go" type="button" data-action="${primaryAction}" data-course-id="${escapeHtml(course.id)}" ${lastLesson && enrollment.isEnrolled ? `data-lesson-id="${escapeHtml(lastLesson.id)}"` : ""} aria-label="${escapeHtml(actionLabel)}: ${escapeHtml(title)}" title="${escapeHtml(actionLabel)}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </article>
+  `;
+}
+
+function renderCoursesLayoutToggle() {
+  const layout = state.coursesLayout === "list" ? "list" : "grid";
+  return `
+    <div class="courses-layout-toggle" role="group" aria-label="Course view">
+      <button type="button" class="${layout === "grid" ? "is-active" : ""}" data-action="courses-layout" data-layout="grid" aria-pressed="${layout === "grid"}" title="Card view">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        <span>Cards</span>
+      </button>
+      <button type="button" class="${layout === "list" ? "is-active" : ""}" data-action="courses-layout" data-layout="list" aria-pressed="${layout === "list"}" title="List view">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        <span>List</span>
+      </button>
+    </div>
+  `;
+}
+
+function isCoursesMobileViewport() {
+  try { return window.matchMedia("(max-width: 640px)").matches; } catch { return false; }
+}
+
+function renderCoursePlatformRowsMarkup(rows, options = {}) {
+  // The card/list toggle is a mobile-only affordance; tablet/desktop always
+  // use the card grid regardless of the saved layout preference.
+  if (state.coursesLayout === "list" && isCoursesMobileViewport()) {
+    return `<div class="courses-list">${rows.map((row) => renderCoursePlatformListRow(row, options)).join("")}</div>`;
+  }
+  return `<div class="courses-grid">${rows.map((row) => renderCoursePlatformCard(row, options)).join("")}</div>`;
+}
+
 function renderCoursePlatformToolbar(activeTab, filter) {
   const suggestionFilter = ["all", "available", "pending"].includes(filter) ? filter : "all";
   const isEnrolled = activeTab === "enrolled";
   return `
     <div class="courses-toolbar${isEnrolled ? " has-no-search" : ""}">
       ${!isEnrolled ? `
-        <label class="courses-search">Search
-          <input id="courses-search" type="search" value="${escapeHtml(state.coursesSearch)}" placeholder="Search courses, instructors, topics..." />
-        </label>
+        <div class="courses-search-row">
+          <label class="courses-search">Search
+            <input id="courses-search" type="search" value="${escapeHtml(state.coursesSearch)}" placeholder="Search courses, instructors, topics..." />
+          </label>
+          <div class="courses-search-row-view">${renderCoursesLayoutToggle()}</div>
+        </div>
       ` : ""}
       <label>Year
         <select id="courses-year-filter">
@@ -44445,41 +44850,34 @@ function renderCoursesDashboard() {
     <div class="courses-dashboard-layout-grid">
       <div class="courses-dashboard-main-content">
         <div class="courses-stats-row">
-          <div class="courses-stat-card">
+          <button type="button" class="courses-stat-card is-interactive" data-action="courses-home-tab" data-tab="enrolled" aria-label="View enrolled courses">
             <div class="courses-stat-icon">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
             </div>
             <div class="courses-stat-value">${data.enrolledRows.length}</div>
             <div class="courses-stat-label">Enrolled courses</div>
-          </div>
-          <div class="courses-stat-card">
+          </button>
+          <button type="button" class="courses-stat-card is-interactive" data-action="courses-home-tab" data-tab="enrolled" aria-label="View completed lessons">
             <div class="courses-stat-icon">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
             <div class="courses-stat-value">${data.completedLessons}<span class="courses-stat-unit">/${data.totalLessons}</span></div>
             <div class="courses-stat-label">Completed lessons</div>
-          </div>
-          <div class="courses-stat-card">
+          </button>
+          <button type="button" class="courses-stat-card is-interactive" data-action="courses-home-tab" data-tab="enrolled" aria-label="View overall progress">
             <div class="courses-stat-icon">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div>
             <div class="courses-stat-value">${data.overallProgress}%</div>
             <div class="courses-stat-label">Overall progress</div>
-          </div>
-          <div class="courses-stat-card">
-            <div class="courses-stat-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            </div>
-            <div class="courses-stat-value">${data.newAnnouncementsCount}</div>
-            <div class="courses-stat-label">New announcements</div>
-          </div>
-          <div class="courses-stat-card">
+          </button>
+          <button type="button" class="courses-stat-card is-interactive" data-action="courses-home-tab" data-tab="suggestions" aria-label="View course suggestions">
             <div class="courses-stat-icon">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
             </div>
             <div class="courses-stat-value">${data.suggestionRows.length}</div>
             <div class="courses-stat-label">Suggestions</div>
-          </div>
+          </button>
         </div>
 
         <div class="courses-dashboard-highlight">
@@ -44524,36 +44922,6 @@ function renderCoursesDashboard() {
       </div>
 
       <aside class="courses-dashboard-sidebar-content">
-        <section class="courses-dashboard-list">
-          <div class="courses-section-head">
-            <div>
-              <p class="kicker">Updates</p>
-              <h3>New Announcements</h3>
-            </div>
-          </div>
-          ${data.announcements.length ? `
-            <div class="courses-sidebar-list">
-              ${data.announcements.map((item) => `
-                <article class="card course-update-card">
-                  <div class="course-update-icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                  </div>
-                  <div>
-                    <b>${escapeHtml(item.title)}</b>
-                    <p class="subtle">${escapeHtml(item.body)}</p>
-                  </div>
-                </article>
-              `).join("")}
-            </div>
-          ` : `
-            <div class="courses-empty-state is-compact">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              <h3>No announcements</h3>
-              <p>Course announcements from instructors will show up here.</p>
-            </div>
-          `}
-        </section>
-
         ${data.recentLessons.length ? `
           <section class="courses-dashboard-list">
             <div class="courses-section-head">
@@ -44585,9 +44953,8 @@ function renderCoursesDashboard() {
 function renderEnrolledCourses(courses) {
   return `
     ${!state.coursesLoading && !state.coursesError && !courses.length ? `<div class="courses-empty-state"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg><h3>You are not enrolled in any courses</h3><p>Once your admin assigns a course or approves your request, it will appear here.</p><button class="btn ghost" type="button" data-action="courses-home-tab" data-tab="suggestions">Browse suggestions</button></div>` : ""}
-    <div class="courses-grid">
-      ${courses.map((row) => renderCoursePlatformCard(row)).join("")}
-    </div>
+    ${courses.length ? `<div class="courses-view-bar">${renderCoursesLayoutToggle()}</div>` : ""}
+    ${renderCoursePlatformRowsMarkup(courses)}
   `;
 }
 
@@ -44598,9 +44965,7 @@ function renderSuggestedCourses(courses) {
     </div>
 
     ${!state.coursesLoading && !state.coursesError && !courses.length ? `<div class="courses-suggestions-empty"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><h3>No course suggestions yet</h3><p>Suggestions will appear here when admins recommend courses for your year or semester. Check back later or browse your enrolled courses.</p><button class="btn" type="button" data-action="courses-home-tab" data-tab="enrolled">View enrolled courses</button></div>` : ""}
-    <div class="courses-grid">
-      ${courses.map((row) => renderCoursePlatformCard(row, { suggestion: true })).join("")}
-    </div>
+    ${renderCoursePlatformRowsMarkup(courses, { suggestion: true })}
   `;
 }
 
@@ -44708,7 +45073,12 @@ function renderCoursesHome() {
     <section class="panel courses-shell">
       ${renderCoursePlatformTabs(activeTab)}
 
-      ${showInitialLoading ? `<div class="card courses-empty"><span class="inline-loader" aria-hidden="true"></span><p>Loading courses...</p></div>` : ""}
+      ${showInitialLoading ? (isNativeAppUi() ? `
+        <div class="native-course-skeletons" aria-label="Loading courses" aria-busy="true">
+          <div class="native-course-skeleton"><span></span><div><i></i><i></i><i></i></div></div>
+          <div class="native-course-skeleton"><span></span><div><i></i><i></i><i></i></div></div>
+          <div class="native-course-skeleton"><span></span><div><i></i><i></i><i></i></div></div>
+        </div>` : `<div class="card courses-empty"><span class="inline-loader" aria-hidden="true"></span><p>Loading courses...</p></div>`) : ""}
       ${state.coursesError ? `<div class="card courses-error"><b>Courses error</b><p>${escapeHtml(state.coursesError)}</p><button class="btn ghost admin-btn-sm" type="button" data-action="courses-retry">Retry</button></div>` : ""}
       ${!state.coursesError && !showInitialLoading ? activeTab === "dashboard"
         ? renderCoursesDashboardTab(enrolledRows, suggestionRows)
@@ -44845,17 +45215,6 @@ function renderCourseDetail(courseId) {
         </div>
       </div>
 
-      ${course.instructor_bio ? `
-        <article class="card course-instructor-card">
-          ${renderInstructorAvatarBubble(course.instructor_name)}
-          <div class="course-instructor-info">
-            <span class="instructor-role-badge">Instructor</span>
-            <h3 class="instructor-name">${escapeHtml(course.instructor_name || "Instructor")}</h3>
-            <p class="subtle" style="margin: 0; font-size: 0.88rem; line-height: 1.5;">${escapeHtml(course.instructor_bio)}</p>
-          </div>
-        </article>
-      ` : ""}
-
       <div class="course-detail-layout">
         <section class="course-modules">
           <div class="course-modules-section-header">
@@ -44876,14 +45235,17 @@ function renderCourseDetail(courseId) {
           ` : modules.map((module) => {
             const moduleLessons = lessons.filter((lesson) => String(lesson?.module_id || "").trim() === String(module?.id || "").trim());
             return `
-              <article class="card course-module-card">
-                <div class="course-module-head">
+              <details class="card course-module-card" ${isCoursesMobileViewport() ? "" : "open"}>
+                <summary class="course-module-head">
                   <div>
                     <h4>${escapeHtml(module.title)}</h4>
                     ${module.description ? `<p class="subtle">${escapeHtml(module.description)}</p>` : ""}
                   </div>
-                  <span>${moduleLessons.length} lesson${moduleLessons.length === 1 ? "" : "s"}</span>
-                </div>
+                  <span class="course-module-head-meta">
+                    <span>${moduleLessons.length} lesson${moduleLessons.length === 1 ? "" : "s"}</span>
+                    <svg class="course-module-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                  </span>
+                </summary>
                 <div class="course-lesson-list">
                   ${moduleLessons.map((lesson) => {
                     const progressRow = state.coursesProgress.find((row) => String(row?.lesson_id || "").trim() === String(lesson.id || "").trim());
@@ -44902,7 +45264,7 @@ function renderCourseDetail(courseId) {
                     </div>
                   `}
                 </div>
-              </article>
+              </details>
             `;
           }).join("")}
         </section>
@@ -44931,27 +45293,6 @@ function renderCourseDetail(courseId) {
                   : "You do not have access to this course yet. Request enrollment to gain access to materials and lessons."
               }
             </p>
-          </article>
-          
-          <article class="card course-announcements-card">
-            <h3>Announcements</h3>
-            ${courseAnnouncements.length
-              ? `<div class="course-announcements-list">
-                  ${courseAnnouncements.map((item) => `
-                    <div class="course-announcement-item">
-                      <div class="course-announcement-header">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                        <b>${escapeHtml(item.title)}</b>
-                      </div>
-                      <p class="subtle" style="margin: 0.35rem 0 0 0; font-size: 0.82rem; line-height: 1.45;">${escapeHtml(item.body)}</p>
-                    </div>
-                  `).join("")}
-                 </div>`
-              : `<div class="courses-empty-state is-compact">
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                  <p>No announcements yet.</p>
-                 </div>`
-            }
           </article>
         </aside>
       </div>
@@ -49872,6 +50213,104 @@ function wireAdminCoursesPlatformBuilder() {
   });
 }
 
+function renderNativeStudentHome(user) {
+  const firstName = String(user?.name || "Student").trim().split(/\s+/)[0] || "Student";
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const canOpenMcqBank = isUserMcqAccessEnabled(user);
+  const canOpenCourses = isUserCoursesAccessEnabled(user) && !shouldBlockStudentCoursesPortal(user);
+  const analytics = canOpenMcqBank ? getStudentAnalyticsSnapshot(user.id) : null;
+  const stats = analytics?.stats || { accuracy: 0, totalAnswered: 0, streak: 0 };
+  const incorrectCount = canOpenMcqBank ? getStudentIncorrectQueueCount(user.id) : 0;
+  const activeSession = canOpenMcqBank ? getNormalizedActiveSessionForDisplay(user.id, state.sessionId) : null;
+  const totalQuestions = Array.isArray(activeSession?.questionIds) ? activeSession.questionIds.length : 0;
+  const currentQuestion = totalQuestions
+    ? Math.max(1, Math.min(totalQuestions, Number(activeSession.currentIndex || 0) + 1))
+    : 0;
+  const sessionProgress = totalQuestions ? Math.round((currentQuestion / totalQuestions) * 100) : 0;
+  const continueLearning = canOpenCourses ? loadContinueLearning() : null;
+
+  let continueCard = `
+    <article class="native-home-continue is-empty">
+      <div class="native-home-continue-copy">
+        <span class="native-home-overline">Ready when you are</span>
+        <h3>Start a focused practice block</h3>
+        <p>Choose a course, topic, and mode that fits today’s study goal.</p>
+      </div>
+      <button class="btn" type="button" data-nav="create-test" ${canOpenMcqBank ? "" : "disabled"}>Start a test</button>
+    </article>`;
+
+  if (activeSession && totalQuestions) {
+    continueCard = `
+      <article class="native-home-continue">
+        <div class="native-home-continue-head">
+          <span class="native-home-overline">Continue where you left off</span>
+          <span class="native-home-progress-label">${currentQuestion}/${totalQuestions}</span>
+        </div>
+        <h3>${escapeHtml(getSessionDisplayName(activeSession))}</h3>
+        <p>${escapeHtml(formatSessionModeLabel(activeSession.mode))} practice block</p>
+        <div class="native-progress-track" aria-label="${sessionProgress}% complete"><span style="width:${sessionProgress}%"></span></div>
+        <button class="btn" type="button" data-nav="session">Continue practice</button>
+      </article>`;
+  } else if (continueLearning) {
+    const courseTitle = getCoursePlatformCourseTitle(continueLearning.course);
+    continueCard = `
+      <article class="native-home-continue">
+        <div class="native-home-continue-head">
+          <span class="native-home-overline">Continue where you left off</span>
+          <span class="native-home-progress-label">${continueLearning.progressPercent}%</span>
+        </div>
+        <h3>${escapeHtml(courseTitle)}</h3>
+        <p>${escapeHtml(continueLearning.lesson.title)}</p>
+        <div class="native-progress-track" aria-label="${continueLearning.progressPercent}% complete"><span style="width:${continueLearning.progressPercent}%"></span></div>
+        <button class="btn" type="button" data-action="courses-open-lesson" data-course-id="${escapeHtml(continueLearning.course.id)}" data-lesson-id="${escapeHtml(continueLearning.lesson.id)}">Continue learning</button>
+      </article>`;
+  }
+
+  return `
+    <section class="native-home-screen">
+      <header class="native-home-greeting">
+        <div>
+          <p>${greeting},</p>
+          <h1>${escapeHtml(firstName)}</h1>
+        </div>
+        <button class="native-home-notification" type="button" data-nav="notifications" aria-label="Open notifications">
+          <i data-lucide="bell"></i>
+          ${getUnreadNotificationCountForUser(user) ? '<span aria-hidden="true"></span>' : ""}
+        </button>
+      </header>
+
+      ${continueCard}
+
+      <section class="native-home-streak" aria-label="Study progress">
+        <div class="native-home-ring" style="--native-ring-value:${Math.max(0, Math.min(100, Number(stats.accuracy || 0)))}">
+          <strong>${Math.max(0, Math.round(Number(stats.accuracy || 0)))}%</strong>
+          <span>accuracy</span>
+        </div>
+        <div>
+          <span class="native-home-overline">Your momentum</span>
+          <h3>${Math.max(0, Number(stats.streak || 0))} perfect-test streak</h3>
+          <p>${Math.max(0, Number(stats.totalAnswered || 0))} questions answered</p>
+        </div>
+      </section>
+
+      <section class="native-home-section">
+        <div class="native-section-heading"><h2>Quick actions</h2></div>
+        <div class="native-quick-grid">
+          <button type="button" data-nav="create-test" ${canOpenMcqBank ? "" : "disabled"}>
+            <span class="is-primary">${studentSvgIcon("create")}</span><b>Start Test</b><small>Build a practice block</small>
+          </button>
+          <button type="button" data-action="dash-review-incorrect" ${incorrectCount ? "" : "disabled"}>
+            <span class="is-danger">${studentSvgIcon("review")}</span><b>Review Incorrect</b><small>${incorrectCount ? `${incorrectCount} ready to retry` : "No saved questions"}</small>
+          </button>
+          <button type="button" data-action="courses-home-tab" data-tab="dashboard" ${canOpenCourses ? "" : "disabled"}>
+            <span class="is-course">${studentSvgIcon("bank")}</span><b>Browse Courses</b><small>Continue your lessons</small>
+          </button>
+        </div>
+      </section>
+    </section>`;
+}
+
 function renderAppLauncher() {
   const user = getCurrentUser();
   if (user?.role === "student" && !state.coursesComingSoonLoadedAt && !state.coursesComingSoonLoading) {
@@ -49886,6 +50325,9 @@ function renderAppLauncher() {
   const coursesBlocked = Boolean(coursesBlockReason);
   const coursesBlockedByAccess = coursesBlockReason === "courses_access_disabled";
   const canOpenMcqBank = user?.role !== "student" || isUserMcqAccessEnabled(user);
+  if (isNativeAppUi() && user?.role === "student") {
+    return renderNativeStudentHome(user);
+  }
   return `
     <div class="app-launcher-wrapper">
       <div class="launcher-glow-blob launcher-glow-blob-1"></div>
@@ -49931,6 +50373,12 @@ function renderAppLauncher() {
 }
 
 function wireAppLauncher() {
+  if (!isNativeAppUi()) return;
+  appEl.querySelector("[data-action='dash-review-incorrect']")?.addEventListener("click", () => {
+    state.createTestSource = "incorrect";
+    state.skipNextRouteAnimation = true;
+    navigate("create-test");
+  });
 }
 
 function handleGsapReadyForCurrentRoute() {

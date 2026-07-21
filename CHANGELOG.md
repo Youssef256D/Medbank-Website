@@ -9,6 +9,96 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-10 — MCQ section nav bar
+Design/navigation only; no auth/access/sync/data behavior changed.
+
+- **MCQ tab bar mirroring the Courses tabs.** Added `renderMcqSectionTabs()` (a
+  `.courses-tabs .mcq-tabs` rounded pill row: Dashboard / Create Test /
+  Analytics, `data-nav` navigation, active state on `state.route`) at the top of
+  `renderDashboard()`, `renderCreateTest()`, and `renderAnalytics()`. Reuses the
+  existing `.courses-tabs` styling so it matches the Courses nav exactly in
+  light/dark/comfort and on mobile. Verified: renders on all three routes and
+  switches the active pill on click.
+- **Static cache bust bumped.** `index.html` app-version is `2026-07-10.04-local`.
+
+### 2026-07-10 — Mobile app polish batch (auth, courses, privacy, demo MCQs)
+Mobile/native-focused changes. No auth/access/sync/data-model behavior changed.
+
+- **Compact OAuth buttons.** Google + Apple sign-in are now a single
+  `.auth-oauth-row` (side by side) on both login and signup; on mobile (≤640px)
+  they collapse to icon-only buttons so the auth screen isn't a long stack.
+- **Courses default to List on mobile.** `state.coursesLayout` defaults to
+  `list` when the viewport is ≤640px (desktop still defaults to the card grid);
+  an explicit saved choice always wins.
+- **App-switcher privacy screen is app-wide in the native app.**
+  `setCoursePrivacyObscured()` now shows the "Protected course content" overlay
+  across the whole native app while signed in (not just course routes), so the
+  backgrounded app-switcher preview never leaks content.
+- **Course/lesson back button floats.** On mobile the `.course-back-btn` circle
+  overlaps the card below it (`position:relative; z-index; negative margin`)
+  instead of reserving a full row, so content sits higher.
+- **Working demo MCQs.** Added `DEMO_MCQ_QUESTIONS` (8 published questions mapped
+  to the real Year 1 / Sem 1 course "Introduction to Body Structure (BOS 101)")
+  seeded on localhost demo builds, so the demo student can exercise create-test /
+  session / review / analytics without Supabase content.
+- **Static cache bust bumped.** `index.html` app-version is `2026-07-10.03-local`.
+
+### 2026-07-10 — Native app opens on login (no marketing site)
+Routing only; no auth, access, sync, or data behavior changed. Web (GitHub
+Pages) is untouched — it still opens on the landing page.
+
+- **Native mobile app skips the public marketing pages.** Added
+  `isNativeMobileAppShell()` (Capacitor/Cordova/RN/`capacitor:`/`ionic:`/`file:`
+  protocol, or the `__MEDBANK_MOBILE_APP__` / `forceMobileAuthRedirect` flags).
+  In the native shell the initial route resolves to `login` instead of
+  `landing`, and any marketing route (`landing`, `mcqs`, `courses-platform`,
+  `features`, `pricing`, `about`, `contact`) is redirected in `render()` to
+  `login` when signed out (or straight to the app when signed in).
+- **Static cache bust bumped.** `index.html` app-version is
+  `2026-07-10.01-local` (drop `-local` before production).
+
+### 2026-07-07 — Courses cleanup + mobile course-detail polish
+Design/structure only; no auth, access, sync, or data behavior changed.
+
+- **Removed all student-facing announcements UI:** the "New Announcements"
+  sidebar card and announcements stat on the Courses dashboard, the
+  "Announcements" card and "X new announcements" badge on course cards/detail.
+  Admin announcement management is untouched.
+- **Removed the course-detail instructor card** (avatar/badge/name/bio).
+- **Courses dashboard stat cards are now interactive buttons** that navigate to
+  the matching tab (Enrolled/Completed/Progress → My Courses; Suggestions →
+  Explore), with focus-visible outline and press state.
+- **Mobile course-detail fixes:** compacted the lesson-viewer header (stacked,
+  smaller title, full-width action button); fixed the large empty gap under the
+  course-detail hero CTA (the base `flex: 1.3 1 400px` on `.course-detail-copy`
+  forced a 400px column in the mobile flex-column — now `flex: 0 0 auto`);
+  **course curriculum modules are now collapsible** via native
+  `<details>`/`<summary>` (collapsed on mobile via `isCoursesMobileViewport()`,
+  open on desktop) with a rotating chevron. Note: `.course-module-card` uses
+  `display:grid`, which defeats native `<details>` hiding, so a
+  `:not([open]) > .course-lesson-list { display:none }` rule enforces collapse.
+- **Static cache bust bumped.** `index.html` app-version is `2026-07-07.24-local`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`.
+
+### 2026-07-07 — Mobile native app shell (Capacitor prep), phase 1
+- Scoped the recent Courses redesign (flattened shell/toolbar, single-row stats, grid/list toggle) to mobile only; tablet/desktop keep their previous look.
+- Added a native-style bottom tab bar (`#mobile-tabbar`) for logged-in students on mobile — Apps / MCQ Bank / Courses / Profile — with safe-area padding, active states, and press feedback. Hidden on desktop/tablet (top nav stays) and during the focused exam session/review.
+- Added `viewport-fit=cover` and content clearance (`body.has-mobile-tabbar .app-shell`) so the fixed bar coexists with notch/gesture-bar safe areas.
+- Base 44px touch-target floor for nav buttons and `.btn` on mobile; reduced-motion respected.
+- Reuses existing body-level `[data-nav]`/`[data-action]` click delegation (no new wiring).
+- **Single navigation path (mobile):** the redundant top `#private-nav` section tabs are now hidden whenever the bottom bar is present (`body.has-mobile-tabbar`). They only duplicated it — the app-launcher tabs mirror the bottom bar, Courses section tabs also render in-page (`.courses-tabs`), and MCQ Create/Analytics live in the dashboard quick-actions. Admins (no bottom bar) keep their top nav. Also added compact app-bar `env(safe-area-inset-top)` padding, momentum scroll / overscroll-contain, and tap-highlight removal — all mobile-only.
+- **Card/list polish (mobile):** panels read as lighter screen sections (smaller radius/shadow/padding), the sticky hover-translate is neutralised on touch, and tappable cards get a native press-scale (reduced-motion respected).
+- **Courses dashboard/tabs (mobile):** compact welcome header, redundant "Back to Apps" button hidden (bottom bar covers it), tighter section rhythm, the in-page `.courses-tabs` render as a full-width segmented control, and comfortable touch heights on update/lesson list rows.
+- **Courses filters + stats (My Courses / Explore, mobile):** fixed the Explore filter toolbar which overflowed on phones (desktop 5-column grid → 2-column stack with full-width search/clear), inputs pinned to 16px to stop iOS zoom-on-focus, and stat-card labels bumped from ~8px to ~10px for readability.
+- **Course cards (My Courses / Explore grid, mobile):** neutralised the sticky hover-lift and cover zoom on touch (these use `.course-card:hover`, higher specificity than the generic card fix), added a subtle press-scale, tightened the grid gap, and trimmed cover height.
+- **Course detail + lesson (mobile):** compact detail hero (smaller padding/title, wrapped facts), trimmed lesson-viewer chrome so the 16:9 video gets more screen, smaller lesson title. Left the tuned video control bar (720px block: hides duration/mute, 4-col) untouched to avoid regressing it.
+- **Course detail hero cover fix (mobile):** the hero cover is a `.course-cover-container` (not a bare `<img>`), so the desktop height rule never caught it — in the mobile column layout its `flex: 0 0 340px` basis made it a full-width square that filled the whole screen. Constrained it to a 132px banner (with a `body`-prefixed selector to beat the later-in-source base rule), shrank the oversized initials, and made the standalone instructor card compact.
+- **Apps launcher (mobile):** hid the decorative animated glow blobs for a clean Coursera-style white surface (2-column portal cards kept).
+- **Course curriculum (mobile):** compacted module cards and kept lesson rows as a clean horizontal row (icon · title · duration) on phones instead of the fully-stacked ≤820px layout, with a 52px touch height; enrollment/side card spacing tidied.
+- **Course curriculum header (mobile):** compacted the "Course Curriculum" section header (smaller title, tighter spacing) with the module-count badge pinned right.
+- Bumped `app-version` to `2026-07-07.24-local`.
+
 ### 2026-07-06 — Landing first-paint fallback fix
 - Replaced the stale static `index.html` fallback hero ("Medical MCQ practice platform.") with the current simplified landing hero, so refresh/first-load no longer flashes the old landing before `main.js` renders.
 - Bumped `app-version` to `2026-07-06.06-local`.
