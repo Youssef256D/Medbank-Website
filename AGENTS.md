@@ -188,6 +188,43 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-21 — "Video Courses" vs "MCQ Subjects" naming split
+**Read `docs/NAMING.md` before touching anything course-related.** MedBank has
+two unrelated products that were both called "Courses"; that ambiguity was the
+single biggest source of agent error in this repo.
+
+1. **Video LMS → "Video Courses".** Student route `courses` → `video-courses`;
+   admin page id `course-platform` → `video-courses`
+   (`ADMIN_COURSES_PLATFORM_PAGE`). Tables unchanged (`platform_*`).
+2. **MCQ curriculum unit → "MCQ Subject".** Admin page id `courses` →
+   `mcq-subjects` in `ADMIN_DATA_PAGES`; sidebar label "Course Topics" →
+   "MCQ Subjects". The product name stays "MCQ Bank".
+3. **The trap, restated:** `public.courses` / `public.course_topics` are the
+   **MCQ subjects**, not the video LMS. The 13 `.from("courses")` call sites in
+   `main.js` were deliberately left untouched by the rename.
+4. **Legacy ids alias forward.** `LEGACY_ROUTE_ALIASES` /
+   `LEGACY_ADMIN_PAGE_ALIASES` + `canonicalizeRoute()` /
+   `canonicalizeAdminPage()` (defined next to the route sets) map `courses` →
+   `video-courses` and `course-platform` → `video-courses`, applied in
+   `readRouteFromHash()`, `resolveInitialRoute()`, `resolveInitialAdminPage()`.
+5. **DB layer is additive only.** Migration `20260721120000` adds read-only
+   `security_invoker` views `mcq_subjects` / `mcq_subject_topics` plus table
+   comments. **No table renamed, no RLS policy touched, no FK altered** — a
+   table rename would have required dropping/recreating 34 policies on live
+   student data, which was explicitly rejected as too risky for a naming fix.
+   The `security_invoker = true` setting is load-bearing: without it the views
+   would bypass RLS. Rollback in `supabase/rollbacks/`.
+6. **Verified** in preview: no console errors, `npm run lint` clean,
+   `node --check main.js` passes, nav renders "MCQ Bank / Video Courses",
+   admin sidebar renders "MCQ Subjects", and legacy `#courses` resolves rather
+   than dead-ending.
+7. **Static cache bust bumped.** `index.html` app-version is `2026-07-21.01-local`.
+
+**Files touched:** `main.js`, `index.html`, `docs/NAMING.md`,
+`supabase/migrations/20260721120000_add_mcq_subject_alias_views.sql`,
+`supabase/rollbacks/20260721120000_add_mcq_subject_alias_views.sql`,
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-10 — MCQ section nav bar
 Navigation/design only; no auth/access/sync/data behavior changed.
 

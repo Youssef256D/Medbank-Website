@@ -9,6 +9,24 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-21 — "Video Courses" vs "MCQ Subjects" naming split
+The video learning platform and the MCQ question bank were both called
+"Courses", which confused students and caused AI agents (notably the Flutter app
+agent) to merge two unrelated products.
+
+- The video LMS is now **Video Courses** everywhere; its route is
+  `video-courses` and its admin page id is `video-courses`.
+- The MCQ curriculum unit is now an **MCQ Subject**; the admin page id is
+  `mcq-subjects`. The product is still **MCQ Bank**.
+- Legacy ids (`courses`, `course-platform`) are aliased forward, so old
+  bookmarks, saved route memory, and shipped mobile builds keep working.
+- Added read-only `security_invoker` alias views `mcq_subjects` /
+  `mcq_subject_topics` over `courses` / `course_topics`. The tables themselves
+  were **not** renamed — that would have meant rewriting 34 RLS policies, 12 FK
+  constraints and 12 SQL functions on live student data.
+- New canonical vocabulary doc: `docs/NAMING.md`, including a copy-paste
+  instruction block for the Flutter app agent.
+
 ### 2026-07-10 — MCQ section nav bar
 Design/navigation only; no auth/access/sync/data behavior changed.
 

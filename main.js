@@ -73,7 +73,7 @@ const KNOWN_ROUTES = new Set([
   "complete-profile",
   "dashboard",
   "app-launcher",
-  "courses",
+  "video-courses",
   "notifications",
   "create-test",
   "qbank",
@@ -88,7 +88,7 @@ const PRIVATE_ROUTE_SET = new Set([
   "complete-profile",
   "dashboard",
   "app-launcher",
-  "courses",
+  "video-courses",
   "notifications",
   "create-test",
   "qbank",
@@ -101,6 +101,25 @@ const PRIVATE_ROUTE_SET = new Set([
 ]);
 const PUBLIC_MARKETING_ROUTE_SET = new Set(["landing", "mcqs", "courses-platform", "features", "pricing", "about", "contact"]);
 const AUTH_ENTRY_ROUTE_SET = new Set(["landing", "features", "pricing", "about", "contact", "login", "signup", "forgot"]);
+// 2026-07-21 rename: the video learning platform and the MCQ subject list were
+// both called "courses". Old bookmarks, saved route memory, and any already
+// shipped mobile build still send the legacy ids, so map them forward instead
+// of dropping the user on a dead route.
+const LEGACY_ROUTE_ALIASES = new Map([
+  ["courses", "video-courses"],
+]);
+const LEGACY_ADMIN_PAGE_ALIASES = new Map([
+  ["courses", "mcq-subjects"],
+  ["course-platform", "video-courses"],
+]);
+function canonicalizeRoute(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return LEGACY_ROUTE_ALIASES.get(raw) || raw;
+}
+function canonicalizeAdminPage(value) {
+  const raw = String(value || "").trim();
+  return LEGACY_ADMIN_PAGE_ALIASES.get(raw) || raw;
+}
 // The native mobile app (Capacitor) has no public marketing site — it opens
 // straight to the login page. Detect the native/app shell from window/location
 // signals only (no dependency on SUPABASE_CONFIG, which is defined later).
@@ -133,8 +152,8 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "courses", "questions", "bulk-import", "notifications", "site-access", "ai-agents", "activity", "logs"];
-const ADMIN_COURSES_PLATFORM_PAGE = "course-platform";
+const ADMIN_DATA_PAGES = ["dashboard", "users", "mcq-subjects", "questions", "bulk-import", "notifications", "site-access", "ai-agents", "activity", "logs"];
+const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "enrollments", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
 const ADMIN_AUTO_REFRESH_PAGES = new Set(["dashboard", "users"]);
@@ -2225,7 +2244,7 @@ async function processPendingStudentRefreshTrigger(user = null, options = {}) {
   const onExamRoute = isStudentExamRefreshRoute();
   const payload = pending.payload || null;
   const needsMcqRefresh = studentRefreshPayloadTouchesMcqBank(payload);
-  const needsCoursePlatformRefresh = studentRefreshPayloadTouchesCoursePlatform(payload) || state.route === "courses";
+  const needsCoursePlatformRefresh = studentRefreshPayloadTouchesCoursePlatform(payload) || state.route === "video-courses";
   const refreshed = needsMcqRefresh
     ? await refreshStudentDataSnapshot(current, {
       force: true,
@@ -2443,7 +2462,8 @@ function readRouteFromHash(hashValue = window.location.hash) {
   if (!rawHash || rawHash.includes("=")) {
     return "";
   }
-  return KNOWN_ROUTES.has(rawHash) ? rawHash : "";
+  const route = canonicalizeRoute(rawHash);
+  return KNOWN_ROUTES.has(route) ? route : "";
 }
 
 function syncRouteHash(route) {
@@ -2485,15 +2505,15 @@ function resolveInitialRoute() {
   if (KNOWN_ROUTES.has(hashRoute)) {
     return normalizeRoute(hashRoute);
   }
-  const persisted = String(readSessionStorageKey(ROUTE_STATE_ROUTE_KEY) || "").trim().toLowerCase();
+  const persisted = canonicalizeRoute(readSessionStorageKey(ROUTE_STATE_ROUTE_KEY));
   if (KNOWN_ROUTES.has(persisted) && persisted !== "dashboard") {
     return normalizeRoute(persisted);
   }
-  const persistedLocal = String(load(ROUTE_STATE_ROUTE_LOCAL_KEY, "") || "").trim().toLowerCase();
+  const persistedLocal = canonicalizeRoute(load(ROUTE_STATE_ROUTE_LOCAL_KEY, ""));
   if (KNOWN_ROUTES.has(persistedLocal) && persistedLocal !== "dashboard") {
     return normalizeRoute(persistedLocal);
   }
-  const hinted = String(window.__APP_INITIAL_ROUTE__ || "").trim().toLowerCase();
+  const hinted = canonicalizeRoute(window.__APP_INITIAL_ROUTE__);
   if (KNOWN_ROUTES.has(hinted)) {
     return normalizeRoute(hinted);
   }
@@ -2501,11 +2521,11 @@ function resolveInitialRoute() {
 }
 
 function resolveInitialAdminPage() {
-  const persisted = String(readSessionStorageKey(ROUTE_STATE_ADMIN_PAGE_KEY) || "").trim().toLowerCase();
+  const persisted = canonicalizeAdminPage(String(readSessionStorageKey(ROUTE_STATE_ADMIN_PAGE_KEY) || "").trim().toLowerCase());
   if (KNOWN_ADMIN_PAGES.has(persisted)) {
     return persisted;
   }
-  const persistedLocal = String(load(ROUTE_STATE_ADMIN_PAGE_LOCAL_KEY, "") || "").trim().toLowerCase();
+  const persistedLocal = canonicalizeAdminPage(String(load(ROUTE_STATE_ADMIN_PAGE_LOCAL_KEY, "") || "").trim().toLowerCase());
   if (KNOWN_ADMIN_PAGES.has(persistedLocal)) {
     return persistedLocal;
   }
@@ -4734,11 +4754,11 @@ function isUserCoursesAccessEnabled(user) {
 }
 
 function getMcqAccessBlockedMessage() {
-  return "MCQ Bank access is disabled for this account. Courses remain available if you are enrolled.";
+  return "MCQ Bank access is disabled for this account. Video Courses remain available if you are enrolled.";
 }
 
 function getCoursesAccessBlockedMessage() {
-  return "Courses access is unavailable for this account. Contact the admin if you need access.";
+  return "Video Courses access is unavailable for this account. Contact the admin if you need access.";
 }
 
 function getAuthProviderFromAuthUser(authUser) {
@@ -13126,7 +13146,7 @@ function markAdminQuestionCountsStale(options = {}) {
   if (options?.refresh === true && getCurrentUser()?.role === "admin") {
     refreshAdminQuestionCountSnapshot({ force: true })
       .then((ok) => {
-        if (ok && state.route === "admin" && ["dashboard", "courses"].includes(String(state.adminPage || ""))) {
+        if (ok && state.route === "admin" && ["dashboard", "mcq-subjects"].includes(String(state.adminPage || ""))) {
           state.skipNextRouteAnimation = true;
           render();
         }
@@ -16635,7 +16655,7 @@ function isEditableCourseProtectionTarget(target) {
 }
 
 function isProtectedCoursesRoute() {
-  return String(state.route || "").trim().toLowerCase() === "courses";
+  return String(state.route || "").trim().toLowerCase() === "video-courses";
 }
 
 function isInsideProtectedCoursesSurface(target) {
@@ -16817,13 +16837,13 @@ function bindGlobalEvents() {
       if (shouldBlockStudentCoursesPortal()) {
         state.userMenuOpen = false;
         state.notificationMenuOpen = false;
-        navigate("courses");
+        navigate("video-courses");
         return;
       }
       const requestedTab = String(actionTarget?.getAttribute("data-tab") || "dashboard").trim();
       const previousTab = String(state.coursesHomeTab || "dashboard").trim() || "dashboard";
       const nextTab = ["dashboard", "enrolled", "suggestions"].includes(requestedTab) ? requestedTab : "dashboard";
-      if (state.route === "courses" && (state.coursesView !== "home" || previousTab !== nextTab)) {
+      if (state.route === "video-courses" && (state.coursesView !== "home" || previousTab !== nextTab)) {
         setCoursesTabTransition(previousTab, nextTab);
       }
       state.coursesHomeTab = nextTab;
@@ -16835,8 +16855,8 @@ function bindGlobalEvents() {
       state.coursesSearch = "";
       state.coursesFilter = "all";
       state.coursesStatusFilter = "all";
-      if (state.route !== "courses") {
-        navigate("courses");
+      if (state.route !== "video-courses") {
+        navigate("video-courses");
       } else {
         state.skipNextRouteAnimation = true;
         render();
@@ -16858,15 +16878,15 @@ function bindGlobalEvents() {
 
     if (action === "courses-coming-soon-notice") {
       const reason = getStudentCoursesPortalBlockReason(getCurrentUser());
-      toast(reason === "courses_access_disabled" ? getCoursesAccessBlockedMessage() : "Courses are coming soon.");
+      toast(reason === "courses_access_disabled" ? getCoursesAccessBlockedMessage() : "Video Courses are coming soon.");
       return;
     }
 
     if (action === "admin-top-tab") {
       const requestedTab = String(actionTarget?.getAttribute("data-tab") || "data").trim();
       state.route = "admin";
-      state.adminPage = requestedTab === "courses" ? "course-platform" : "dashboard";
-      if (requestedTab === "courses") {
+      state.adminPage = requestedTab === "video-courses" ? ADMIN_COURSES_PLATFORM_PAGE : "dashboard";
+      if (requestedTab === "video-courses") {
         state.adminCoursePlatformSection = getAdminCoursePlatformSection();
       }
       state.adminQuestionModalOpen = false;
@@ -17146,13 +17166,13 @@ function navigate(route, extras = {}) {
 function getRouteTransitionMode(fromRoute, targetRoute) {
   const from = String(fromRoute || "").trim().toLowerCase();
   const to = String(targetRoute || "").trim().toLowerCase();
-  if ((from === "app-launcher" && to === "courses") || (from === "courses" && to === "app-launcher")) {
+  if ((from === "app-launcher" && to === "video-courses") || (from === "video-courses" && to === "app-launcher")) {
     return "courses-app";
   }
-  if (to === "courses") {
+  if (to === "video-courses") {
     return "courses-in";
   }
-  if (from === "courses") {
+  if (from === "video-courses") {
     return "courses-out";
   }
   return "page";
@@ -19112,7 +19132,7 @@ async function buildAdminActivityReportSnapshot() {
     runWithTimeoutResult(
       client.from("courses").select("id,course_name,course_code"),
       ADMIN_REQUEST_TIMEOUT_MS,
-      "Courses query timed out.",
+      "MCQ subjects query timed out.",
     ),
   ]);
 
@@ -20309,7 +20329,7 @@ function render() {
     const pendingStudentAllowedRoute = user.role === "student"
       && (
         state.route === "app-launcher"
-        || (state.route === "courses" && isUserCoursesAccessEnabled(user))
+        || (state.route === "video-courses" && isUserCoursesAccessEnabled(user))
       );
     if (!pendingStudentAllowedRoute) {
       removeStorageKey(STORAGE_KEYS.currentUserId);
@@ -20343,7 +20363,7 @@ function render() {
 
   if (
     user?.role === "student"
-    && state.route === "courses"
+    && state.route === "video-courses"
     && !isUserCoursesAccessEnabled(user)
   ) {
     state.route = "app-launcher";
@@ -20379,10 +20399,10 @@ function render() {
   const isExamWideRoute = state.route === "session" || state.route === "review";
   const isAdminRoute = state.route === "admin";
   const isPublicMarketingRoute = PUBLIC_MARKETING_ROUTE_SET.has(String(state.route || ""));
-  const coursesTransitionKey = state.route === "courses" ? getCoursesTransitionKey() : "";
+  const coursesTransitionKey = state.route === "video-courses" ? getCoursesTransitionKey() : "";
   if (
-    state.route === "courses"
-    && lastRenderedRoute === "courses"
+    state.route === "video-courses"
+    && lastRenderedRoute === "video-courses"
     && lastRenderedCoursesTransitionKey
     && coursesTransitionKey !== lastRenderedCoursesTransitionKey
     && !state.coursesTransitionMode
@@ -20469,7 +20489,7 @@ function render() {
         appEl.innerHTML = renderAppLauncher();
         wireAppLauncher();
         break;
-      case "courses":
+      case "video-courses":
         appEl.innerHTML = renderCourses();
         wireCourses();
         break;
@@ -20540,7 +20560,7 @@ function render() {
   discardUnrestoredLessonVideoContainer();
 
   const isAdminQuestionModalOpen = state.route === "admin" && state.adminPage === "questions" && state.adminQuestionModalOpen;
-  const isAdminCourseTopicModalOpen = state.route === "admin" && state.adminPage === "courses" && Boolean(state.adminCourseTopicModalCourse);
+  const isAdminCourseTopicModalOpen = state.route === "admin" && state.adminPage === "mcq-subjects" && Boolean(state.adminCourseTopicModalCourse);
   document.body.classList.toggle("is-admin-question-modal-open", isAdminQuestionModalOpen);
   document.body.classList.toggle("is-admin-course-topic-modal-open", isAdminCourseTopicModalOpen);
   if (isAdminQuestionModalOpen && !wasAdminQuestionModalOpen) {
@@ -20603,7 +20623,7 @@ function render() {
   lastRenderedSessionPointer = currentSessionPointer;
 
   if (skipTransition) {
-    lastRenderedCoursesTransitionKey = state.route === "courses" ? getCoursesTransitionKey() : "";
+    lastRenderedCoursesTransitionKey = state.route === "video-courses" ? getCoursesTransitionKey() : "";
     state.coursesTransitionMode = "";
     lastRenderedRoute = state.route;
     state.skipNextRouteAnimation = false;
@@ -20617,7 +20637,7 @@ function render() {
   }
   renderLucideIcons();
   runGsapRouteEnhancements({ deferScroll: routeChanged });
-  lastRenderedCoursesTransitionKey = state.route === "courses" ? getCoursesTransitionKey() : "";
+  lastRenderedCoursesTransitionKey = state.route === "video-courses" ? getCoursesTransitionKey() : "";
   state.coursesTransitionMode = "";
   lastRenderedRoute = state.route;
   restoreFocusState();
@@ -20787,21 +20807,21 @@ function syncTopbar() {
   if (user && !maintenanceRestricted) {
     const currentRoute = state.route;
     const isMcqRoute = ["dashboard", "create-test", "analytics", "qbank", "session", "review", "notifications", "profile"].includes(currentRoute);
-    const isCourseRoute = currentRoute === "courses";
+    const isCourseRoute = currentRoute === "video-courses";
     const isAppLauncher = currentRoute === "app-launcher";
     privateNavEl.innerHTML = ``;
     if (isAdmin) {
-      const isCourseAdminPage = currentRoute === "admin" && String(state.adminPage || "").trim() === "course-platform";
+      const isCourseAdminPage = currentRoute === "admin" && String(state.adminPage || "").trim() === ADMIN_COURSES_PLATFORM_PAGE;
       privateNavEl.innerHTML = `
         <button data-action="admin-top-tab" data-tab="data" class="${!isCourseAdminPage ? "is-active" : ""}">Questions</button>
-        <button data-action="admin-top-tab" data-tab="courses" class="${isCourseAdminPage ? "is-active" : ""}">Courses</button>
+        <button data-action="admin-top-tab" data-tab="video-courses" class="${isCourseAdminPage ? "is-active" : ""}">Video Courses</button>
       `;
       privateNavEl.classList.remove("hidden");
     } else if (isAppLauncher) {
       privateNavEl.innerHTML = `
         <button data-nav="app-launcher" class="is-active">Apps</button>
         ${canOpenMcqBank ? '<button data-action="open-mcq-bank">MCQ Bank</button>' : ""}
-        <button data-action="courses-home-tab" data-tab="dashboard">Courses</button>
+        <button data-action="courses-home-tab" data-tab="dashboard">Video Courses</button>
       `;
       privateNavEl.classList.remove("hidden");
     } else if (isMcqRoute) {
@@ -20821,7 +20841,7 @@ function syncTopbar() {
       const courseTab = String(state.coursesHomeTab || "dashboard").trim();
       privateNavEl.innerHTML = `
         <button data-action="courses-home-tab" data-tab="dashboard" class="${courseTab === "dashboard" && state.coursesView === "home" ? "is-active" : ""}">Dashboard</button>
-        <button data-action="courses-home-tab" data-tab="enrolled" class="${courseTab === "enrolled" && state.coursesView === "home" ? "is-active" : ""}">My Courses</button>
+        <button data-action="courses-home-tab" data-tab="enrolled" class="${courseTab === "enrolled" && state.coursesView === "home" ? "is-active" : ""}">My Video Courses</button>
         <button data-action="courses-home-tab" data-tab="suggestions" class="${courseTab === "suggestions" && state.coursesView === "home" ? "is-active" : ""}">Explore</button>
       `;
       privateNavEl.classList.remove("hidden");
@@ -20930,7 +20950,7 @@ function syncMobileTabBar() {
   const items = [
     { label: "Home", attrs: 'data-nav="app-launcher"', active: route === "app-launcher", icon: icon.home },
     canOpenMcqBank ? { label: "Practice", attrs: 'data-action="open-mcq-bank"', active: mcqActive && route !== "analytics", icon: icon.mcq } : null,
-    canOpenCourses ? { label: "Courses", attrs: 'data-action="courses-home-tab" data-tab="dashboard"', active: route === "courses", icon: icon.courses } : null,
+    canOpenCourses ? { label: "Video Courses", attrs: 'data-action="courses-home-tab" data-tab="dashboard"', active: route === "video-courses", icon: icon.courses } : null,
     canOpenMcqBank ? { label: "Performance", attrs: 'data-nav="analytics"', active: route === "analytics", icon: icon.performance } : null,
     { label: "Profile", attrs: 'data-nav="profile"', active: route === "profile", icon: icon.profile },
   ].filter(Boolean);
@@ -21537,7 +21557,7 @@ function landingCoursesSectionHtml() {
   return `
     <div class="lp-product">
       <div class="lp-product-head">
-        <p class="lp-kicker">Courses</p>
+        <p class="lp-kicker">Video Courses</p>
         <h2 class="lp-product-title">Secure course video, on any device.</h2>
         <p class="lp-product-lede">Watch lectures through a protected streaming pipeline, with access controlled by your course admin.</p>
       </div>
@@ -22194,7 +22214,7 @@ function renderAuth(mode) {
                 </label>
               </div>
               <div class="signup-course-field">
-                <p class="signup-course-label">Courses (from selected year and semester)</p>
+                <p class="signup-course-label">MCQ Subjects (from selected year and semester)</p>
                 <div id="signup-course-options" class="signup-course-grid">
                   ${defaultCourses
             .map(
@@ -22278,7 +22298,7 @@ function renderAuth(mode) {
               </label>
             </div>
             <div class="signup-course-field">
-              <p class="signup-course-label">Courses (from selected year and semester)</p>
+              <p class="signup-course-label">MCQ Subjects (from selected year and semester)</p>
               <div id="signup-course-options" class="signup-course-grid">
                 ${defaultCourses
           .map(
@@ -23256,7 +23276,7 @@ function renderCompleteProfile() {
           </label>
         </div>
         <div class="signup-course-field">
-          <p class="signup-course-label">Courses for selected year/semester</p>
+          <p class="signup-course-label">MCQ Subjects for selected year/semester</p>
           <div id="complete-profile-course-options" class="signup-course-grid">
             ${courses
               .map(
@@ -27827,7 +27847,7 @@ function renderProfile() {
           ${user.role === "student" ? `<p><b>Year/Semester:</b> ${normalizeAcademicYearOrNull(user.academicYear) ?? "-"} / ${normalizeAcademicSemesterOrNull(user.academicSemester) ?? "-"}</p>` : ""}
           <p><b>Phone:</b> ${escapeHtml(user.phone || "-")}</p>
           <p><b>Access approved:</b> ${isUserAccessApproved(user) ? "Yes" : "Pending admin approval"}</p>
-          <p><b>Assigned courses:</b> ${escapeHtml((user.assignedCourses || []).join(", "))}</p>
+          <p><b>Assigned MCQ subjects:</b> ${escapeHtml((user.assignedCourses || []).join(", "))}</p>
           <p><b>Email verified:</b> ${user.verified ? "Yes" : "No"}</p>
         </article>
       </div>
@@ -28188,7 +28208,7 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
 
   const coursePreviewEl = row.querySelector(".admin-course-preview");
   if (coursePreviewEl) {
-    coursePreviewEl.textContent = coursePreview || "No courses assigned";
+    coursePreviewEl.textContent = coursePreview || "No MCQ subjects assigned";
     coursePreviewEl.title = visibleCourses.join(", ");
   }
 
@@ -28207,7 +28227,7 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
   const coursesStatusBadge = row.querySelector("[data-user-courses-status-badge]");
   if (coursesStatusBadge) {
     coursesStatusBadge.className = `badge ${coursesAccessEnabled ? "good" : "neutral"}`;
-    coursesStatusBadge.textContent = `Courses ${coursesAccessEnabled ? "on" : "off"}`;
+    coursesStatusBadge.textContent = `Video Courses ${coursesAccessEnabled ? "on" : "off"}`;
   }
 
   const approvalButton = row.querySelector("[data-action='toggle-user-approval']");
@@ -28235,7 +28255,7 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
     coursesAccessButton.disabled = isBusy || account.role === "admin";
     coursesAccessButton.setAttribute("aria-checked", coursesAccessEnabled ? "true" : "false");
     if (!isBusy) {
-      coursesAccessButton.innerHTML = renderAdminAccessSwitchContent("Courses", coursesAccessEnabled);
+      coursesAccessButton.innerHTML = renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled);
     }
   }
 
@@ -28596,7 +28616,7 @@ function renderAdminDataSidebarNav(activeAdminPage) {
   const items = [
     ["dashboard", "Dashboard"],
     ["users", "Users"],
-    ["courses", "Course Topics"],
+    ["mcq-subjects", "MCQ Subjects"],
     ["questions", "Questions"],
     ["bulk-import", "Bulk Import"],
     ["notifications", "Notifications"],
@@ -28687,7 +28707,7 @@ function renderAdmin() {
     : "dashboard";
   const isCoursesPlatformAdmin = activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE;
   const activeCoursePlatformSection = getAdminCoursePlatformSection();
-  if (activeAdminPage === "users" || activeAdminPage === "courses" || activeAdminPage === "notifications") {
+  if (activeAdminPage === "users" || activeAdminPage === "mcq-subjects" || activeAdminPage === "notifications") {
     syncUsersWithCurriculum();
   }
 
@@ -29047,7 +29067,7 @@ function renderAdmin() {
                 <small>
                   <span class="badge ${isApproved ? "good" : "bad"}" data-user-status-badge>${isApproved ? "approved" : "pending"}</span>
                   ${account.role === "student" ? `<span class="badge ${mcqAccessEnabled ? "good" : "neutral"}" data-user-mcq-status-badge>MCQ ${mcqAccessEnabled ? "on" : "off"}</span>` : ""}
-                  ${account.role === "student" ? `<span class="badge ${coursesAccessEnabled ? "good" : "neutral"}" data-user-courses-status-badge>Courses ${coursesAccessEnabled ? "on" : "off"}</span>` : ""}
+                  ${account.role === "student" ? `<span class="badge ${coursesAccessEnabled ? "good" : "neutral"}" data-user-courses-status-badge>Video Courses ${coursesAccessEnabled ? "on" : "off"}</span>` : ""}
                 </small>
               </div>
             </td>
@@ -29074,7 +29094,7 @@ function renderAdmin() {
           }
             </td>
             <td class="admin-user-courses">
-              <small class="admin-course-preview" title="${escapeHtml(visibleCourses.join(", "))}">${escapeHtml(coursePreview || "No courses assigned")}</small>
+              <small class="admin-course-preview" title="${escapeHtml(visibleCourses.join(", "))}">${escapeHtml(coursePreview || "No MCQ subjects assigned")}</small>
             </td>
             <td class="admin-user-actions-cell">
               <div class="admin-user-actions">
@@ -29087,7 +29107,7 @@ function renderAdmin() {
                   ${renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled)}
                 </button>
                 <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-courses-access" role="switch" aria-checked="${coursesAccessEnabled ? "true" : "false"}" ${account.role === "admin" ? "disabled" : ""}>
-                  ${renderAdminAccessSwitchContent("Courses", coursesAccessEnabled)}
+                  ${renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled)}
                 </button>
                 <button class="btn ghost admin-btn-sm" data-action="toggle-user-role" ${isSelf ? "disabled" : ""}>
                   ${account.role === "admin" ? "Make student" : "Make admin"}
@@ -29247,7 +29267,7 @@ function renderAdmin() {
                 <th>Role</th>
                 <th>Year</th>
                 <th>Semester</th>
-                <th>Courses</th>
+                <th>MCQ Subjects</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -29258,7 +29278,7 @@ function renderAdmin() {
     `;
   }
 
-  if (activeAdminPage === "courses") {
+  if (activeAdminPage === "mcq-subjects") {
     const curriculumYear = sanitizeAcademicYear(state.adminCurriculumYear || 1);
     const curriculumSemester = sanitizeAcademicSemester(state.adminCurriculumSemester || 1);
     const selectedSemesterCourses = MEDBANK_CURRICULUM[curriculumYear]?.[curriculumSemester] || [];
@@ -29398,7 +29418,7 @@ function renderAdmin() {
       <section class="card admin-section" id="admin-courses-section">
         <div class="admin-courses-minimal-head">
           <div>
-            <h3 style="margin: 0;">MCQ Courses</h3>
+            <h3 style="margin: 0;">MCQ Subjects</h3>
             <p class="subtle" style="margin: 0.22rem 0 0;">MCQ Bank curriculum • Year ${curriculumYear} • Semester ${curriculumSemester}</p>
           </div>
           <form id="admin-curriculum-add-form" class="admin-courses-head-add-form" autocomplete="off">
@@ -29469,7 +29489,7 @@ function renderAdmin() {
       : "";
   }
 
-  if (activeAdminPage === "course-platform") {
+  if (activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE) {
     pageContent = adminRenderCourseBuilder(state.adminCourseBuilderCourseId);
   }
 
@@ -30316,7 +30336,7 @@ function renderAdmin() {
   return `
     <section class="panel admin-shell">
       <aside class="admin-sidebar card">
-        <h3 style="margin-top: 0;">${isCoursesPlatformAdmin ? "Courses App" : "Admin Panel"}</h3>
+        <h3 style="margin-top: 0;">${isCoursesPlatformAdmin ? "Video Courses App" : "Admin Panel"}</h3>
         <p class="subtle">${isCoursesPlatformAdmin ? "Manage the learning website: lessons, suggestions, requests, and announcements." : "Manage the full MedBank platform from one place."}</p>
         <div class="admin-sidebar-nav">
           ${isCoursesPlatformAdmin
@@ -30501,7 +30521,7 @@ function wireAdmin() {
           adminUserSearchDebounce = null;
         }
       }
-      if (page !== "courses") {
+      if (page !== "mcq-subjects") {
         state.adminCourseTopicModalCourse = "";
         state.adminCourseTopicGroupCreateModalOpen = false;
         state.adminCourseTopicInlineCreateOpen = false;
@@ -30551,7 +30571,7 @@ function wireAdmin() {
 
   appEl.querySelectorAll("[data-action='admin-open-courses']").forEach((button) => {
     button.addEventListener("click", () => {
-      state.adminPage = "courses";
+      state.adminPage = "mcq-subjects";
       state.adminCourseTopicModalCourse = "";
       state.adminCourseTopicGroupCreateModalOpen = false;
       state.adminCourseTopicInlineCreateOpen = false;
@@ -33491,7 +33511,7 @@ function wireAdmin() {
         });
         await flushAdminUserAccountSyncNow();
         patchAdminUserRowUi(row, users[idx], getCurrentUser());
-        toast(nextEnabled ? "MCQ Bank access enabled." : "MCQ Bank access disabled. Courses access is unchanged.");
+        toast(nextEnabled ? "MCQ Bank access enabled." : "MCQ Bank access disabled. Video Courses access is unchanged.");
       } catch (error) {
         users[idx].mcqAccessEnabled = !nextEnabled;
         saveLocalOnly(STORAGE_KEYS.users, users);
@@ -33529,7 +33549,7 @@ function wireAdmin() {
         return;
       }
       if (users[idx].role === "admin") {
-        toast("Admin accounts always keep Courses access.");
+        toast("Admin accounts always keep Video Courses access.");
         return;
       }
 
@@ -33540,7 +33560,7 @@ function wireAdmin() {
       button.textContent = nextEnabled ? "Enabling..." : "Disabling...";
       try {
         users[idx].coursesAccessEnabled = nextEnabled;
-        if (!nextEnabled && String(getCurrentUser()?.id || "").trim() === String(users[idx].id || "").trim() && state.route === "courses") {
+        if (!nextEnabled && String(getCurrentUser()?.id || "").trim() === String(users[idx].id || "").trim() && state.route === "video-courses") {
           resetStudentCoursesPlatformState();
         }
         save(STORAGE_KEYS.users, users, {
@@ -33549,11 +33569,11 @@ function wireAdmin() {
         });
         await flushAdminUserAccountSyncNow();
         patchAdminUserRowUi(row, users[idx], getCurrentUser());
-        toast(nextEnabled ? "Courses access enabled." : "Courses access disabled. MCQ Bank access is unchanged.");
+        toast(nextEnabled ? "Video Courses access enabled." : "Video Courses access disabled. MCQ Bank access is unchanged.");
       } catch (error) {
         users[idx].coursesAccessEnabled = !nextEnabled;
         saveLocalOnly(STORAGE_KEYS.users, users);
-        toast(`Could not update Courses access: ${getErrorMessage(error, "Action failed.")}`);
+        toast(`Could not update Video Courses access: ${getErrorMessage(error, "Action failed.")}`);
       } finally {
         button.dataset.busy = "0";
         button.classList.remove("is-loading");
@@ -33563,7 +33583,7 @@ function wireAdmin() {
           patchAdminUserRowUi(row, refreshedUser, getCurrentUser());
         } else {
           button.disabled = false;
-          button.textContent = nextEnabled ? "Courses Off" : "Courses On";
+          button.textContent = nextEnabled ? "Video Courses Off" : "Video Courses On";
         }
       }
     });
@@ -43410,7 +43430,7 @@ function recordCoursesPlatformTransientFailure(kind, error) {
     return false;
   }
   coursesPlatformRuntime[atKey] = Date.now();
-  coursesPlatformRuntime[messageKey] = getErrorMessage(error, "Courses are temporarily unavailable.");
+  coursesPlatformRuntime[messageKey] = getErrorMessage(error, "Video Courses are temporarily unavailable.");
   return true;
 }
 
@@ -43477,7 +43497,7 @@ async function loadCoursesComingSoonFlag(options = {}) {
         .select("feature_key,enabled,updated_at")
         .eq("feature_key", COURSES_COMING_SOON_FEATURE_KEY)
         .maybeSingle(),
-      "Courses availability check timed out.",
+      "Video Courses availability check timed out.",
     ).catch((error) => {
       if (isMissingRelationError(error)) {
         missingFeatureFlagTable = true;
@@ -43504,7 +43524,7 @@ async function loadCoursesComingSoonFlag(options = {}) {
       state.coursesComingSoonError = "";
       return true;
     }
-    console.warn("Could not load Courses availability flag.", error?.message || error);
+    console.warn("Could not load Video Courses availability flag.", error?.message || error);
     state.coursesComingSoonError = getErrorMessage(error, "Could not check Courses availability.");
     return false;
   } finally {
@@ -43516,19 +43536,19 @@ async function saveCoursesComingSoonFlag(enabled) {
   const client = getCoursesPlatformClient();
   const currentUser = getCurrentUser();
   if (!client || currentUser?.role !== "admin") {
-    throw new Error("Only admins can update Courses availability.");
+    throw new Error("Only admins can update Video Courses availability.");
   }
   const payload = {
     feature_key: COURSES_COMING_SOON_FEATURE_KEY,
     enabled: Boolean(enabled),
-    description: "When enabled, students see Coming soon instead of the Courses learning portal.",
+    description: "When enabled, students see Coming soon instead of the Video Courses portal.",
     updated_by: isUuidValue(getUserProfileId(currentUser)) ? getUserProfileId(currentUser) : null,
   };
   state.coursesComingSoonSaving = true;
   try {
     await runRelationalQueryWithTimeout(
       client.from("app_feature_flags").upsert(payload, { onConflict: "feature_key", defaultToNull: false }),
-      "Courses availability update timed out.",
+      "Video Courses availability update timed out.",
     ).catch((error) => {
       if (isMissingRelationError(error)) {
         state.coursesComingSoonError = COURSES_COMING_SOON_MIGRATION_REQUIRED_MESSAGE;
@@ -43668,12 +43688,12 @@ function scheduleStudentCoursesEmptyEnrollmentRetry() {
   }
   coursesPlatformRuntime.emptyEnrollmentRetryTimer = window.setTimeout(() => {
     coursesPlatformRuntime.emptyEnrollmentRetryTimer = null;
-    if (state.route !== "courses") {
+    if (state.route !== "video-courses") {
       return;
     }
     loadStudentCoursesWithProgress({ force: true })
       .then(() => {
-        if (state.route === "courses") {
+        if (state.route === "video-courses") {
           state.skipNextRouteAnimation = true;
           render();
         }
@@ -43894,7 +43914,7 @@ function buildLocalDemoPlatformData(user = getCurrentUser()) {
       level: "Year 1",
       estimated_duration: "2 weeks",
       instructor_name: "Dr. Demo Admin",
-      instructor_bio: "Local-only instructor profile for testing the Courses app.",
+      instructor_bio: "Local-only instructor profile for testing the Video Courses app.",
       description: "An enrolled demo course with modules, lessons, announcements, and progress.",
       cover_image_url: "Assets/branding/web-logo-hero.png",
       intro_video_url: "",
@@ -44012,14 +44032,14 @@ async function loadStudentCoursesWithProgress(options = {}) {
     state.coursesError = state.coursesLoadedAt
       ? ""
       : isBrowserOffline()
-        ? "Courses need an internet connection. Reconnect and try again."
+        ? "Video Courses need an internet connection. Reconnect and try again."
         : "Your cloud session is still reconnecting. Tap Retry in a moment.";
     return Boolean(state.coursesLoadedAt);
   }
   if (!force && isCoursesPlatformTransientCooldownActive("platform")) {
     state.coursesLoading = false;
     if (!state.coursesLoadedAt) {
-      state.coursesError = "Courses are taking longer than usual to load. Tap Retry in a moment.";
+      state.coursesError = "Video Courses are taking longer than usual to load. Tap Retry in a moment.";
     }
     return Boolean(state.coursesLoadedAt);
   }
@@ -44033,7 +44053,7 @@ async function loadStudentCoursesWithProgress(options = {}) {
           .order("academic_year", { ascending: true })
           .order("academic_semester", { ascending: true })
           .order("course_name", { ascending: true }),
-        "Courses query timed out.",
+        "Video Courses query timed out.",
       ),
       runRelationalQueryWithTimeout(
         client.from("platform_course_enrollments").select("user_id,course_id,assigned_at").eq("user_id", userId),
@@ -44115,7 +44135,7 @@ async function loadStudentCoursesWithProgress(options = {}) {
     if (recordCoursesPlatformTransientFailure("platform", error)) {
       state.coursesError = state.coursesLoadedAt
         ? ""
-        : "Courses are taking longer than usual to load. Tap Retry in a moment.";
+        : "Video Courses are taking longer than usual to load. Tap Retry in a moment.";
       state.coursesLoading = false;
       return false;
     }
@@ -44231,7 +44251,7 @@ async function loadCourseDetail(courseId) {
 
 async function updateLessonProgress(lessonId, status = "in_progress", progressPercent = 0, options = {}) {
   if (shouldBlockStudentCoursesPortal()) {
-    toast("Courses are coming soon.");
+    toast("Video Courses are coming soon.");
     return false;
   }
   const userId = getCurrentCoursePlatformUserId();
@@ -44311,7 +44331,7 @@ async function updateLessonProgress(lessonId, status = "in_progress", progressPe
 
 async function requestCourseEnrollment(courseId) {
   if (shouldBlockStudentCoursesPortal()) {
-    toast("Courses are coming soon.");
+    toast("Video Courses are coming soon.");
     return false;
   }
   const client = getCoursesPlatformClient();
@@ -44540,11 +44560,11 @@ function filterCoursePlatformRows(rows, tab, query, filter) {
 function renderCoursePlatformTabs(activeTab) {
   const tabs = [
     ["dashboard", "Dashboard"],
-    ["enrolled", "My Courses"],
+    ["enrolled", "My Video Courses"],
     ["suggestions", "Explore"],
   ];
   return `
-    <div class="courses-tabs" role="tablist" aria-label="Courses sections">
+    <div class="courses-tabs" role="tablist" aria-label="Video Courses sections">
       ${tabs.map(([tab, label]) => `
         <button type="button" role="tab" aria-selected="${activeTab === tab ? "true" : "false"}" class="${activeTab === tab ? "is-active" : ""}" data-action="courses-home-tab" data-tab="${tab}">${label}</button>
       `).join("")}
@@ -44840,9 +44860,9 @@ function renderCoursesDashboard() {
   return `
     <section class="courses-dashboard-welcome">
       <div>
-        <p class="kicker">Courses</p>
+        <p class="kicker">Video Courses</p>
         <h2 class="title">Welcome back${currentUser?.name ? `, ${escapeHtml(currentUser.name.split(" ")[0])}` : ""}</h2>
-        <p class="subtle">Continue lessons, follow announcements, and track your learning from one Courses dashboard.</p>
+        <p class="subtle">Continue lessons, follow announcements, and track your learning from one Video Courses dashboard.</p>
       </div>
       <button class="btn ghost admin-btn-sm" data-nav="app-launcher" type="button">Back to Apps</button>
     </section>
@@ -45008,7 +45028,7 @@ function renderCoursesTransitionStage(markup) {
 function renderCoursesComingSoonPage() {
   if (!state.coursesComingSoonLoadedAt && !state.coursesComingSoonLoading) {
     loadCoursesComingSoonFlag().then((ok) => {
-      if (ok && state.route === "courses") {
+      if (ok && state.route === "video-courses") {
         state.skipNextRouteAnimation = true;
         render();
       }
@@ -45018,9 +45038,9 @@ function renderCoursesComingSoonPage() {
     <section class="panel courses-shell">
       <div class="card courses-empty">
         <span class="maintenance-badge">Coming soon</span>
-        <h2 class="title" style="margin-bottom: 0.4rem;">Courses are coming soon</h2>
+        <h2 class="title" style="margin-bottom: 0.4rem;">Video Courses are coming soon</h2>
         <p class="subtle" style="max-width: 560px; margin-left: auto; margin-right: auto;">
-          The Courses learning portal is being prepared by the admin team. MCQ Bank practice is still available.
+          The Video Courses portal is being prepared by the admin team. MCQ Bank practice is still available.
         </p>
         <div class="stack" style="justify-content: center;">
           <button class="btn" type="button" data-action="open-mcq-bank">Open MCQ Bank</button>
@@ -45036,7 +45056,7 @@ function renderCoursesAccessUnavailablePage() {
     <section class="panel courses-shell">
       <div class="card courses-empty">
         <span class="maintenance-badge">Unavailable</span>
-        <h2 class="title" style="margin-bottom: 0.4rem;">Courses access is unavailable</h2>
+        <h2 class="title" style="margin-bottom: 0.4rem;">Video Courses access is unavailable</h2>
         <p class="subtle" style="max-width: 560px; margin-left: auto; margin-right: auto;">
           Courses access is disabled for this account. Contact the admin if you need this portal enabled.
         </p>
@@ -45079,7 +45099,7 @@ function renderCoursesHome() {
           <div class="native-course-skeleton"><span></span><div><i></i><i></i><i></i></div></div>
           <div class="native-course-skeleton"><span></span><div><i></i><i></i><i></i></div></div>
         </div>` : `<div class="card courses-empty"><span class="inline-loader" aria-hidden="true"></span><p>Loading courses...</p></div>`) : ""}
-      ${state.coursesError ? `<div class="card courses-error"><b>Courses error</b><p>${escapeHtml(state.coursesError)}</p><button class="btn ghost admin-btn-sm" type="button" data-action="courses-retry">Retry</button></div>` : ""}
+      ${state.coursesError ? `<div class="card courses-error"><b>Video Courses error</b><p>${escapeHtml(state.coursesError)}</p><button class="btn ghost admin-btn-sm" type="button" data-action="courses-retry">Retry</button></div>` : ""}
       ${!state.coursesError && !showInitialLoading ? activeTab === "dashboard"
         ? renderCoursesDashboardTab(enrolledRows, suggestionRows)
         : renderCoursesListTab(activeTab, filteredRows, filter)
@@ -45126,7 +45146,7 @@ function renderCourseDetail(courseId) {
       <section class="panel courses-shell">
         <button class="btn ghost course-back-btn" type="button" data-action="courses-home">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-          <span>Back to Courses</span>
+          <span>Back to Video Courses</span>
         </button>
         <div class="card courses-empty">
           <span class="inline-loader" aria-hidden="true"></span>
@@ -45140,7 +45160,7 @@ function renderCourseDetail(courseId) {
       <section class="panel courses-shell">
         <button class="btn ghost course-back-btn" type="button" data-action="courses-home">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-          <span>Back to Courses</span>
+          <span>Back to Video Courses</span>
         </button>
         <div class="card courses-error">
           <b>Course unavailable</b>
@@ -45162,7 +45182,7 @@ function renderCourseDetail(courseId) {
     <section class="panel courses-shell">
       <button class="btn ghost course-back-btn" type="button" data-action="courses-home">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-        <span>Back to Courses</span>
+        <span>Back to Video Courses</span>
       </button>
       
       <div class="course-detail-hero">
@@ -45209,7 +45229,7 @@ function renderCourseDetail(courseId) {
           ${!enrollment.isEnrolled ? `
             <div class="course-detail-request-note">
               <b>${requestStatus === "pending" ? "Waiting for admin approval" : requestStatus === "rejected" ? "Request rejected" : "Enrollment requires admin approval"}</b>
-              <span>${requestStatus === "pending" ? "Your request was sent. Once an admin approves it, this course will move to My Courses." : requestStatus === "rejected" ? "You can contact an admin if you still need access to this course." : "Send a request and an admin can approve it from Access Requests."}</span>
+              <span>${requestStatus === "pending" ? "Your request was sent. Once an admin approves it, this course will move to My Video Courses." : requestStatus === "rejected" ? "You can contact an admin if you still need access to this course." : "Send a request and an admin can approve it from Access Requests."}</span>
             </div>
           ` : ""}
         </div>
@@ -45585,7 +45605,7 @@ function getRenderableCourseLessonVideoUrl(value) {
     }
     ensureCourseVideoSignedUrl(raw)
       .then((signedUrl) => {
-        if (!signedUrl || state.route !== "courses" || state.coursesView !== "lesson") return;
+        if (!signedUrl || state.route !== "video-courses" || state.coursesView !== "lesson") return;
         state.skipNextRouteAnimation = true;
         render();
       })
@@ -45665,7 +45685,7 @@ function renderLessonViewer(lessonId) {
           <span>Back to Course</span>
         </button>
         <div class="lesson-topbar-breadcrumb">
-          <span class="breadcrumb-prefix">Courses</span>
+          <span class="breadcrumb-prefix">Video Courses</span>
           <svg class="breadcrumb-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           <span class="breadcrumb-title">${escapeHtml(getCoursePlatformCourseTitle(course))}</span>
         </div>
@@ -45802,7 +45822,7 @@ function renderCourses() {
   }
   if (!state.coursesLoadedAt && !state.coursesLoading && !isCoursesPlatformTransientCooldownActive("platform")) {
     loadStudentCoursesWithProgress().then((ok) => {
-      if (state.route === "courses" && ok) {
+      if (state.route === "video-courses" && ok) {
         state.skipNextRouteAnimation = true;
         render();
       }
@@ -45948,7 +45968,7 @@ function restoreActiveLessonVideoPlaybackState(video) {
 }
 
 function preserveActiveLessonVideoContainerForRender() {
-  if (state.route !== "courses" || state.coursesView !== "lesson") return null;
+  if (state.route !== "video-courses" || state.coursesView !== "lesson") return null;
   const video = appEl?.querySelector("#course-lesson-video-player");
   const container = video?.closest(".lesson-video");
   const key = getCourseVideoResumeStorageKey();
@@ -45974,7 +45994,7 @@ function restorePreservedLessonVideoContainerForRender() {
   const preserved = courseVideoRuntime.preservedPlaybackContainer;
   if (!preserved?.container) return null;
   const key = getCourseVideoResumeStorageKey();
-  if (!key || preserved.key !== key || state.route !== "courses" || state.coursesView !== "lesson") {
+  if (!key || preserved.key !== key || state.route !== "video-courses" || state.coursesView !== "lesson") {
     return null;
   }
   const freshVideo = appEl?.querySelector("#course-lesson-video-player");
@@ -46427,7 +46447,7 @@ function wireCourses() {
         state.skipNextRouteAnimation = true;
         render();
         const ok = await loadCourseDetail(courseId);
-        if (state.route === "courses" && ok) {
+        if (state.route === "video-courses" && ok) {
           state.skipNextRouteAnimation = true;
           render();
         }
@@ -49446,7 +49466,7 @@ function renderAdminCoursesComingSoonControl() {
 function adminRenderCourseBuilder(courseId) {
   if (!state.adminCoursesPlatformLoadedAt && !state.adminCoursesPlatformLoading) {
     loadAdminCoursesPlatform().then((ok) => {
-      if (ok && state.route === "admin" && state.adminPage === "course-platform") {
+      if (ok && state.route === "admin" && state.adminPage === ADMIN_COURSES_PLATFORM_PAGE) {
         state.skipNextRouteAnimation = true;
         render();
       }
@@ -49454,7 +49474,7 @@ function adminRenderCourseBuilder(courseId) {
   }
   if (!state.coursesComingSoonLoadedAt && !state.coursesComingSoonLoading) {
     loadCoursesComingSoonFlag().then((ok) => {
-      if (ok && state.route === "admin" && state.adminPage === "course-platform") {
+      if (ok && state.route === "admin" && state.adminPage === ADMIN_COURSES_PLATFORM_PAGE) {
         state.skipNextRouteAnimation = true;
         render();
       }
@@ -49759,7 +49779,7 @@ function wireAdminCoursesPlatformBuilder() {
   root.addEventListener("change", handleFormDraftInput);
   if (!state.adminCoursesPlatformLoadedAt && !state.adminCoursesPlatformLoading) {
     loadAdminCoursesPlatform().then((ok) => {
-      if (ok && state.route === "admin" && state.adminPage === "course-platform") {
+      if (ok && state.route === "admin" && state.adminPage === ADMIN_COURSES_PLATFORM_PAGE) {
         state.skipNextRouteAnimation = true;
         render();
       }
@@ -50350,7 +50370,7 @@ function renderAppLauncher() {
               </svg>
             </div>
             <h3>MCQ Bank</h3>
-            <p>${canOpenMcqBank ? "Practice questions, customize mock tests, and track your performance trends." : "MCQ Bank is disabled for this account. Courses access is managed separately."}</p>
+            <p>${canOpenMcqBank ? "Practice questions, customize mock tests, and track your performance trends." : "MCQ Bank is disabled for this account. Video Courses access is managed separately."}</p>
             <span class="app-launcher-badge">${canOpenMcqBank ? 'Practice Portal <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>' : "No MCQ access"}</span>
           </button>
           
@@ -50362,9 +50382,9 @@ function renderAppLauncher() {
                 <path d="M6 12v5c0 1.1 2.7 3 6 3s6-1.9 6-3v-5" class="animated-path cap-path" />
               </svg>
             </div>
-            <h3>Courses</h3>
-            <p>${coursesBlocked ? (coursesBlockedByAccess ? "Courses access is disabled for this account. Contact the admin if you need this portal enabled." : "The Courses learning portal is being prepared. MCQ Bank remains available.") : "Browse interactive syllabus modules, access lessons, and view learning resources."}</p>
-            <span class="app-launcher-badge">${coursesBlocked ? (coursesBlockedByAccess ? "No Courses access" : "Coming soon") : "Learning Portal"} ${coursesBlocked ? "" : '<svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>'}</span>
+            <h3>Video Courses</h3>
+            <p>${coursesBlocked ? (coursesBlockedByAccess ? "Video Courses access is disabled for this account. Contact the admin if you need this portal enabled." : "The Video Courses portal is being prepared. MCQ Bank remains available.") : "Browse interactive syllabus modules, access lessons, and view learning resources."}</p>
+            <span class="app-launcher-badge">${coursesBlocked ? (coursesBlockedByAccess ? "No Video Courses access" : "Coming soon") : "Learning Portal"} ${coursesBlocked ? "" : '<svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>'}</span>
           </button>
         </div>
       </section>
