@@ -9,6 +9,20 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-21 — Restore Supabase connections after billing suspension
+- Confirmed the restored project resolves and serves Auth/Data APIs; production
+  browser bootstrap reads now return `200` instead of timing out.
+- Updated hosted Supabase Auth `site_url` and redirect allowlist to the renamed
+  GitHub Pages URL. Google OAuth initiation accepts the new redirect (`302`).
+- Added `appleOAuthEnabled: false` and hid Apple login/signup buttons because
+  the Apple provider is not configured in Supabase.
+- Reconciled local migration filenames with the actual hosted history, fetched
+  the five remote-only July 16 migrations, and applied the pending additive
+  `20260721120000_add_mcq_subject_alias_views.sql` migration.
+- Verified all seven Edge Functions are ACTIVE, required core tables and
+  Storage buckets exist, and both MCQ alias views use `security_invoker=true`.
+- Static cache bust: `2026-07-21.04`.
+
 ### 2026-07-21 — Fix URLs after the repo rename (OAuth + SEO)
 The GitHub repo was renamed `o6u-medbank-app` -> `Medbank-Website`, which moved
 the Pages URL. GitHub does **not** redirect renamed Pages sites, so the old URL
@@ -155,9 +169,9 @@ Design/structure only; no auth, access, sync, or data behavior changed.
 - **Approval state is now server-authoritative (fixes "approved user snaps back to pending").** Every admin user mutation stamps a per-user `profileUpdatedAt` on the local row (centrally in `save()` for ADMIN-scoped writes; the approval path additionally stamps the server's own `profiles.updated_at` returned by the update). `hydrateRelationalProfiles()` / `shouldPreferRecentLocalUserData()` now compare that per-user timestamp against the server row's `updated_at` instead of a global 30-second wall clock, so the merge survives reloads, slow hydrations, and multiple tabs. The `overlayConcurrentAdminUserWrites` fallback also covers name/email/phone now.
 - **Stale pending writes can no longer re-push old approval/access data.** The relational flush sends the freshest local users snapshot instead of the queued (possibly stale) one, and `force`-scheduled writes can bypass/unblock a previously access-denied storage key.
 - **`admin-set-user-access` Edge Function hardened (v6 deployed).** The auth ban/unban step retries once with backoff; if lifting a ban still fails during an approval, the profile's `approved` flag is reverted (consistent-deny) and reported via a new `revertedProfileIds` response field.
-- **Students detect new questions automatically (fixes "stuck unable to see newly added questions").** New `content_versions` table + statement-level triggers on `questions`/`question_choices` (migration `20260706120000_add_content_versions.sql`, applied to hosted DB). The student refresh compares the one-row server version against a local `mcq_question_content_version` and forces a question re-hydration when it moves; the content-live realtime channel also subscribes to `content_versions` updates for instant push. The hardcoded `REQUIRED_QUESTION_CATALOG_REFRESH_VERSION` constant and manual admin broadcast remain as legacy backstops.
+- **Students detect new questions automatically (fixes "stuck unable to see newly added questions").** New `content_versions` table + statement-level triggers on `questions`/`question_choices` (hosted migration `20260706140112_add_content_versions.sql`, applied to hosted DB). The student refresh compares the one-row server version against a local `mcq_question_content_version` and forces a question re-hydration when it moves; the content-live realtime channel also subscribes to `content_versions` updates for instant push. The hardcoded `REQUIRED_QUESTION_CATALOG_REFRESH_VERSION` constant and manual admin broadcast remain as legacy backstops.
 - **Admin dashboard sync is lighter and faster.** The 30-second background poll now runs a single head query (newest `profiles.updated_at` + exact count) and skips the full paged profile hydration when nothing changed; `fetchRowsPaged` fetches follow-up pages in parallel waves of 4 (first page stays a single request for small tables).
-- **Database performance/security hardening (hosted, migrations committed).** `20260706121000_add_missing_fk_indexes.sql` adds 19 advisor-flagged FK indexes. `20260706122000_consolidate_duplicate_rls_policies.sql` merges duplicate permissive SELECT/INSERT/UPDATE policies on `questions`, `question_choices`, `courses`, `course_topics`, `profiles`, `app_feature_flags`, `test_block_items` (also replacing the overlapping `items_write` ALL policy) and wraps `auth.uid()`/helper calls in initplan-safe subselects — verified behavior-preserving via before/after row-count equality under real student and admin JWT claims (rollback file included). `20260706123000_lock_down_definer_rpcs.sql` revokes anon/authenticated EXECUTE on internal SECURITY DEFINER RPCs (`bootstrap_student_enrollments_from_auth_metadata`, `delete_old_test_history_entries`), revokes anon on `get_admin_question_count_summary`, and pins `search_path` on `private.course_code_key`/`course_name_key`.
+- **Database performance/security hardening (hosted, migrations committed).** `20260706141024_add_missing_fk_indexes.sql` adds 19 advisor-flagged FK indexes. `20260706141100_consolidate_duplicate_rls_policies.sql` merges duplicate permissive SELECT/INSERT/UPDATE policies on `questions`, `question_choices`, `courses`, `course_topics`, `profiles`, `app_feature_flags`, `test_block_items` (also replacing the overlapping `items_write` ALL policy) and wraps `auth.uid()`/helper calls in initplan-safe subselects — verified behavior-preserving via before/after row-count equality under real student and admin JWT claims (rollback file included). `20260706141320_lock_down_definer_rpcs.sql` revokes anon/authenticated EXECUTE on internal SECURITY DEFINER RPCs (`bootstrap_student_enrollments_from_auth_metadata`, `delete_old_test_history_entries`), revokes anon on `get_admin_question_count_summary`, and pins `search_path` on `private.course_code_key`/`course_name_key`. The filenames now match the actual hosted migration history; the earlier local-only timestamps were removed during the post-billing connection audit.
 - Deleted the stray uncommitted duplicate `database/migrations/20260701_remove_forced_admin_promotion.sql`.
 - Manual follow-up for the owner: enable **leaked-password protection** in the Supabase Auth dashboard (advisor warning; cannot be set via SQL).
 - Bumped `app-version` to `2026-07-06.04-local`.

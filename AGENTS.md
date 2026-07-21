@@ -188,6 +188,37 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-21 — Post-billing Supabase restoration + renamed-site connection audit
+The hosted project was restored after billing suspension and audited end to end.
+
+1. **Auth URL corrected live.** Supabase Auth `site_url` now points to
+   `https://youssef256d.github.io/Medbank-Website/`; the redirect allowlist
+   includes the new URL, old URL (compatibility), and localhost. Google OAuth
+   is enabled and its authorize endpoint accepts the new callback (`302`).
+2. **Apple UI feature-gated.** Apple OAuth is disabled in the hosted project.
+   `supabase.config.js → appleOAuthEnabled: false` now hides the Apple buttons
+   instead of advertising a broken provider. Enable only after configuring the
+   Apple provider and credentials in Supabase.
+3. **Migration history reconciled.** The four July 6 migrations had been
+   applied remotely under timestamps `20260706140112`, `20260706141024`,
+   `20260706141100`, and `20260706141320`, while the repo retained older local
+   timestamps. The repo now uses the real hosted timestamps and includes the
+   five remote July 16 migrations. A dry run then showed only
+   `20260721120000_add_mcq_subject_alias_views.sql`; it was applied successfully.
+4. **Connection checks passed.** GoTrue health `200`; browser `app_state` reads
+   `200`; invalid-password auth reaches `/auth/v1/token` and returns normal
+   `400` (not a fetch failure); all seven Edge Functions are ACTIVE; admin
+   mutation endpoint rejects unauthenticated requests with `401`; all six core
+   tables exist; all four required Storage buckets exist; alias views have
+   `security_invoker=true`.
+5. **Cloudflare is intentionally dormant.** `cloudflareStreamEnabled` remains
+   false, so video courses use Supabase Storage. Cloudflare functions are
+   deployed but cannot be enabled until `CLOUDFLARE_STREAM_API_TOKEN` is added.
+6. **Static cache bust:** `2026-07-21.04`.
+
+**Files touched:** `supabase.config.js`, `main.js`, `index.html`, hosted Auth
+configuration, migration history files, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-21 — "Video Courses" vs "MCQ Subjects" naming split
 **Read `docs/NAMING.md` before touching anything course-related.** MedBank has
 two unrelated products that were both called "Courses"; that ambiguity was the
@@ -317,9 +348,9 @@ Fixed the reported sync problems: approvals reverting to pending, slow admin das
 1. **Per-user timestamp merge replaces the 30s wall clock.** Admin user writes stamp `user.profileUpdatedAt` (centrally in `save()` when `userSyncScope` is ADMIN + `profileSyncIds`; the approval path stamps the server's `profiles.updated_at` from the update's `select`). `shouldPreferRecentLocalUserData(user, serverUpdatedAtIso)` now compares per-user timestamps (legacy clock only as fallback for unstamped rows); `hydrateRelationalProfiles` persists `profileUpdatedAt = max(local, server)` on merged rows. `overlayConcurrentAdminUserWrites` additionally overlays name/email/phone.
 2. **Flush freshness guard.** `flushRelationalWrites` sends `getUsers()` (freshest local snapshot) for the users key instead of the queued snapshot, so a stale queued payload can't re-push old approval/access flags via `syncProfilesToRelational`. `scheduleRelationalWrite` with `force: true` now bypasses and unblocks `blockedStorageKeys`.
 3. **Edge Function consistency.** `admin-set-user-access`: one retry w/ backoff on auth ban updates; on approve-flow auth failure the profile `approved` flag is reverted (consistent-deny) and returned in `revertedProfileIds`.
-4. **`content_versions` signal (migration `20260706120000`).** One-row-per-scope table; statement triggers on `questions`/`question_choices` bump the `questions` version; SELECT-only RLS for `authenticated`; added to the realtime publication. `refreshStudentDataSnapshot` compares it against local `mcq_question_content_version` (STORAGE_KEYS.questionContentVersion) and forces question hydration when it moved; `ensureContentRealtimeSubscription` also listens to `content_versions` UPDATEs. `REQUIRED_QUESTION_CATALOG_REFRESH_VERSION` remains as legacy backstop. Rollback in `supabase/rollbacks/`.
+4. **`content_versions` signal (hosted migration `20260706140112`; originally authored locally as `20260706120000`).** One-row-per-scope table; statement triggers on `questions`/`question_choices` bump the `questions` version; SELECT-only RLS for `authenticated`; added to the realtime publication. `refreshStudentDataSnapshot` compares it against local `mcq_question_content_version` (STORAGE_KEYS.questionContentVersion) and forces question hydration when it moved; `ensureContentRealtimeSubscription` also listens to `content_versions` UPDATEs. `REQUIRED_QUESTION_CATALOG_REFRESH_VERSION` remains as legacy backstop. Rollback in `supabase/rollbacks/`.
 5. **Admin poll fast path.** `hydrateRelationalProfiles(user, {skipIfUnchanged:true})` (used only by the 30s dashboard poll via `refreshAdminDataSnapshot({skipUnchangedProfiles:true})`) probes newest `profiles.updated_at` + exact count and skips full hydration when unchanged (cursor cleared in `resetRelationalSyncState`). `fetchRowsPaged` fetches pages in parallel waves of 4 after a full first page.
-6. **DB hardening (user-confirmed).** Migration `20260706121000` adds 19 FK indexes. Migration `20260706122000` consolidates duplicate permissive policies on questions/question_choices/courses/course_topics/profiles/app_feature_flags/test_block_items (merged `items_write` ALL policy into per-command policies whose predicates are the exact OR of the originals) and initplan-wraps `auth.uid()`/helpers on those + `user_activity_sessions`; verified behavior-preserving by identical row counts under real student and admin JWTs before/after; rollback recreates originals verbatim. Migration `20260706123000` revokes anon/authenticated EXECUTE on internal definer RPCs, anon on `get_admin_question_count_summary`, and pins search_path on `private.course_code_key`/`course_name_key`. Remaining advisor items deliberately deferred: `platform_*` duplicate SELECT policies (low traffic) and the Auth leaked-password-protection dashboard toggle (manual step).
+6. **DB hardening (user-confirmed).** Hosted migration `20260706141024` adds 19 FK indexes. Hosted migration `20260706141100` consolidates duplicate permissive policies on questions/question_choices/courses/course_topics/profiles/app_feature_flags/test_block_items (merged `items_write` ALL policy into per-command policies whose predicates are the exact OR of the originals) and initplan-wraps `auth.uid()`/helpers on those + `user_activity_sessions`; verified behavior-preserving by identical row counts under real student and admin JWTs before/after; rollback recreates originals verbatim. Hosted migration `20260706141320` revokes anon/authenticated EXECUTE on internal definer RPCs, anon on `get_admin_question_count_summary`, and pins search_path on `private.course_code_key`/`course_name_key`. These were originally authored locally under `20260706121000`, `20260706122000`, and `20260706123000`; the repo now uses the actual hosted migration timestamps so `supabase db push` stays in sync. Remaining advisor items deliberately deferred: `platform_*` duplicate SELECT policies (low traffic) and the Auth leaked-password-protection dashboard toggle (manual step).
 7. **Housekeeping.** Deleted stray uncommitted `database/migrations/20260701_remove_forced_admin_promotion.sql`. Note: the multi-tab refresh-trigger "seen token" race suspected earlier does **not** exist — tokens are marked seen only after a successful refresh.
 8. **Static cache bust bumped.** `index.html` app-version is `2026-07-06.04-local` (drop `-local` before production).
 

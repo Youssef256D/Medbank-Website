@@ -1,11 +1,6 @@
 -- Adds a lightweight content-version signal so student clients can detect new
 -- or changed questions automatically instead of relying on a hardcoded
 -- frontend refresh-version constant or manual admin broadcasts.
---
--- content_versions is a tiny table (one row per scope). Statement-level
--- triggers on questions/question_choices bump the 'questions' scope version;
--- clients read the single row (cheap) and re-hydrate the catalog when it
--- moves. The table is added to the realtime publication for instant push.
 
 create table if not exists public.content_versions (
   scope text primary key,
@@ -25,7 +20,6 @@ create policy content_versions_select_authenticated
   for select
   to authenticated
   using (true);
--- No insert/update/delete policies: only the definer trigger function writes.
 
 create or replace function public.bump_question_content_version()
 returns trigger
@@ -54,7 +48,6 @@ create trigger trg_question_choices_bump_content_version
   after insert or update or delete on public.question_choices
   for each statement execute function public.bump_question_content_version();
 
--- Realtime push for the one-row table (safe if already added).
 do $$
 begin
   if not exists (
@@ -66,4 +59,4 @@ begin
     alter publication supabase_realtime add table public.content_versions;
   end if;
 end;
-$$;
+$$;;
