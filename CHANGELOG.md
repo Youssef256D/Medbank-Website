@@ -9,6 +9,24 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-21 — Fix URLs after the repo rename (OAuth + SEO)
+The GitHub repo was renamed `o6u-medbank-app` -> `Medbank-Website`, which moved
+the Pages URL. GitHub does **not** redirect renamed Pages sites, so the old URL
+404s. Every hardcoded reference to the old path was updated (17 occurrences):
+
+- **`supabase.config.js` `authRedirectUrl`** — this was the urgent one. OAuth
+  sign-in returned users to the dead URL, breaking Google/Apple login in
+  production. Requires the new URL to be added to the Supabase Auth redirect
+  allowlist to take effect.
+- **`index.html` / `privacy.html`** — `canonical`, `og:url`, `og:image`,
+  `twitter:image`. The canonical tag was pointing Google at a 404, which
+  actively signals deindexing.
+- **`manifest.webmanifest`** — `id`, `start_url`, `scope`; installed PWAs were
+  launching to a dead page.
+- **`sitemap.xml`** (+ `lastmod` refreshed to prompt a recrawl), `robots.txt`.
+
+Static cache bust: `2026-07-21.03`.
+
 ### 2026-07-21 — Remove the MCQ section tab bar
 Removed the Dashboard / Create Test / Analytics pill row (`renderMcqSectionTabs()`,
 `.courses-tabs.mcq-tabs`) from the top of the dashboard, create-test, and

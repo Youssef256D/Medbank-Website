@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://youssef256d.github.io/o6u-medbank-app/sitemap.xml
+Sitemap: https://youssef256d.github.io/Medbank-Website/sitemap.xml

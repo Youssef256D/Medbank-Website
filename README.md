@@ -6,7 +6,7 @@ MedBank is a hosted browser app for medical students. The website is static on G
 
 Open the deployed site:
 
-- `https://youssef256d.github.io/o6u-medbank-app/`
+- `https://youssef256d.github.io/Medbank-Website/`
 
 The app does not need a local Supabase instance, local database, or your laptop to stay running. Once GitHub Pages and the hosted Supabase project are available, students and admins can use the app from the web.
 
@@ -33,7 +33,7 @@ Canonical legal-page copy lives in `/Users/youssefayoub/Documents/Apps/MCQs Webs
 The public Privacy Policy URL for Apple App Store Connect and Google Play
 Console is:
 
-- `https://youssef256d.github.io/o6u-medbank-app/privacy.html`
+- `https://youssef256d.github.io/Medbank-Website/privacy.html`
 
 These files are source copy for generated/public legal pages. Keep them in sync
 when privacy, retention, support, account deletion, or platform behavior changes.

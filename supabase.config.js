@@ -12,7 +12,7 @@ window.__SUPABASE_CONFIG = {
   // Leave empty for GitHub Pages-only deploys or when using Supabase Edge Functions fallback.
   serverApiBaseUrl: "",
   // Optional override for OAuth callbacks; keep this aligned with Supabase Auth redirect URLs.
-  authRedirectUrl: "https://youssef256d.github.io/o6u-medbank-app/",
+  authRedirectUrl: "https://youssef256d.github.io/Medbank-Website/",
   // Native mobile deep link. Add this exact value in Supabase:
   // Authentication -> URL Configuration -> Redirect URLs
   mobileAuthRedirectUrl: "medbank://auth/callback",

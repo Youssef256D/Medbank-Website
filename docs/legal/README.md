@@ -18,7 +18,7 @@ future tools edit first.
 
 The store-listing Privacy Policy URL is:
 
-`https://youssef256d.github.io/o6u-medbank-app/privacy.html`
+`https://youssef256d.github.io/Medbank-Website/privacy.html`
 
 Update the `effectiveDate` front matter when the meaning of a page changes.
 Small wording fixes do not need a new date unless they change user rights,
