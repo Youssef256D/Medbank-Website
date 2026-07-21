@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-21 — Remove the MCQ section tab bar
+Removed the Dashboard / Create Test / Analytics pill row (`renderMcqSectionTabs()`,
+`.courses-tabs.mcq-tabs`) from the top of the dashboard, create-test, and
+analytics panels at the owner's request. The function, its three call sites, and
+the orphaned `body.native-app .mcq-tabs` CSS rule are all gone. Navigation to
+those routes is unchanged — the dashboard quick-actions and the mobile bottom
+tab bar still reach them. Static cache bust: `2026-07-21.02`.
+
 ### 2026-07-21 — "Video Courses" vs "MCQ Subjects" naming split
 The video learning platform and the MCQ question bank were both called
 "Courses", which confused students and caused AI agents (notably the Flutter app

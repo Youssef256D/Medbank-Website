@@ -463,7 +463,6 @@ body.native-app .native-quick-grid small { color: var(--native-muted); font-size
 body.native-app .native-quick-grid > button:disabled { opacity: 0.48; }
 
 /* Practice dashboard and test builder */
-body.native-app .mcq-tabs { display: none !important; }
 body.native-app .dashboard-back-to-apps { display: none; }
 body.native-app[data-native-screen="dashboard"] .app-shell > .panel:first-child { padding-top: 20px; }
 body.native-app[data-native-screen="dashboard"] .app-shell > .panel:first-child > .kicker { margin: 0 0 3px; color: var(--native-primary); }

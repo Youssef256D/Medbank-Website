@@ -23799,7 +23799,6 @@ function renderDashboard() {
   return `
     <section class="panel">
       <button class="btn ghost dashboard-back-to-apps" data-nav="app-launcher" style="margin-bottom: 0.5rem;">← Back to Apps</button>
-      ${renderMcqSectionTabs("dashboard")}
       <p class="kicker">Welcome back</p>
       <div class="flex-between">
         <h2 class="title">Dr. ${escapeHtml(user.name)}'s Dashboard</h2>
@@ -24820,7 +24819,6 @@ function renderCreateTest() {
 
   return `
     <section class="panel">
-      ${renderMcqSectionTabs("create-test")}
       <h2 class="title">Create a Test</h2>
       <p class="subtle">Choose course and topics, then generate a test block.</p>
       ${inProgress
@@ -27666,7 +27664,6 @@ function renderAnalytics() {
 
   return `
     <section class="panel">
-      ${renderMcqSectionTabs("analytics")}
       <h2 class="title">Performance Analytics</h2>
       <p class="subtle">Real insights from your completed tests — what is improving and what to study next.</p>
       ${isNativeAppUi() ? `
@@ -44575,21 +44572,6 @@ function renderCoursePlatformTabs(activeTab) {
 // Section nav for the MCQ side of the app (Dashboard / Create Test / Analytics),
 // styled identically to the Courses tabs (.courses-tabs). `activeRoute` is the
 // current state.route.
-function renderMcqSectionTabs(activeRoute) {
-  const tabs = [
-    ["dashboard", "Dashboard"],
-    ["create-test", "Create Test"],
-    ["analytics", "Analytics"],
-  ];
-  return `
-    <div class="courses-tabs mcq-tabs" role="tablist" aria-label="MCQ sections">
-      ${tabs.map(([route, label]) => `
-        <button type="button" role="tab" aria-selected="${activeRoute === route ? "true" : "false"}" class="${activeRoute === route ? "is-active" : ""}" data-nav="${route}">${label}</button>
-      `).join("")}
-    </div>
-  `;
-}
-
 function renderCoursePlatformCard(row, options = {}) {
   const { course, enrollment, progress, lessonCount, moduleCount, completedLessons, lastLesson, status, newLessons, newAnnouncements } = row;
   const title = getCoursePlatformCourseTitle(course);
