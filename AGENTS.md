@@ -218,7 +218,7 @@ single biggest source of agent error in this repo.
    `node --check main.js` passes, nav renders "MCQ Bank / Video Courses",
    admin sidebar renders "MCQ Subjects", and legacy `#courses` resolves rather
    than dead-ending.
-7. **Static cache bust bumped.** `index.html` app-version is `2026-07-21.01-local`.
+7. **Static cache bust bumped.** `index.html` app-version is `2026-07-21.01`.
 
 **Files touched:** `main.js`, `index.html`, `docs/NAMING.md`,
 `supabase/migrations/20260721120000_add_mcq_subject_alias_views.sql`,
