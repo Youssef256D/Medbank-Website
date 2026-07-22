@@ -1,0 +1,5 @@
+[shell_environment_policy]
+inherit = "core"
+
+[mcp_servers.supabase]
+url = "https://mcp.supabase.com/mcp?project_ref=fzjzjzdamehxbgikiskt"

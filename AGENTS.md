@@ -188,6 +188,50 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-22 — One-device enforcement rolled back
+The one-registered-device feature is **not active**. It was applied briefly and
+then disabled because it blocked existing devices.
+
+1. Migration `20260722032411_rollback_one_registered_device.sql` removes
+   `user_devices`, the public device RPCs, private helpers, and every added
+   restrictive RLS/Storage policy, restoring the previous access functions and
+   anonymous `app_state` policies.
+2. The static SPA and Cloudflare Stream token function contain no device claim
+   or session-device gate. Do not assume `user_devices`, `claim_user_device`, or
+   `check_user_device` exists in the hosted schema.
+3. Both `20260722025152_enforce_one_registered_device.sql` and its rollback stay
+   in the repository because both were applied to the hosted migration ledger.
+4. Static cache remains `2026-07-22.01`.
+
+**Files touched:** `main.js`, `index.html`, both device migration files,
+`supabase/functions/cloudflare-stream-token/index.ts`, `CHANGELOG.md`,
+`AGENTS.md`.
+
+### 2026-07-22 — Firebase device-push delivery for admin notifications
+Admin announcements now have a secure server-side push path in addition to the
+existing in-app notification rows.
+
+1. **Tokens remain private.** `push_device_tokens` has RLS enabled and no direct
+   client grants. The app can register/unregister only its own token through
+   authenticated RPC wrappers backed by `private` SECURITY DEFINER functions.
+2. **Delivery is admin-only and idempotent.** The
+   `send-push-notification` Edge Function independently validates the bearer
+   token and admin profile, targets recipient/year/all audiences, sends through
+   FCM HTTP v1, and records each token result in
+   `push_notification_deliveries` so retries skip successful sends.
+3. **Credentials stay server-side.** Never add a Firebase service-account JSON
+   to the repo or frontend. Store it only as the Supabase secret
+   `FIREBASE_SERVICE_ACCOUNT_JSON`. Firebase client identifiers/API keys are
+   injected into the mobile build through `env.json`.
+4. **Outbox retries failures.** `createRelationalNotification()` invokes the
+   function after saving the row; a zero-device or provider failure is returned
+   as unsuccessful so the existing browser outbox retries it.
+5. **Static cache bust:** `2026-07-22.01`.
+
+**Files touched:** `main.js`, `index.html`, `supabase/config.toml`,
+`supabase/functions/send-push-notification/index.ts`, migrations
+`20260722020710` and `20260722021623`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-21 — Post-billing Supabase restoration + renamed-site connection audit
 The hosted project was restored after billing suspension and audited end to end.
 

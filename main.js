@@ -10468,7 +10468,23 @@ async function createRelationalNotification(notificationPayload, actorUser, user
   const mapped = mapRelationalNotificationRowToLocal(data, {
     readByUserIds: payload.readByUserIds,
   });
-  return { ok: true, notification: mapped };
+  const { data: pushDelivery, error: pushError } = await client.functions.invoke(
+    "send-push-notification",
+    { body: { notificationId: String(data?.id || "").trim() } },
+  );
+  if (pushError || pushDelivery?.ok !== true) {
+    const details = String(
+      pushDelivery?.error
+      || pushError?.message
+      || "Device push delivery failed.",
+    ).trim();
+    return {
+      ok: false,
+      notification: mapped,
+      message: `Notification saved, but device push delivery will retry: ${details}`,
+    };
+  }
+  return { ok: true, notification: mapped, pushDelivery };
 }
 
 async function syncNotificationReadsToRelational(user, notificationDbIds) {
@@ -20842,7 +20858,7 @@ function syncTopbar() {
       const courseTab = String(state.coursesHomeTab || "dashboard").trim();
       privateNavEl.innerHTML = `
         <button data-action="courses-home-tab" data-tab="dashboard" class="${courseTab === "dashboard" && state.coursesView === "home" ? "is-active" : ""}">Dashboard</button>
-        <button data-action="courses-home-tab" data-tab="enrolled" class="${courseTab === "enrolled" && state.coursesView === "home" ? "is-active" : ""}">My Video Courses</button>
+        <button data-action="courses-home-tab" data-tab="enrolled" class="${courseTab === "enrolled" && state.coursesView === "home" ? "is-active" : ""}">My Courses</button>
         <button data-action="courses-home-tab" data-tab="suggestions" class="${courseTab === "suggestions" && state.coursesView === "home" ? "is-active" : ""}">Explore</button>
       `;
       privateNavEl.classList.remove("hidden");
@@ -29880,7 +29896,7 @@ function renderAdmin() {
         <div class="flex-between">
           <div>
             <h3 style="margin: 0;">Notifications</h3>
-            <p class="subtle">Send in-app notifications to all users, one user, or students by academic year.</p>
+            <p class="subtle">Send in-app and device push notifications to all users, one user, or students by academic year.</p>
           </div>
           <div class="stack" style="align-items: flex-end;">
             <p class="subtle" style="margin: 0;">Last sync: <b>${state.adminDataLastSyncAt ? new Date(state.adminDataLastSyncAt).toLocaleTimeString() : "Not yet"}</b></p>
@@ -44558,7 +44574,7 @@ function filterCoursePlatformRows(rows, tab, query, filter) {
 function renderCoursePlatformTabs(activeTab) {
   const tabs = [
     ["dashboard", "Dashboard"],
-    ["enrolled", "My Video Courses"],
+    ["enrolled", "My Courses"],
     ["suggestions", "Explore"],
   ];
   return `
@@ -45212,7 +45228,7 @@ function renderCourseDetail(courseId) {
           ${!enrollment.isEnrolled ? `
             <div class="course-detail-request-note">
               <b>${requestStatus === "pending" ? "Waiting for admin approval" : requestStatus === "rejected" ? "Request rejected" : "Enrollment requires admin approval"}</b>
-              <span>${requestStatus === "pending" ? "Your request was sent. Once an admin approves it, this course will move to My Video Courses." : requestStatus === "rejected" ? "You can contact an admin if you still need access to this course." : "Send a request and an admin can approve it from Access Requests."}</span>
+              <span>${requestStatus === "pending" ? "Your request was sent. Once an admin approves it, this course will move to My Courses." : requestStatus === "rejected" ? "You can contact an admin if you still need access to this course." : "Send a request and an admin can approve it from Access Requests."}</span>
             </div>
           ` : ""}
         </div>

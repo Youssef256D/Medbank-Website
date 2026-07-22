@@ -9,6 +9,33 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-22 — Roll back one-device enforcement
+- The one-registered-device feature was disabled after it blocked existing
+  devices. Migration `20260722032411_rollback_one_registered_device.sql`
+  removes its table, RPCs, RLS/Storage gates, and helper overrides, restoring
+  the prior student access behavior.
+- The website and Cloudflare Stream function no longer claim or check a device.
+  The forward and rollback migrations remain in source control only to match
+  the hosted migration ledger. Static cache remains `2026-07-22.01`.
+
+### 2026-07-22 — Deliver admin announcements as device push notifications
+- Added private device-token registration and push-delivery tracking tables,
+  exposed to the Flutter app only through authenticated RPCs.
+- Added the admin-only `send-push-notification` Edge Function. It resolves
+  individual, year-group, or all-user audiences and sends through Firebase
+  Cloud Messaging HTTP v1 without exposing server credentials to the browser.
+- The admin notification outbox now invokes push delivery after the relational
+  announcement is saved and retains failed jobs for retry.
+- Delivery becomes active once the Firebase mobile client values are included
+  in app builds and `FIREBASE_SERVICE_ACCOUNT_JSON` is set as a Supabase Edge
+  Function secret. Static cache bust: `2026-07-22.01`.
+
+### 2026-07-21 — Rename the enrolled-video tab to “My Courses”
+Changed the student Video Courses enrolled tab and its matching access-request
+message from “My Video Courses” to the shorter “My Courses”. The overall
+product name remains “Video Courses”, and MCQ curriculum units remain “MCQ
+Subjects”. Static cache bust: `2026-07-21.05`.
+
 ### 2026-07-21 — Restore Supabase connections after billing suspension
 - Confirmed the restored project resolves and serves Auth/Data APIs; production
   browser bootstrap reads now return `200` instead of timing out.
