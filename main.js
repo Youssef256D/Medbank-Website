@@ -112,6 +112,18 @@ const LEGACY_ADMIN_PAGE_ALIASES = new Map([
   ["courses", "mcq-subjects"],
   ["course-platform", "video-courses"],
 ]);
+const NOTIFICATION_DESTINATION_OPTIONS = Object.freeze([
+  { route: "", label: "Notifications page only" },
+  { route: "app-launcher", label: "Apps home" },
+  { route: "dashboard", label: "MCQ Bank dashboard" },
+  { route: "create-test", label: "Create an MCQ test" },
+  { route: "analytics", label: "MCQ analytics" },
+  { route: "video-courses", label: "Video Courses" },
+  { route: "profile", label: "Profile" },
+]);
+const NOTIFICATION_DESTINATION_ROUTE_SET = new Set(
+  NOTIFICATION_DESTINATION_OPTIONS.map((entry) => entry.route).filter(Boolean),
+);
 function canonicalizeRoute(value) {
   const raw = String(value || "").trim().toLowerCase();
   return LEGACY_ROUTE_ALIASES.get(raw) || raw;
@@ -119,6 +131,40 @@ function canonicalizeRoute(value) {
 function canonicalizeAdminPage(value) {
   const raw = String(value || "").trim();
   return LEGACY_ADMIN_PAGE_ALIASES.get(raw) || raw;
+}
+function normalizeNotificationDestinationRoute(value) {
+  const route = canonicalizeRoute(value);
+  return NOTIFICATION_DESTINATION_ROUTE_SET.has(route) ? route : "";
+}
+function getNotificationDestinationLabel(value) {
+  const route = normalizeNotificationDestinationRoute(value);
+  return NOTIFICATION_DESTINATION_OPTIONS.find((entry) => entry.route === route)?.label
+    || "Notifications page only";
+}
+function getNotificationVideoCourseById(courseId) {
+  const targetId = String(courseId || "").trim();
+  if (!targetId) return null;
+  return [
+    ...(Array.isArray(state.adminNotificationVideoCourses) ? state.adminNotificationVideoCourses : []),
+    ...(Array.isArray(state.adminCoursesPlatformCourses) ? state.adminCoursesPlatformCourses : []),
+    ...(Array.isArray(state.coursesCatalog) ? state.coursesCatalog : []),
+  ].find((course) => String(course?.id || "").trim() === targetId) || null;
+}
+function getNotificationDestinationLabelForRecord(notification) {
+  const route = normalizeNotificationDestinationRoute(notification?.targetRoute);
+  const subject = String(notification?.targetMcqSubject || "").trim();
+  const topic = String(notification?.targetMcqTopic || "").trim();
+  if (route === "create-test" && topic) {
+    return `Create Test: ${topic}`;
+  }
+  if (route === "create-test" && subject) {
+    return `Create Test: ${subject}`;
+  }
+  if (route === "video-courses" && notification?.targetVideoCourseId) {
+    const course = getNotificationVideoCourseById(notification.targetVideoCourseId);
+    return course ? getCoursePlatformCourseTitle(course) : "Selected Video Course";
+  }
+  return getNotificationDestinationLabel(route);
 }
 // The native mobile app (Capacitor) has no public marketing site — it opens
 // straight to the login page. Detect the native/app shell from window/location
@@ -511,6 +557,14 @@ const state = {
   adminNotificationTargetUserId: "",
   adminNotificationTargetQuery: "",
   adminNotificationTargetYear: 1,
+  adminNotificationDestinationRoute: "",
+  adminNotificationTargetMcqSubject: "",
+  adminNotificationTargetMcqTopic: "",
+  adminNotificationTargetVideoCourseId: "",
+  adminNotificationVideoCourses: [],
+  adminNotificationVideoCoursesLoading: false,
+  adminNotificationVideoCoursesLoadedAt: 0,
+  adminNotificationVideoCoursesError: "",
   adminNotificationTitle: "",
   adminNotificationBody: "",
   adminNotificationSending: false,
@@ -10257,7 +10311,7 @@ async function hydrateRelationalNotifications(currentUser) {
     return false;
   }
 
-  const selectColumns = "id,external_id,recipient_user_id,title,message,created_by,created_by_name,created_at,is_active";
+  const selectColumns = "id,external_id,recipient_user_id,title,message,target_route,target_mcq_subject,target_mcq_topic,target_video_course_id,created_by,created_by_name,created_at,is_active";
   const notificationFetchOptions = {
     pageSize: 100,
     timeoutMs: NOTIFICATION_HYDRATE_TIMEOUT_MS,
@@ -10452,11 +10506,15 @@ async function createRelationalNotification(notificationPayload, actorUser, user
       recipient_user_id: recipientProfileId || null,
       title: payload.title,
       message: payload.body,
+      target_route: payload.targetRoute || null,
+      target_mcq_subject: payload.targetMcqSubject || null,
+      target_mcq_topic: payload.targetMcqTopic || null,
+      target_video_course_id: payload.targetVideoCourseId || null,
       created_by: isUuidValue(creatorProfileId) ? creatorProfileId : null,
       created_by_name: String(user.name || "Admin").trim() || "Admin",
       is_active: true,
     }], { onConflict: "external_id", defaultToNull: false })
-    .select("id,external_id,recipient_user_id,title,message,created_by,created_by_name,created_at,is_active")
+    .select("id,external_id,recipient_user_id,title,message,target_route,target_mcq_subject,target_mcq_topic,target_video_course_id,created_by,created_by_name,created_at,is_active")
     .single();
   if (error) {
     if (isMissingRelationError(error)) {
@@ -16788,6 +16846,28 @@ function bindGlobalEvents() {
       return;
     }
 
+    if (action === "notification-open") {
+      const user = getCurrentUser();
+      const notificationId = String(actionTarget?.getAttribute("data-notification-id") || "").trim();
+      const notification = getNotificationById(notificationId);
+      if (!user || user.role !== "student" || !notification || !isNotificationVisibleToUser(notification, user)) {
+        return;
+      }
+      state.userMenuOpen = false;
+      state.notificationMenuOpen = false;
+      if (!isNotificationReadByUser(notification, user)) {
+        markNotificationsReadForUser(user, [notification.id]).then((result) => {
+          if (result.syncDeferred) {
+            toast("Opened notification. Read status will sync when the connection is available.");
+          } else if (result.syncWarning) {
+            toast(`Opened notification, but read status could not sync: ${result.syncWarning}`);
+          }
+        }).catch(() => { });
+      }
+      await openNotificationDestination(notification, user);
+      return;
+    }
+
     if (action === "toggle-theme") {
       state.userMenuOpen = false;
       state.notificationMenuOpen = false;
@@ -20693,16 +20773,30 @@ function renderTopbarNotificationMenu(user, unreadNotificationCount, unreadNotif
     const bodyPreview = bodyText.length > 110 ? `${bodyText.slice(0, 107)}...` : bodyText;
     const safeNotificationId = escapeHtml(notification.id);
     const timeAgo = getNotificationTimeAgo(notification.createdAt);
+    const destinationRoute = normalizeNotificationDestinationRoute(notification.targetRoute);
+    const openLabel = destinationRoute
+      ? `Open ${getNotificationDestinationLabelForRecord(notification)}`
+      : "View notification";
     return `
       <article class="notification-menu-item ${isRead ? "is-read" : "is-unread"}">
         <div class="notification-menu-item-top">
-          <div class="notification-menu-item-copy">
-            <div class="notification-menu-item-title-row">
-              <span class="notification-menu-unread-dot" aria-hidden="true"></span>
-              <p class="notification-menu-item-title">${escapeHtml(title)}</p>
-            </div>
-            ${timeAgo ? `<span class="notification-menu-item-time">${escapeHtml(timeAgo)}</span>` : ""}
-          </div>
+          <button
+            class="notification-menu-item-open"
+            type="button"
+            data-action="notification-open"
+            data-notification-id="${safeNotificationId}"
+            aria-label="${escapeHtml(openLabel)}"
+          >
+            <span class="notification-menu-item-copy">
+              <span class="notification-menu-item-title-row">
+                <span class="notification-menu-unread-dot" aria-hidden="true"></span>
+                <span class="notification-menu-item-title">${escapeHtml(title)}</span>
+              </span>
+              ${timeAgo ? `<span class="notification-menu-item-time">${escapeHtml(timeAgo)}</span>` : ""}
+              ${bodyPreview ? `<span class="notification-menu-item-body">${escapeHtml(bodyPreview)}</span>` : ""}
+              <span class="notification-menu-item-destination">${escapeHtml(openLabel)} <span aria-hidden="true">→</span></span>
+            </span>
+          </button>
           ${isRead
         ? `<span class="notification-menu-item-done" title="Read">
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" style="width: 12px; height: 12px; display: inline-block; vertical-align: middle;">
@@ -20723,7 +20817,6 @@ function renderTopbarNotificationMenu(user, unreadNotificationCount, unreadNotif
                 </button>`
       }
         </div>
-        ${bodyPreview ? `<p class="notification-menu-item-body">${escapeHtml(bodyPreview)}</p>` : ""}
       </article>
     `;
   }).join("");
@@ -23573,16 +23666,27 @@ function renderNotifications() {
       const isRead = isNotificationReadByUser(notification, user);
       const bodyHtml = escapeHtml(notification.body || "").replaceAll("\n", "<br />");
       const timeAgo = getNotificationTimeAgo(notification.createdAt);
+      const destinationRoute = normalizeNotificationDestinationRoute(notification.targetRoute);
+      const notificationContent = `
+        <div class="notification-card-head">
+          <div class="notification-card-title-group">
+            <h3 class="notification-card-title">${escapeHtml(notification.title || "Notification")}</h3>
+            ${timeAgo ? `<span class="notification-card-time">${escapeHtml(timeAgo)}</span>` : ""}
+          </div>
+          <span class="badge ${isRead ? "neutral" : "good"}">${isRead ? "Read" : "New"}</span>
+        </div>
+        <p class="notification-card-body">${bodyHtml || "-"}</p>
+        ${destinationRoute
+    ? `<span class="notification-card-destination">Open ${escapeHtml(getNotificationDestinationLabelForRecord(notification))} <span aria-hidden="true">→</span></span>`
+    : ""
+  }
+      `;
       return `
         <article class="card notification-card ${isRead ? "is-read" : "is-unread"}" data-notification-id="${escapeHtml(notification.id)}">
-          <div class="notification-card-head">
-            <div class="notification-card-title-group">
-              <h3 class="notification-card-title">${escapeHtml(notification.title || "Notification")}</h3>
-              ${timeAgo ? `<span class="notification-card-time">${escapeHtml(timeAgo)}</span>` : ""}
-            </div>
-            <span class="badge ${isRead ? "neutral" : "good"}">${isRead ? "Read" : "New"}</span>
-          </div>
-          <p class="notification-card-body">${bodyHtml || "-"}</p>
+          ${destinationRoute
+    ? `<button class="notification-card-open" type="button" data-action="notification-open" data-notification-id="${escapeHtml(notification.id)}" aria-label="Open ${escapeHtml(getNotificationDestinationLabelForRecord(notification))}">${notificationContent}</button>`
+    : `<div class="notification-card-content">${notificationContent}</div>`
+  }
           ${isRead
           ? ""
           : `<div class="notification-card-actions">
@@ -29870,6 +29974,21 @@ function renderAdmin() {
       : [];
     const titleDraft = String(state.adminNotificationTitle || "");
     const bodyDraft = String(state.adminNotificationBody || "");
+    const destinationRoute = normalizeNotificationDestinationRoute(state.adminNotificationDestinationRoute);
+    const targetMcqSubject = allCourses.includes(String(state.adminNotificationTargetMcqSubject || "").trim())
+      ? String(state.adminNotificationTargetMcqSubject || "").trim()
+      : "";
+    const targetMcqTopics = targetMcqSubject ? (QBANK_COURSE_TOPICS[targetMcqSubject] || []) : [];
+    const targetMcqTopic = targetMcqTopics.includes(String(state.adminNotificationTargetMcqTopic || "").trim())
+      ? String(state.adminNotificationTargetMcqTopic || "").trim()
+      : "";
+    const notificationVideoCourses = (
+      (state.adminNotificationVideoCourses || []).length
+        ? state.adminNotificationVideoCourses
+        : state.adminCoursesPlatformCourses || []
+    )
+      .filter((course) => course?.is_active !== false && course?.is_published !== false);
+    const targetVideoCourseId = String(state.adminNotificationTargetVideoCourseId || "").trim();
     const notificationSending = Boolean(state.adminNotificationSending);
     const notificationRows = getNotifications()
       .slice(0, 200)
@@ -29879,12 +29998,14 @@ function renderAdmin() {
         const body = String(notification.body || "").trim();
         const bodyPreview = body.length > 180 ? `${body.slice(0, 177)}...` : body;
         const createdLabel = new Date(notification.createdAt || nowISO()).toLocaleString();
+        const destinationLabel = getNotificationDestinationLabelForRecord(notification);
         return `
           <tr>
             <td><small>${escapeHtml(createdLabel)}</small></td>
             <td>${escapeHtml(targetLabel)}</td>
             <td><b>${escapeHtml(notification.title || "Notification")}</b></td>
             <td>${escapeHtml(bodyPreview || "-")}</td>
+            <td>${escapeHtml(destinationLabel)}</td>
             <td><small>${escapeHtml(senderLabel)}</small></td>
           </tr>
         `;
@@ -29970,6 +30091,44 @@ function renderAdmin() {
               <small class="subtle">Type a name, email, or phone, then choose a suggestion.</small>
             </label>
           </div>
+          <label>Open when clicked
+            <select name="targetRoute" id="admin-notification-target-route" ${notificationSending ? "disabled" : ""}>
+              ${NOTIFICATION_DESTINATION_OPTIONS
+        .map((entry) => `<option value="${escapeHtml(entry.route)}" ${destinationRoute === entry.route ? "selected" : ""}>${escapeHtml(entry.label)}</option>`)
+        .join("")}
+            </select>
+            <small class="subtle">Choose the student area that opens from the in-app notification or device push.</small>
+          </label>
+          <div class="form-row admin-notification-destination-fields" id="admin-notification-mcq-target-fields" ${destinationRoute === "create-test" ? "" : "hidden"}>
+            <label>MCQ Subject
+              <select name="targetMcqSubject" id="admin-notification-target-mcq-subject" ${destinationRoute === "create-test" && !notificationSending ? "" : "disabled"}>
+                <option value="">Open Create Test without a preset</option>
+                ${allCourses.map((subject) => `<option value="${escapeHtml(subject)}" ${targetMcqSubject === subject ? "selected" : ""}>${escapeHtml(subject)}</option>`).join("")}
+              </select>
+              <small class="subtle">The student must have access to this MCQ Subject.</small>
+            </label>
+            <label>Topic
+              <select name="targetMcqTopic" id="admin-notification-target-mcq-topic" ${destinationRoute === "create-test" && targetMcqSubject && !notificationSending ? "" : "disabled"}>
+                <option value="">All topics in the MCQ Subject</option>
+                ${targetMcqTopics.map((topic) => `<option value="${escapeHtml(topic)}" ${targetMcqTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`).join("")}
+              </select>
+              <small class="subtle">When selected, Create Test opens with this topic already checked.</small>
+            </label>
+          </div>
+          <label id="admin-notification-video-course-field" ${destinationRoute === "video-courses" ? "" : "hidden"}>Specific Video Course
+            <select name="targetVideoCourseId" id="admin-notification-target-video-course" ${destinationRoute === "video-courses" && !notificationSending && !state.adminNotificationVideoCoursesLoading ? "" : "disabled"}>
+              <option value="">Open the Video Courses home</option>
+              ${notificationVideoCourses.map((course) => {
+                const courseId = String(course?.id || "").trim();
+                const courseTitle = getCoursePlatformCourseTitle(course);
+                const term = `Year ${Number(course?.academic_year) || "-"}, Semester ${Number(course?.academic_semester) || "-"}`;
+                return `<option value="${escapeHtml(courseId)}" ${targetVideoCourseId === courseId ? "selected" : ""}>${escapeHtml(`${courseTitle} — ${term}`)}</option>`;
+              }).join("")}
+            </select>
+            <small class="subtle">${escapeHtml(state.adminNotificationVideoCoursesLoading
+    ? "Loading Video Courses..."
+    : state.adminNotificationVideoCoursesError || "Choose a published course to open its learning page directly.")}</small>
+          </label>
           <label>Title
             <input name="title" maxlength="120" autocomplete="off" required value="${escapeHtml(titleDraft)}" ${notificationSending ? "disabled" : ""} />
           </label>
@@ -29991,11 +30150,12 @@ function renderAdmin() {
                 <th>Target</th>
                 <th>Title</th>
                 <th>Message</th>
+                <th>Opens</th>
                 <th>Sender</th>
               </tr>
             </thead>
             <tbody>
-              ${notificationRows || `<tr><td colspan="5" class="subtle">No notifications sent yet.</td></tr>`}
+              ${notificationRows || `<tr><td colspan="6" class="subtle">No notifications sent yet.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -31233,9 +31393,60 @@ function wireAdmin() {
     const targetUserSearchInput = document.getElementById("admin-notification-target-user-search");
     const targetUserSuggestions = document.getElementById("admin-notification-target-suggestions");
     const targetUserField = document.getElementById("admin-notification-target-user-field");
+    const destinationRouteSelect = document.getElementById("admin-notification-target-route");
+    const targetMcqSubjectSelect = document.getElementById("admin-notification-target-mcq-subject");
+    const targetMcqTopicSelect = document.getElementById("admin-notification-target-mcq-topic");
+    const targetVideoCourseSelect = document.getElementById("admin-notification-target-video-course");
     const notificationUsers = getCloudNotificationTargetUsers(getUsers())
       .slice()
       .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || "")));
+
+    const captureNotificationDraft = () => {
+      if (!(notificationForm instanceof HTMLFormElement)) return;
+      const titleInput = notificationForm.elements.namedItem("title");
+      const bodyInput = notificationForm.elements.namedItem("body");
+      state.adminNotificationTitle = titleInput instanceof HTMLInputElement ? titleInput.value : "";
+      state.adminNotificationBody = bodyInput instanceof HTMLTextAreaElement ? bodyInput.value : "";
+    };
+
+    notificationForm?.elements.namedItem("title")?.addEventListener("input", captureNotificationDraft);
+    notificationForm?.elements.namedItem("body")?.addEventListener("input", captureNotificationDraft);
+    destinationRouteSelect?.addEventListener("change", () => {
+      captureNotificationDraft();
+      const route = normalizeNotificationDestinationRoute(destinationRouteSelect.value);
+      state.adminNotificationDestinationRoute = route;
+      if (route !== "create-test") {
+        state.adminNotificationTargetMcqSubject = "";
+        state.adminNotificationTargetMcqTopic = "";
+      }
+      if (route !== "video-courses") {
+        state.adminNotificationTargetVideoCourseId = "";
+      }
+      state.skipNextRouteAnimation = true;
+      render();
+    });
+    targetMcqSubjectSelect?.addEventListener("change", () => {
+      captureNotificationDraft();
+      state.adminNotificationTargetMcqSubject = String(targetMcqSubjectSelect.value || "").trim();
+      state.adminNotificationTargetMcqTopic = "";
+      state.skipNextRouteAnimation = true;
+      render();
+    });
+    targetMcqTopicSelect?.addEventListener("change", () => {
+      state.adminNotificationTargetMcqTopic = String(targetMcqTopicSelect.value || "").trim();
+    });
+    targetVideoCourseSelect?.addEventListener("change", () => {
+      state.adminNotificationTargetVideoCourseId = String(targetVideoCourseSelect.value || "").trim();
+    });
+
+    if (!state.adminNotificationVideoCoursesLoadedAt && !state.adminNotificationVideoCoursesLoading) {
+      loadAdminNotificationVideoCourseOptions().then(() => {
+        if (state.route === "admin" && state.adminPage === "notifications") {
+          state.skipNextRouteAnimation = true;
+          render();
+        }
+      });
+    }
 
     const updateSelectedTargetUser = (userId, options = {}) => {
       const normalizedId = String(userId || "").trim();
@@ -31436,8 +31647,34 @@ function wireAdmin() {
       }
       const title = String(data.get("title") || "").trim();
       const body = String(data.get("body") || "").trim();
+      const destinationRoute = normalizeNotificationDestinationRoute(data.get("targetRoute"));
+      const targetMcqSubject = destinationRoute === "create-test"
+        ? String(data.get("targetMcqSubject") || "").trim()
+        : "";
+      const targetMcqTopic = destinationRoute === "create-test" && targetMcqSubject
+        ? String(data.get("targetMcqTopic") || "").trim()
+        : "";
+      const targetVideoCourseId = destinationRoute === "video-courses"
+        ? String(data.get("targetVideoCourseId") || "").trim()
+        : "";
       if (!title || !body) {
         toast("Notification title and message are required.");
+        return;
+      }
+      if (targetMcqSubject && !Object.hasOwn(QBANK_COURSE_TOPICS, targetMcqSubject)) {
+        toast("Choose a valid MCQ Subject.");
+        return;
+      }
+      if (targetMcqTopic && !(QBANK_COURSE_TOPICS[targetMcqSubject] || []).includes(targetMcqTopic)) {
+        toast("Choose a valid topic for that MCQ Subject.");
+        return;
+      }
+      if (targetVideoCourseId && !isUuidValue(targetVideoCourseId)) {
+        toast("Choose a valid Video Course.");
+        return;
+      }
+      if (targetVideoCourseId && !getNotificationVideoCourseById(targetVideoCourseId)) {
+        toast("That Video Course is no longer available. Refresh the list and try again.");
         return;
       }
       if (targetType === "user" && !targetUserId) {
@@ -31477,6 +31714,10 @@ function wireAdmin() {
       state.adminNotificationTargetUserId = resolvedTargetUserId;
       state.adminNotificationTargetQuery = targetType === "user" ? targetUserQuery : "";
       state.adminNotificationTargetYear = resolvedTargetYear ?? (normalizeAcademicYearOrNull(state.adminNotificationTargetYear) ?? 1);
+      state.adminNotificationDestinationRoute = destinationRoute;
+      state.adminNotificationTargetMcqSubject = targetMcqSubject;
+      state.adminNotificationTargetMcqTopic = targetMcqTopic;
+      state.adminNotificationTargetVideoCourseId = targetVideoCourseId;
       state.adminNotificationTitle = title;
       state.adminNotificationBody = body;
       state.adminNotificationSending = true;
@@ -31495,6 +31736,10 @@ function wireAdmin() {
           targetYear: resolvedTargetYear,
           title,
           body,
+          targetRoute: destinationRoute,
+          targetMcqSubject,
+          targetMcqTopic,
+          targetVideoCourseId,
           createdAt: nowISO(),
           createdById: String(currentUser.id || "").trim(),
           createdByName: String(currentUser.name || "Admin").trim() || "Admin",
@@ -31520,6 +31765,10 @@ function wireAdmin() {
       state.adminNotificationTargetUserId = "";
       state.adminNotificationTargetQuery = "";
       state.adminNotificationTargetYear = normalizeAcademicYearOrNull(targetYear) ?? 1;
+      state.adminNotificationDestinationRoute = "";
+      state.adminNotificationTargetMcqSubject = "";
+      state.adminNotificationTargetMcqTopic = "";
+      state.adminNotificationTargetVideoCourseId = "";
       state.adminNotificationTitle = "";
       state.adminNotificationBody = "";
       state.adminDataLastSyncAt = Date.now();
@@ -35668,6 +35917,16 @@ function normalizeNotificationRecord(entry, fallbackId = "") {
       .map((value) => String(value || "").trim())
       .filter(Boolean),
   )];
+  const targetRoute = normalizeNotificationDestinationRoute(
+    entry.targetRoute
+    ?? entry.target_route
+    ?? entry.destinationRoute
+    ?? entry.destination_route
+    ?? "",
+  );
+  const requestedMcqSubject = String(entry.targetMcqSubject ?? entry.target_mcq_subject ?? "").trim();
+  const requestedMcqTopic = String(entry.targetMcqTopic ?? entry.target_mcq_topic ?? "").trim();
+  const requestedVideoCourseId = String(entry.targetVideoCourseId ?? entry.target_video_course_id ?? "").trim();
 
   return {
     id: idCandidate,
@@ -35677,6 +35936,12 @@ function normalizeNotificationRecord(entry, fallbackId = "") {
     targetYear: targetType === "year" ? targetYear : null,
     title: String(entry.title || "Notification").trim() || "Notification",
     body: String(entry.body || entry.message || "").trim(),
+    targetRoute,
+    targetMcqSubject: targetRoute === "create-test" ? requestedMcqSubject : "",
+    targetMcqTopic: targetRoute === "create-test" && requestedMcqSubject ? requestedMcqTopic : "",
+    targetVideoCourseId: targetRoute === "video-courses" && isUuidValue(requestedVideoCourseId)
+      ? requestedVideoCourseId
+      : "",
     createdAt,
     createdById: String(entry.createdById || entry.created_by || "").trim(),
     createdByName: String(entry.createdByName || entry.created_by_name || "Admin").trim() || "Admin",
@@ -36014,6 +36279,75 @@ function getVisibleNotificationsForUser(user) {
   return getNotifications().filter((notification) => isNotificationVisibleToUser(notification, user));
 }
 
+function getNotificationById(notificationId) {
+  const targetId = String(notificationId || "").trim();
+  if (!targetId) {
+    return null;
+  }
+  return getNotifications().find((notification) => (
+    String(notification?.id || "").trim() === targetId
+    || String(notification?.dbId || "").trim() === targetId
+  )) || null;
+}
+
+async function openNotificationDestination(notification, user = getCurrentUser()) {
+  const targetRoute = normalizeNotificationDestinationRoute(notification?.targetRoute) || "notifications";
+  if (targetRoute === "create-test") {
+    if (!user || user.role !== "student" || !isUserMcqAccessEnabled(user)) {
+      toast(getMcqAccessBlockedMessage());
+      navigate("app-launcher");
+      return;
+    }
+    const requestedSubject = String(notification?.targetMcqSubject || "").trim();
+    const availableSubjects = getAvailableCoursesForUser(user);
+    const matchedSubject = requestedSubject
+      ? availableSubjects.find((subject) => doCourseNamesMatch(subject, requestedSubject)) || ""
+      : "";
+    if (requestedSubject && !matchedSubject) {
+      toast("That MCQ Subject is not available for your enrollment. Opening Create Test instead.");
+    }
+    if (matchedSubject) {
+      const requestedTopic = String(notification?.targetMcqTopic || "").trim();
+      const matchedTopic = requestedTopic
+        ? (QBANK_COURSE_TOPICS[matchedSubject] || []).find((topic) => (
+          normalizeTopicLookupKey(topic) === normalizeTopicLookupKey(requestedTopic)
+        )) || ""
+        : "";
+      state.qbankFilters.course = matchedSubject;
+      state.qbankFilters.topics = matchedTopic ? [matchedTopic] : [];
+      state.qbankFilters.topicSource = "";
+      state.createTestSource = "all";
+      if (requestedTopic && !matchedTopic) {
+        toast("That topic is no longer available. The MCQ Subject was selected instead.");
+      }
+    }
+    state.studentMcqBankEntered = true;
+    navigate("create-test");
+    return;
+  }
+
+  const targetVideoCourseId = String(notification?.targetVideoCourseId || "").trim();
+  if (targetRoute === "video-courses" && isUuidValue(targetVideoCourseId)) {
+    state.coursesTransitionMode = "forward";
+    state.coursesView = "detail";
+    state.coursesActiveCourseId = targetVideoCourseId;
+    state.coursesActiveLessonId = "";
+    state.coursesLoading = true;
+    navigate("video-courses");
+    const opened = await loadCourseDetail(targetVideoCourseId);
+    if (state.route === "video-courses" && state.coursesActiveCourseId === targetVideoCourseId) {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+    if (!opened && !getStudentCoursesPortalBlockReason(user)) {
+      toast(state.coursesError || "This Video Course is not available for your account.");
+    }
+    return;
+  }
+
+  navigate(targetRoute);
+}
+
 function getUnreadNotificationCountForUser(user) {
   if (!user || user.role !== "student") {
     return 0;
@@ -36252,6 +36586,10 @@ function mapRelationalNotificationRowToLocal(row, options = {}) {
     targetYear: targetType === "year" ? externalIdMetadata.targetYear : null,
     title: String(row?.title || "").trim(),
     body: String(row?.message || "").trim(),
+    targetRoute: normalizeNotificationDestinationRoute(row?.target_route),
+    targetMcqSubject: String(row?.target_mcq_subject || "").trim(),
+    targetMcqTopic: String(row?.target_mcq_topic || "").trim(),
+    targetVideoCourseId: String(row?.target_video_course_id || "").trim(),
     createdAt: row?.created_at || nowISO(),
     createdById: String(row?.created_by || "").trim(),
     createdByName: String(row?.created_by_name || "Admin").trim() || "Admin",
@@ -43718,6 +44056,47 @@ function scheduleStudentCoursesEmptyEnrollmentRetry() {
 
 function getCoursePlatformCourseTitle(course) {
   return String(course?.course_name || course?.title || "Course").trim() || "Course";
+}
+
+async function loadAdminNotificationVideoCourseOptions(options = {}) {
+  if (state.adminNotificationVideoCoursesLoading && !options.force) {
+    return false;
+  }
+  if ((state.adminNotificationVideoCourses || []).length && !options.force) {
+    state.adminNotificationVideoCoursesLoadedAt = state.adminNotificationVideoCoursesLoadedAt || Date.now();
+    return true;
+  }
+  if ((state.adminCoursesPlatformCourses || []).length && !options.force) {
+    state.adminNotificationVideoCourses = [...state.adminCoursesPlatformCourses];
+    state.adminNotificationVideoCoursesLoadedAt = Date.now();
+    return true;
+  }
+  const client = getCoursesPlatformClient();
+  if (!client) {
+    state.adminNotificationVideoCoursesError = "No active Supabase admin session.";
+    return false;
+  }
+  state.adminNotificationVideoCoursesLoading = true;
+  state.adminNotificationVideoCoursesError = "";
+  try {
+    const courses = await runRelationalQueryWithTimeout(
+      client
+        .from("platform_courses")
+        .select("id,course_name,academic_year,academic_semester,is_active,is_published")
+        .order("academic_year", { ascending: true })
+        .order("academic_semester", { ascending: true })
+        .order("course_name", { ascending: true }),
+      "Video Course options query timed out.",
+    );
+    state.adminNotificationVideoCourses = Array.isArray(courses) ? courses : [];
+    state.adminNotificationVideoCoursesLoadedAt = Date.now();
+    return true;
+  } catch (error) {
+    state.adminNotificationVideoCoursesError = getErrorMessage(error, "Could not load Video Course options.");
+    return false;
+  } finally {
+    state.adminNotificationVideoCoursesLoading = false;
+  }
 }
 
 function getCoursePlatformCoverUrl(course) {

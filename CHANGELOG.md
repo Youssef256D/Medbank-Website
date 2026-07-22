@@ -9,6 +9,22 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-22 — Interactive notification deep links
+- Admins can choose where a notification opens: Apps home, the MCQ Bank
+  dashboard, Create Test, MCQ analytics, Video Courses, or Profile.
+- Create Test notifications can preselect a specific MCQ Subject and topic.
+  Video Course notifications can open a specific published course directly.
+- In-app notification rows and the top-bar notification menu now expose
+  accessible click targets, mark the selected notification read, and navigate
+  through the existing SPA router. Existing notifications without a destination
+  continue to open the Notifications page from the top bar.
+- Migration `20260722104608_add_notification_destinations.sql` adds the nullable,
+  allowlisted `notifications.target_route` column. The Firebase push function
+  forwards the same safe route and learning context in its data payload.
+  Migration `20260722110548_add_notification_deep_link_targets.sql` adds the
+  optional MCQ Subject/topic and Video Course context. Static cache bust:
+  `2026-07-22.03`.
+
 ### 2026-07-22 — Roll back one-device enforcement
 - The one-registered-device feature was disabled after it blocked existing
   devices. Migration `20260722032411_rollback_one_registered_device.sql`

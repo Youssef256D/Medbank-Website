@@ -188,6 +188,32 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-22 — Interactive notification destinations and learning deep links
+Admin notifications can deep-link to allowlisted student SPA routes and exact learning context.
+
+1. Admin Notifications has an **Open when clicked** selector for Apps home,
+   MCQ Bank dashboard, Create Test, MCQ analytics, Video Courses, and Profile.
+2. Migration `20260722104608_add_notification_destinations.sql` adds nullable
+   `notifications.target_route` with a database CHECK constraint. Never replace
+   this with arbitrary URLs; frontend and Edge Function allowlists are defense
+   in depth against unsafe redirects.
+3. Top-bar notification items and destination-enabled cards are accessible
+   buttons. Opening one marks it read locally, queues relational read sync, and
+   navigates through `navigate()`. Legacy rows with no destination remain valid.
+4. `send-push-notification` forwards the selected route in the FCM data payload,
+   falling back to `/notifications` for legacy rows. Its data payload also
+   forwards optional MCQ Subject/topic and Video Course identifiers.
+5. Create Test destinations can preselect an MCQ Subject and topic. Video
+   Courses destinations can open a selected published course directly while
+   the normal MCQ access and Video Course enrollment gates remain authoritative.
+6. Migration `20260722110548_add_notification_deep_link_targets.sql` adds the
+   constrained deep-link context columns. Static cache bust: `2026-07-22.03`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`supabase/functions/send-push-notification/index.ts`, migrations `20260722104608`
+and `20260722110548`,
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-22 — One-device enforcement rolled back
 The one-registered-device feature is **not active**. It was applied briefly and
 then disabled because it blocked existing devices.

@@ -3,6 +3,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const YEAR_AUDIENCE_PATTERN = /^year([1-5])::/i;
+const NOTIFICATION_DESTINATION_ROUTES = new Set([
+  "app-launcher",
+  "dashboard",
+  "create-test",
+  "analytics",
+  "video-courses",
+  "profile",
+]);
 const FCM_CONCURRENCY = 30;
 const QUERY_BATCH_SIZE = 150;
 const ACTIVE_TOKEN_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 120;
@@ -26,6 +34,11 @@ type AdminClient = ReturnType<typeof createClient<any>>;
 
 function isUuid(value: unknown): boolean {
   return UUID_PATTERN.test(String(value || "").trim());
+}
+
+function normalizeNotificationDestinationRoute(value: unknown): string {
+  const route = String(value || "").trim().toLowerCase();
+  return NOTIFICATION_DESTINATION_ROUTES.has(route) ? route : "notifications";
 }
 
 function parseAllowedOrigins(): string[] {
@@ -171,6 +184,7 @@ async function sendToFcm(
   notification: Record<string, unknown>,
   token: PushTokenRow,
 ): Promise<DeliveryResult> {
+  const destinationRoute = normalizeNotificationDestinationRoute(notification.target_route);
   const response = await fetch(
     `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/messages:send`,
     {
@@ -188,7 +202,10 @@ async function sendToFcm(
           },
           data: {
             notification_id: String(notification.id || ""),
-            route: "/notifications",
+            route: `/${destinationRoute}`,
+            mcq_subject: String(notification.target_mcq_subject || ""),
+            mcq_topic: String(notification.target_mcq_topic || ""),
+            video_course_id: String(notification.target_video_course_id || ""),
           },
           android: {
             priority: "high",
@@ -292,7 +309,7 @@ Deno.serve(async (req) => {
 
   const { data: notification, error: notificationError } = await adminClient
     .from("notifications")
-    .select("id,external_id,recipient_user_id,title,message,is_active")
+    .select("id,external_id,recipient_user_id,title,message,target_route,target_mcq_subject,target_mcq_topic,target_video_course_id,is_active")
     .eq("id", notificationId)
     .eq("is_active", true)
     .maybeSingle();

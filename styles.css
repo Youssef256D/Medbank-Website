@@ -1537,6 +1537,30 @@ body.theme-comfort .auth-actions .theme-toggle-btn:hover {
   gap: 0.6rem;
 }
 
+.auth-actions .notification-menu-item-open {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  flex: 1;
+  font: inherit;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.auth-actions .notification-menu-item-open:hover {
+  transform: none;
+}
+
+.auth-actions .notification-menu-item-open:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
 .notification-menu-item-copy {
   min-width: 0;
   flex: 1;
@@ -1574,6 +1598,16 @@ body.theme-comfort .auth-actions .theme-toggle-btn:hover {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.notification-menu-item-destination {
+  color: var(--brand-strong);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-top: 0.3rem;
 }
 
 .notification-menu-item-done {
@@ -4189,6 +4223,31 @@ body.theme-comfort .maintenance-badge {
   gap: 0.45rem;
 }
 
+.notification-card-open,
+.notification-card-content {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 0.45rem;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.notification-card-open {
+  cursor: pointer;
+}
+
+.notification-card-open:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 5px;
+  border-radius: var(--radius-sm);
+}
+
 .notification-card:hover {
   border-color: var(--line-strong);
   box-shadow: var(--shadow-soft);
@@ -4264,6 +4323,16 @@ body.theme-comfort .maintenance-badge {
   line-height: 1.5;
   color: var(--ink);
   white-space: pre-wrap;
+}
+
+.notification-card-destination {
+  color: var(--brand-strong);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 0.25rem;
 }
 
 .notification-card-actions {
@@ -5924,6 +5993,15 @@ body.theme-comfort .maintenance-badge {
 
 #admin-notification-form .admin-notification-target-year-field.is-hidden,
 #admin-notification-form .admin-notification-target-user-field.is-hidden {
+  display: none !important;
+}
+
+#admin-notification-form .admin-notification-destination-fields {
+  align-items: start;
+}
+
+#admin-notification-form .admin-notification-destination-fields[hidden],
+#admin-notification-form #admin-notification-video-course-field[hidden] {
   display: none !important;
 }
 
