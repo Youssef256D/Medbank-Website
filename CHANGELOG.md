@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-24 — Update public support email
+- Replaced the public Contact page email and its `mailto:` link with
+  `Code.Youssefaayoub@gmail.com`, the support address used for the Flutter app
+  store listing.
+- Static cache bust: `2026-07-24.01`.
+
 ### 2026-07-22 — Interactive notification deep links
 - Admins can choose where a notification opens: Apps home, the MCQ Bank
   dashboard, Create Test, MCQ analytics, Video Courses, or Profile.

@@ -188,6 +188,13 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-24 — Public support email updated
+The shared landing/Contact card now displays and links to
+`Code.Youssefaayoub@gmail.com`, matching the Flutter app store support address.
+Static cache bust: `2026-07-24.01`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-22 — Interactive notification destinations and learning deep links
 Admin notifications can deep-link to allowlisted student SPA routes and exact learning context.
 
