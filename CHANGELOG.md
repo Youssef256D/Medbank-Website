@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-24 — Google Play account-deletion web resource
+- Expanded the public Contact destination with prominent account-deletion
+  steps, a pre-addressed support-email action, the account data deleted, the
+  limited data retained, and 20/30/90-day retention and processing periods.
+- Added a script-free `deletion.html` resource for Play Console and linked it
+  from the Contact destination, privacy policy, sitemap, and legal docs.
+- Static cache bust: `2026-07-24.02`.
+
 ### 2026-07-24 — Update public support email
 - Replaced the public Contact page email and its `mailto:` link with
   `Code.Youssefaayoub@gmail.com`, the support address used for the Flutter app

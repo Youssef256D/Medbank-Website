@@ -188,6 +188,22 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-24 — Google Play account-deletion web resource
+The public deletion pathway is now explicit and crawler-friendly.
+
+1. `#contact` prominently explains how to request deletion, exposes a
+   pre-addressed email action, lists deleted/retained data, and discloses the
+   20-day previous-test window, normal 30-day completion target, and maximum
+   90-day residual-record window unless longer retention is legally required.
+2. Standalone `deletion.html` is the preferred Google Play Console deletion URL;
+   it works without the SPA runtime and is linked from Contact,
+   `privacy.html`, `sitemap.xml`, and the canonical legal docs.
+3. Static cache bust: `2026-07-24.02`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `deletion.html`,
+`privacy.html`, `sitemap.xml`, `README.md`, `docs/legal/README.md`,
+`docs/legal/privacy.md`, `docs/legal/deletion.md`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-07-24 — Public support email updated
 The shared landing/Contact card now displays and links to
 `Code.Youssefaayoub@gmail.com`, matching the Flutter app store support address.

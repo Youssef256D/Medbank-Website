@@ -94,17 +94,19 @@ question, enrollment, and progress data.
 
 ## Retention
 
-We keep account, enrollment, course, question, support, and admin records for as
-long as needed to operate MedBank, preserve course integrity, comply with
-reasonable administrative needs, resolve disputes, and maintain security.
+Active account, enrollment, course-progress, and study records are kept while
+the account is in use. After a verified account-deletion request, active account
+data is normally deleted within 30 days.
 
 Previous-test history is automatically limited to the most recent 20 days.
 Older previous-test entries are pruned from hosted history and matching session
 backup payloads.
 
-In-progress sessions, analytics, audit logs, and support records may be retained
-for different periods depending on operational, security, and course-management
-needs.
+Limited support, security, fraud-prevention, audit, legal, and residual backup
+records may be retained for up to 90 days after deletion, then deleted or
+anonymized. A record may be retained longer only when required by law. Shared
+course and question-bank content that is not personal to the deleted account may
+remain so it stays available to other users.
 
 ## Sharing
 
@@ -153,6 +155,7 @@ public legal pages.
 
 ## Contact
 
-For privacy questions, account corrections, or deletion requests, use the
-MedBank Contact or Support page and include the email address associated with
-your account.
+For privacy questions, account corrections, or deletion requests, email
+`Code.Youssefaayoub@gmail.com` from the address associated with your account or
+use the MedBank Contact page. Full instructions are published at
+`https://youssef256d.github.io/Medbank-Website/deletion.html`.

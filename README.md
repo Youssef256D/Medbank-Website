@@ -35,6 +35,10 @@ Console is:
 
 - `https://youssef256d.github.io/Medbank-Website/privacy.html`
 
+The public account-deletion URL for Google Play Console is:
+
+- `https://youssef256d.github.io/Medbank-Website/deletion.html`
+
 These files are source copy for generated/public legal pages. Keep them in sync
 when privacy, retention, support, account deletion, or platform behavior changes.
 

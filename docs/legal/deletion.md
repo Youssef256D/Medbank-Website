@@ -1,21 +1,22 @@
 ---
 title: Data Deletion Instructions
 slug: data-deletion
-effectiveDate: 2026-06-30
+effectiveDate: 2026-07-24
 summary: How MedBank users can request account deletion, personal-data deletion, or local browser-data removal.
 ---
 
 # Data Deletion Instructions
 
-Effective date: June 30, 2026
+Effective date: July 24, 2026
 
 This page explains how to request deletion of your MedBank account data and how
 to remove local data stored in your browser.
 
 ## Request account deletion
 
-To request deletion of your MedBank account, use the MedBank Contact or Support
-page and include:
+To request deletion of your MedBank account, email
+`Code.Youssefaayoub@gmail.com` from the address connected to your account and
+include:
 
 - the email address connected to your MedBank account;
 - your full name as it appears in MedBank, if available;
@@ -27,9 +28,12 @@ If you cannot access your account, send the request using the same email address
 you used to register. MedBank may ask for additional verification before acting
 on a deletion request.
 
-## What account deletion usually removes
+After ownership is verified, requests are normally completed within 30 days.
+Support sends a confirmation when the deletion is complete.
 
-Account deletion generally removes or disconnects:
+## What account deletion removes
+
+Account deletion removes or disconnects:
 
 - your Supabase Auth account;
 - your MedBank profile and account-access state;
@@ -39,12 +43,7 @@ Account deletion generally removes or disconnects:
 - your user-scoped app-state records and pending sync records;
 - your notification read state and user-specific course progress where feasible.
 
-Some records may be retained, anonymized, or disconnected from your account when
-needed for security, audit integrity, course administration, abuse prevention,
-legal obligations, backup integrity, or to avoid corrupting shared course and
-question-bank data.
-
-## What account deletion does not remove
+## What account deletion retains
 
 Account deletion does not automatically remove shared course content, question
 banks, explanations, announcements, imported materials, or admin-created
@@ -55,12 +54,18 @@ course or question-bank content may remain so the course remains usable for
 other students. Audit logs may retain limited information about administrative
 actions when needed for security and accountability.
 
+Limited support, security, fraud-prevention, audit, legal, and residual backup
+records may be retained for up to 90 days after deletion, then deleted or
+anonymized. A record may be retained longer only when required by law.
+
 ## Previous-test retention
 
 Previous-test history is automatically retained for 20 days. Older previous-test
 entries are deleted from hosted history and matching session backup payloads.
 Support cannot restore previous-test history after it has been pruned by this
-retention process.
+retention process. A verified account-deletion request removes active account
+data sooner; residual backups may remain for no more than 90 days unless a
+longer period is legally required.
 
 ## Remove local browser data
 

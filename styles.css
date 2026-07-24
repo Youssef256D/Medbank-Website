@@ -2772,6 +2772,90 @@ body.is-routing .card {
   color: var(--muted);
 }
 
+.landing-simple .lp-deletion {
+  margin-top: clamp(2rem, 5vw, 3.2rem);
+  border-top: 1px solid var(--line);
+  padding-top: clamp(1.7rem, 4vw, 2.4rem);
+}
+
+.landing-simple .lp-deletion-head h3 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: clamp(1.35rem, 2.6vw, 1.85rem);
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.landing-simple .lp-deletion-head > p:last-child {
+  margin: 0.75rem 0 0;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.landing-simple .lp-deletion-steps {
+  margin: 1.35rem 0 0;
+  padding-left: 1.35rem;
+  display: grid;
+  gap: 0.65rem;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.landing-simple .lp-deletion-steps li {
+  padding-left: 0.25rem;
+}
+
+.landing-simple .lp-deletion strong,
+.landing-simple .lp-deletion a {
+  overflow-wrap: anywhere;
+}
+
+.landing-simple .lp-deletion-request {
+  margin-top: 1.35rem;
+}
+
+.landing-simple .lp-deletion-groups {
+  margin-top: 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.landing-simple .lp-deletion-groups > div {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  padding: 1rem 1.05rem;
+}
+
+.landing-simple .lp-deletion-groups h4 {
+  margin: 0 0 0.45rem;
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.landing-simple .lp-deletion-groups p,
+.landing-simple .lp-deletion-retention {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.landing-simple .lp-deletion-retention {
+  margin-top: 1rem;
+  border-left: 3px solid var(--brand);
+  padding: 0.15rem 0 0.15rem 0.85rem;
+}
+
+.landing-simple .lp-deletion-details {
+  display: inline-block;
+  margin-top: 1rem;
+  color: var(--brand-strong);
+  font-weight: 600;
+}
+
 .landing-simple.lp-standalone {
   width: min(100%, 960px);
   margin: 0 auto;
@@ -2780,6 +2864,10 @@ body.is-routing .card {
 
 @media (max-width: 720px) {
   .landing-simple .lp-points {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-simple .lp-deletion-groups {
     grid-template-columns: 1fr;
   }
 

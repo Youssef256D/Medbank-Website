@@ -20,6 +20,10 @@ The store-listing Privacy Policy URL is:
 
 `https://youssef256d.github.io/Medbank-Website/privacy.html`
 
+The Google Play account-deletion URL is:
+
+`https://youssef256d.github.io/Medbank-Website/deletion.html`
+
 Update the `effectiveDate` front matter when the meaning of a page changes.
 Small wording fixes do not need a new date unless they change user rights,
 retention, data use, or support expectations.
