@@ -9,6 +9,22 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-28 — Repair Google indexing signals after the Pages URL rename
+- Confirmed the former indexed Pages URL
+  (`/o6u-medbank-app/`) returned a hard 404 after the repository was renamed to
+  `Medbank-Website`, leaving Google without a site-move redirect.
+- Made the new home page's title and descriptions specific to MedBank's medical
+  MCQ bank and protected video courses, and added crawlable Organization +
+  WebApplication structured data with the canonical URL and logo.
+- Added an explicit sitemap discovery link, refreshed accurate sitemap
+  modification dates, and retained the existing index/follow and Search Console
+  verification signals.
+- Published a small compatibility Pages site at the old repository path with
+  instant, canonical meta-refresh redirects for the former home and privacy
+  URLs. GitHub Pages cannot emit custom HTTP 301 responses, so this uses
+  Google's documented permanent client-side fallback for static hosting.
+- Static cache bust: `2026-07-28.03`.
+
 ### 2026-07-28 — Expand privacy policy for the mobile apps
 - Updated the canonical and live privacy policy to cover iOS, iPadOS, and
   Android in addition to the website.

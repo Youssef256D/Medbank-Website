@@ -16,7 +16,7 @@
     default-src 'self';
     base-uri 'self';
     object-src 'none';
-    script-src 'strict-dynamic' 'sha256-y5Ap2v7PdafPQ76mV7WtW2yUKDNNCyodHZMI1Fjtp+Y=' 'sha256-1S+8EQulXPWc991JVLmfT997fTdj2EFjgB0KF1IRTo4=' 'sha256-q8VYAUvV/EfqOXxdiZl1PY3W8Ki7BFJ4INnlmUtXzFw=' 'sha256-FPD7QAdFxGDXHyrsfXpNPWKJb6s+uB9Skt7nkPJAqdk=' https://cdn.jsdelivr.net https://unpkg.com 'self' 'unsafe-inline';
+    script-src 'strict-dynamic' 'sha256-y5Ap2v7PdafPQ76mV7WtW2yUKDNNCyodHZMI1Fjtp+Y=' 'sha256-1S+8EQulXPWc991JVLmfT997fTdj2EFjgB0KF1IRTo4=' 'sha256-q8VYAUvV/EfqOXxdiZl1PY3W8Ki7BFJ4INnlmUtXzFw=' 'sha256-FPD7QAdFxGDXHyrsfXpNPWKJb6s+uB9Skt7nkPJAqdk=' 'sha256-pl46CMm/wxCBYEek38R074U/HYIr+XxseX52QCiS6n4=' https://cdn.jsdelivr.net https://unpkg.com 'self' 'unsafe-inline';
     style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
     font-src 'self' https://fonts.gstatic.com data:;
     img-src 'self' data: blob: https:;
@@ -29,24 +29,28 @@
   " />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description"
-    content="MedBank helps medical students build focused MCQ tests, solve in exam mode, and review detailed explanations." />
+    content="MedBank is a medical learning platform with protected video courses, course-aligned MCQ practice, timed exams, instant explanations, and progress analytics." />
   <meta name="robots" content="index, follow, max-image-preview:large" />
   <meta name="googlebot" content="index, follow, max-image-preview:large" />
-  <meta name="app-version" content="2026-07-28.02" />
-  <title>MedBank</title>
+  <meta name="application-name" content="MedBank" />
+  <meta name="app-version" content="2026-07-28.03" />
+  <title>MedBank | Medical MCQ Bank &amp; Video Courses</title>
   <link rel="canonical" href="https://youssef256d.github.io/Medbank-Website/" />
+  <link rel="sitemap" type="application/xml" href="https://youssef256d.github.io/Medbank-Website/sitemap.xml" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="MedBank" />
-  <meta property="og:title" content="MedBank" />
+  <meta property="og:title" content="MedBank | Medical MCQ Bank &amp; Video Courses" />
   <meta property="og:description"
-    content="MCQ practice platform for medical students." />
+    content="Protected video courses and course-aligned medical MCQ practice with timed exams, instant explanations, and progress analytics." />
   <meta property="og:url" content="https://youssef256d.github.io/Medbank-Website/" />
   <meta property="og:image" content="https://youssef256d.github.io/Medbank-Website/Assets/branding/medbank-logo.png" />
+  <meta property="og:image:alt" content="MedBank medical learning platform logo" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="MedBank" />
+  <meta name="twitter:title" content="MedBank | Medical MCQ Bank &amp; Video Courses" />
   <meta name="twitter:description"
-    content="MCQ practice platform for medical students." />
+    content="Protected video courses and course-aligned medical MCQ practice with timed exams, instant explanations, and progress analytics." />
   <meta name="twitter:image" content="https://youssef256d.github.io/Medbank-Website/Assets/branding/medbank-logo.png" />
+  <meta name="twitter:image:alt" content="MedBank medical learning platform logo" />
   <meta name="google-site-verification" content="hv033079gwABq906LsyGqfAvTRgpvuk2cruZBRNuAz4" />
   <meta name="theme-color" content="#177e89" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -63,6 +67,37 @@
     rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap&subset=latin"
   />
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://youssef256d.github.io/Medbank-Website/#organization",
+          "name": "MedBank",
+          "url": "https://youssef256d.github.io/Medbank-Website/",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://youssef256d.github.io/Medbank-Website/Assets/branding/medbank-logo.png"
+          },
+          "email": "mailto:Code.Youssefaayoub@gmail.com",
+          "telephone": "+20 100 453 2728"
+        },
+        {
+          "@type": "WebApplication",
+          "@id": "https://youssef256d.github.io/Medbank-Website/#application",
+          "name": "MedBank",
+          "url": "https://youssef256d.github.io/Medbank-Website/",
+          "description": "A medical learning platform with protected video courses, course-aligned MCQ practice, timed exams, instant explanations, and progress analytics.",
+          "applicationCategory": "EducationalApplication",
+          "operatingSystem": "Web, iOS, iPadOS, Android",
+          "publisher": {
+            "@id": "https://youssef256d.github.io/Medbank-Website/#organization"
+          }
+        }
+      ]
+    }
+  </script>
   <script>
     (() => {
       const key = "mcq_theme_preference";

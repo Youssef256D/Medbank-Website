@@ -188,6 +188,23 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-28 — Google indexing migration repaired after Pages URL rename
+The earlier repository rename changed the public path from
+`/o6u-medbank-app/` to `/Medbank-Website/`, but the old Pages URL returned a
+hard 404. A separate compatibility repository now serves instant meta-refresh
+redirects from the former home and privacy URLs to their canonical new
+locations. Keep that legacy Pages repository live for at least one year; GitHub
+Pages cannot provide custom HTTP 301 rules.
+
+The canonical home page now has a descriptive search title/description,
+Organization + WebApplication JSON-LD, an explicit sitemap discovery link, and
+accurate sitemap modification dates. Its JSON-LD block is covered by the CSP
+hash in `index.html`; if the block changes, recompute that hash. Static cache
+bust: `2026-07-28.03`.
+
+**Files touched:** `index.html`, `sitemap.xml`, `CHANGELOG.md`, `AGENTS.md`.
+External compatibility site: `Youssef256D/o6u-medbank-app`.
+
 ### 2026-07-28 — Privacy policy now covers web and mobile releases
 The canonical `docs/legal/privacy.md` and public `privacy.html` now disclose
 iOS/iPadOS/Android behavior: Supabase account and learning data, Firebase Cloud
