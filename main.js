@@ -282,6 +282,11 @@ const SUPABASE_SESSION_RECOVERY_SLOW_RETRY_MS = 30000;
 const ADMIN_REQUEST_TIMEOUT_MS = Math.max(SUPABASE_QUERY_TIMEOUT_MS, 12000);
 const ADMIN_ACCESS_SYNC_BATCH_SIZE = 50;
 const ADMIN_ACCESS_SYNC_BATCH_REQUEST_TIMEOUT_MS = Math.max(ADMIN_REQUEST_TIMEOUT_MS, 20000);
+const ADMIN_DATA_MANUAL_REFRESH_TIMEOUT_MS = 90000;
+const NOTIFICATION_OUTBOX_ATTEMPT_LIMIT = 5;
+const NOTIFICATION_OUTBOX_DELIVERY_TIMEOUT_MS = Math.max(ADMIN_REQUEST_TIMEOUT_MS, 25000);
+const NOTIFICATION_OUTBOX_RETRY_BASE_MS = 60000;
+const NOTIFICATION_OUTBOX_RETRY_MAX_MS = 30 * 60 * 1000;
 const AUTH_SIGNIN_TIMEOUT_MS = 35000;
 const GOOGLE_OAUTH_START_TIMEOUT_MS = 15000;
 const GOOGLE_OAUTH_PENDING_MAX_AGE_MS = 2 * 60 * 1000;
@@ -1199,6 +1204,12 @@ const adminActionRuntime = {
   lastFailureMessage: "",
   retryAt: 0,
   blockedQueueSignature: "",
+};
+const notificationOutboxRuntime = {
+  inFlight: false,
+  retryTimer: null,
+  failureCount: 0,
+  nextRetryAt: 0,
 };
 const postAuthWarmupRuntime = {
   key: "",
@@ -5731,6 +5742,14 @@ function getUserCreatedAtMs(user) {
   return parseTimestampMs(user?.createdAt || user?.created_at || "");
 }
 
+function getUserNotificationEligibilityStartIso(user) {
+  const createdAtMs = getUserCreatedAtMs(user);
+  if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+    return "";
+  }
+  return new Date(createdAtMs).toISOString();
+}
+
 function getRegistrationYearFromUser(user) {
   const createdAtMs = getUserCreatedAtMs(user);
   if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) {
@@ -7697,6 +7716,22 @@ function getCloudSyncStatusModel(user = null) {
       pendingCount,
     };
   }
+  if (currentUser.role === "admin" && state.adminForceRefreshRunning) {
+    return {
+      tone: "syncing",
+      label: "Sending student refresh...",
+      detail: "Publishing the latest student refresh signal to Supabase.",
+      pendingCount,
+    };
+  }
+  if (currentUser.role === "admin" && state.adminDataRefreshing) {
+    return {
+      tone: "syncing",
+      label: "Refreshing cloud data...",
+      detail: "Reading the latest users and admin data from Supabase.",
+      pendingCount,
+    };
+  }
   if (syncingNow) {
     const countLabel = Math.max(1, pendingCount);
     return {
@@ -9199,10 +9234,14 @@ async function fetchEnrollmentCourseMapForUsers(userIds) {
     const idBatches = splitIntoBatches(ids, ENROLLMENT_USER_FETCH_BATCH_SIZE);
     for (const batchGroup of splitIntoBatches(idBatches, ENROLLMENT_USER_FETCH_CONCURRENCY)) {
       const batchResults = await Promise.all(batchGroup.map((idBatch) => (
-        client
-          .from("user_course_enrollments")
-          .select("user_id,course_id,assigned_at")
-          .in("user_id", idBatch)
+        runSupabaseQueryWithAbortTimeout(
+          () => client
+            .from("user_course_enrollments")
+            .select("user_id,course_id,assigned_at")
+            .in("user_id", idBatch),
+          ENROLLMENT_SYNC_QUERY_TIMEOUT_MS,
+          "Enrollment hydration query timed out.",
+        )
       )));
       for (const { data, error } of batchResults) {
         if (error) {
@@ -10317,6 +10356,9 @@ async function hydrateRelationalNotifications(currentUser) {
     timeoutMs: NOTIFICATION_HYDRATE_TIMEOUT_MS,
     timeoutMessage: "Notification query timed out.",
   };
+  const notificationEligibilityStartIso = user.role === "admin"
+    ? ""
+    : getUserNotificationEligibilityStartIso(user);
   const shouldWarnForNotificationHydrationError = (error) => (
     error && !isMissingRelationError(error) && !isLikelyTransientSupabaseError(error)
   );
@@ -10341,16 +10383,20 @@ async function hydrateRelationalNotifications(currentUser) {
   } else {
     let globalQueryError = null;
     let directQueryError = null;
-    const globalNotificationsResult = await fetchRowsPaged((from, to) => (
-      client
+    const globalNotificationsResult = await fetchRowsPaged((from, to) => {
+      let query = client
         .from("notifications")
         .select(selectColumns)
         .eq("is_active", true)
-        .is("recipient_user_id", null)
+        .is("recipient_user_id", null);
+      if (notificationEligibilityStartIso) {
+        query = query.gte("created_at", notificationEligibilityStartIso);
+      }
+      return query
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
-        .range(from, to)
-    ), notificationFetchOptions);
+        .range(from, to);
+    }, notificationFetchOptions);
     if (globalNotificationsResult.error) {
       globalQueryError = globalNotificationsResult.error;
       if (shouldWarnForNotificationHydrationError(globalNotificationsResult.error)) {
@@ -10370,6 +10416,9 @@ async function hydrateRelationalNotifications(currentUser) {
         query = query.eq("recipient_user_id", userNotificationIdentityIds[0]);
       } else {
         query = query.in("recipient_user_id", userNotificationIdentityIds);
+      }
+      if (notificationEligibilityStartIso) {
+        query = query.gte("created_at", notificationEligibilityStartIso);
       }
       return query
         .order("created_at", { ascending: false })
@@ -12879,6 +12928,7 @@ async function flushRelationalWrites(options = {}) {
 async function flushPendingSyncNow(options = {}) {
   const throwOnRelationalFailure = options?.throwOnRelationalFailure !== false;
   const flushSupabaseBackups = options?.flushSupabaseBackups !== false;
+  const flushNotificationOutbox = options?.flushNotificationOutbox === true;
   clearSessionSyncTimer();
   queueSessionStateForCloud();
   // If session is still dirty (relational sync not ready), schedule a retry so it eventually syncs.
@@ -12918,7 +12968,9 @@ async function flushPendingSyncNow(options = {}) {
     await flushSupabaseWrites();
   }
   await flushPendingNotificationReadSync().catch(() => { });
-  await flushPendingNotificationOutbox().catch(() => { });
+  if (flushNotificationOutbox) {
+    await flushPendingNotificationOutbox().catch(() => { });
+  }
   // Clear stale failure messages when all pending writes have been flushed.
   // This ensures the status indicator returns to green ("Synced") immediately
   // instead of showing a lingering "Cloud retrying" or "Pending" state.
@@ -12987,6 +13039,7 @@ function flushPendingSyncInBackground(options = {}) {
 async function flushAdminUserAccountSyncNow(options = {}) {
   return flushPendingSyncNow({
     flushSupabaseBackups: false,
+    flushNotificationOutbox: false,
     ...options,
   });
 }
@@ -19053,10 +19106,14 @@ async function refreshAdminPresenceSnapshot(options = {}) {
 
   state.adminPresenceLoading = true;
   try {
-    const { data, error } = await client
-      .from("user_presence")
-      .select("user_id,full_name,email,role,current_route,is_online,is_solving,solving_started_at,last_seen_at,updated_at")
-      .order("last_seen_at", { ascending: false });
+    const { data, error } = await runSupabaseQueryWithAbortTimeout(
+      () => client
+        .from("user_presence")
+        .select("user_id,full_name,email,role,current_route,is_online,is_solving,solving_started_at,last_seen_at,updated_at")
+        .order("last_seen_at", { ascending: false }),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Admin presence query timed out.",
+    );
     if (error) {
       state.adminPresenceError = error.message || "Could not load presence data.";
       return false;
@@ -19986,6 +20043,7 @@ async function refreshAdminDataSnapshot(user, options = {}) {
   const surfaceErrors = options?.surfaceErrors !== false;
   const includeHeavyData = options?.includeHeavyData === true;
   const deferBackupRestore = options?.deferBackupRestore === true;
+  const renderLoadingState = options?.renderLoadingState === true;
   if (!force && !shouldRefreshAdminData(user)) {
     return true;
   }
@@ -19999,6 +20057,11 @@ async function refreshAdminDataSnapshot(user, options = {}) {
   state.adminDataRefreshing = true;
   if (surfaceErrors) {
     state.adminDataSyncError = "";
+  }
+  if (renderLoadingState && state.route === "admin") {
+    state.skipNextRouteAnimation = true;
+    render();
+    await yieldToBrowser();
   }
   try {
     const ready = await ensureRelationalSyncReady({ force });
@@ -31000,7 +31063,20 @@ function wireAdmin() {
     // Ensure relational sync is re-checked after manual refresh.
     relationalSync.readyCheckedAt = 0;
     await ensureRelationalSyncReady({ force: true }).catch(() => { });
-    const synced = await refreshAdminDataSnapshot(currentUser, { force: true, deferBackupRestore: true });
+    const refreshResult = await runWithTimeoutResult(
+      Promise.resolve(refreshAdminDataSnapshot(currentUser, {
+        force: true,
+        deferBackupRestore: true,
+        renderLoadingState: true,
+      })).then((data) => ({ data, error: null })),
+      ADMIN_DATA_MANUAL_REFRESH_TIMEOUT_MS,
+      "Admin data refresh timed out. Please try again.",
+    );
+    const synced = Boolean(refreshResult?.data);
+    if (refreshResult?.error) {
+      state.adminDataRefreshing = false;
+      state.adminDataSyncError = getErrorMessage(refreshResult.error, "Admin data refresh timed out.");
+    }
     if (state.adminPage === "activity") {
       await refreshAdminPresenceSnapshot({ force: true, silent: true }).catch(() => { });
     }
@@ -31078,7 +31154,10 @@ function wireAdmin() {
         console.warn("Student refresh broadcast failed.", error?.message || error);
         return { broadcastSent: false, ackCount: 0, ackedExamCount: 0 };
       });
-      await flushPendingSyncNow({ throwOnRelationalFailure: false });
+      await flushPendingSyncNow({
+        throwOnRelationalFailure: false,
+        flushNotificationOutbox: false,
+      });
       const broadcastResult = await broadcastResultPromise;
       const remoteKey = buildRemoteSyncKey(STORAGE_KEYS.studentRefreshTrigger, getSyncScopeForUser(currentUser));
       const deferred = supabaseSync.pendingWrites.has(remoteKey);
@@ -31807,6 +31886,7 @@ function wireAdmin() {
         targetNotificationIds: [localNotification.id],
       });
       const deliveredNow = deliveryResult.deliveredIds.includes(String(localNotification.id || "").trim());
+      const savedWithoutPush = deliveryResult.savedWithoutPushIds.includes(String(localNotification.id || "").trim());
       if (deliveredNow) {
         if (targetType === "user") {
           const deliveredLabel = selectedTargetUser
@@ -31819,6 +31899,8 @@ function wireAdmin() {
         } else {
           toast("Notification delivered.");
         }
+      } else if (savedWithoutPush) {
+        toast("Notification published in the app. No matching registered device was available for push delivery.");
       } else if (deliveryResult.message) {
         toast(`Notification saved locally. Cloud delivery queued: ${deliveryResult.message}`);
       } else {
@@ -34882,6 +34964,8 @@ function wireAdmin() {
           });
           if (deliveryResult.deliveredIds.length) {
             toast(`Students notified about ${CORRECTED_QUESTIONS_TOPIC_NAME}.`);
+          } else if (deliveryResult.savedWithoutPushIds.length) {
+            toast(`Correction notice published in the app. No matching registered device was available for push delivery.`);
           } else if (deliveryResult.message) {
             toast(`Correction notification queued: ${deliveryResult.message}`);
           }
@@ -36025,7 +36109,16 @@ function getPendingNotificationOutbox() {
 }
 
 function savePendingNotificationOutbox(entries) {
-  saveLocalOnly(STORAGE_KEYS.notificationOutbox, normalizeNotificationCollection(entries));
+  const normalizedEntries = normalizeNotificationCollection(entries);
+  saveLocalOnly(STORAGE_KEYS.notificationOutbox, normalizedEntries);
+  if (!normalizedEntries.length) {
+    if (notificationOutboxRuntime.retryTimer) {
+      window.clearTimeout(notificationOutboxRuntime.retryTimer);
+      notificationOutboxRuntime.retryTimer = null;
+    }
+    notificationOutboxRuntime.failureCount = 0;
+    notificationOutboxRuntime.nextRetryAt = 0;
+  }
 }
 
 function queueNotificationForCloudDelivery(notification) {
@@ -36036,6 +36129,7 @@ function queueNotificationForCloudDelivery(notification) {
   const currentQueue = getPendingNotificationOutbox();
   const nextQueue = [normalized, ...currentQueue.filter((entry) => String(entry?.id || "").trim() !== normalized.id)];
   savePendingNotificationOutbox(nextQueue);
+  notificationOutboxRuntime.nextRetryAt = 0;
   return true;
 }
 
@@ -36164,10 +36258,50 @@ function upsertLocalNotificationFromCloud(notification) {
   saveNotificationsLocal(nextNotifications);
 }
 
+function getNotificationOutboxRetryDelayMs() {
+  const exponent = Math.max(0, Math.min(5, Number(notificationOutboxRuntime.failureCount || 0) - 1));
+  return Math.min(
+    NOTIFICATION_OUTBOX_RETRY_MAX_MS,
+    NOTIFICATION_OUTBOX_RETRY_BASE_MS * (2 ** exponent),
+  );
+}
+
+function schedulePendingNotificationOutboxRetry(delayMs = null) {
+  if (notificationOutboxRuntime.retryTimer || !getPendingNotificationOutbox().length) {
+    return;
+  }
+  const requestedDelay = Number(delayMs);
+  const retryDelay = Number.isFinite(requestedDelay) && requestedDelay >= 0
+    ? requestedDelay
+    : getNotificationOutboxRetryDelayMs();
+  notificationOutboxRuntime.nextRetryAt = Date.now() + retryDelay;
+  notificationOutboxRuntime.retryTimer = window.setTimeout(() => {
+    notificationOutboxRuntime.retryTimer = null;
+    notificationOutboxRuntime.nextRetryAt = 0;
+    flushPendingNotificationOutbox({ ignoreBackoff: true }).catch((error) => {
+      console.warn("Notification outbox retry failed.", error?.message || error);
+    });
+  }, retryDelay);
+}
+
+function isNotificationSavedWithoutEligiblePushDevice(result) {
+  return Boolean(
+    result?.notification
+    && /no registered devices? match/i.test(String(result?.message || "")),
+  );
+}
+
 async function flushPendingNotificationOutbox(options = {}) {
   const allQueued = getPendingNotificationOutbox();
   if (!allQueued.length) {
-    return { ok: true, deferred: false, syncedCount: 0, deliveredIds: [], message: "" };
+    return {
+      ok: true,
+      deferred: false,
+      syncedCount: 0,
+      deliveredIds: [],
+      savedWithoutPushIds: [],
+      message: "",
+    };
   }
 
   const targetIdSet = new Set(
@@ -36176,52 +36310,122 @@ async function flushPendingNotificationOutbox(options = {}) {
       .filter(Boolean),
   );
   const shouldFilterTargets = targetIdSet.size > 0;
-  const queueToAttempt = shouldFilterTargets
+  const requestedQueue = shouldFilterTargets
     ? allQueued.filter((entry) => targetIdSet.has(String(entry?.id || "").trim()))
     : allQueued;
-  if (!queueToAttempt.length) {
-    return { ok: true, deferred: false, syncedCount: 0, deliveredIds: [], message: "" };
+  if (!requestedQueue.length) {
+    return {
+      ok: true,
+      deferred: false,
+      syncedCount: 0,
+      deliveredIds: [],
+      savedWithoutPushIds: [],
+      message: "",
+    };
   }
 
   const currentUser = options?.user || getCurrentUser();
   if (!currentUser || currentUser.role !== "admin") {
-    return { ok: false, deferred: true, syncedCount: 0, deliveredIds: [], message: "No active admin session for notification delivery." };
+    return {
+      ok: false,
+      deferred: true,
+      syncedCount: 0,
+      deliveredIds: [],
+      savedWithoutPushIds: [],
+      message: "No active admin session for notification delivery.",
+    };
   }
   if (typeof navigator !== "undefined" && navigator?.onLine === false) {
-    return { ok: false, deferred: true, syncedCount: 0, deliveredIds: [], message: "You are offline. Notification delivery is queued." };
+    return {
+      ok: false,
+      deferred: true,
+      syncedCount: 0,
+      deliveredIds: [],
+      savedWithoutPushIds: [],
+      message: "You are offline. Notification delivery is queued.",
+    };
+  }
+  if (notificationOutboxRuntime.inFlight) {
+    return {
+      ok: false,
+      deferred: true,
+      syncedCount: 0,
+      deliveredIds: [],
+      savedWithoutPushIds: [],
+      message: "Notification delivery is already running in the background.",
+    };
+  }
+  if (
+    !shouldFilterTargets
+    && options?.ignoreBackoff !== true
+    && notificationOutboxRuntime.nextRetryAt > Date.now()
+  ) {
+    schedulePendingNotificationOutboxRetry(notificationOutboxRuntime.nextRetryAt - Date.now());
+    return {
+      ok: false,
+      deferred: true,
+      syncedCount: 0,
+      deliveredIds: [],
+      savedWithoutPushIds: [],
+      message: "Notification delivery is waiting for its next retry window.",
+    };
   }
 
+  const requestedLimit = Math.max(1, Number(options?.attemptLimit) || NOTIFICATION_OUTBOX_ATTEMPT_LIMIT);
+  const queueToAttempt = shouldFilterTargets
+    ? requestedQueue
+    : requestedQueue.slice(0, requestedLimit);
   const notificationUsers = Array.isArray(options?.users)
     ? options.users
     : getCloudNotificationTargetUsers(getUsers());
   const deliveredIds = [];
+  const savedWithoutPushIds = [];
   let firstFailureMessage = "";
   const shouldKeepEntry = new Set();
 
-  for (const queuedNotification of queueToAttempt) {
-    const queuedId = String(queuedNotification?.id || "").trim();
-    if (!queuedId) {
-      continue;
-    }
+  notificationOutboxRuntime.inFlight = true;
+  try {
+    for (const queuedNotification of queueToAttempt) {
+      const queuedId = String(queuedNotification?.id || "").trim();
+      if (!queuedId) {
+        continue;
+      }
 
-    const result = await createRelationalNotification(queuedNotification, currentUser, notificationUsers);
-    if (result.ok && result.notification) {
-      upsertLocalNotificationFromCloud(result.notification);
-      deliveredIds.push(queuedId);
-      continue;
+      const attempt = await runWithTimeoutResult(
+        Promise.resolve(createRelationalNotification(queuedNotification, currentUser, notificationUsers))
+          .then((data) => ({ data, error: null })),
+        NOTIFICATION_OUTBOX_DELIVERY_TIMEOUT_MS,
+        "Notification delivery timed out.",
+      );
+      const result = attempt?.error
+        ? { ok: false, message: getErrorMessage(attempt.error, "Notification delivery failed.") }
+        : attempt?.data;
+      if (result?.ok && result.notification) {
+        upsertLocalNotificationFromCloud(result.notification);
+        deliveredIds.push(queuedId);
+        continue;
+      }
+      if (isNotificationSavedWithoutEligiblePushDevice(result)) {
+        upsertLocalNotificationFromCloud(result.notification);
+        savedWithoutPushIds.push(queuedId);
+        continue;
+      }
+      shouldKeepEntry.add(queuedId);
+      if (!firstFailureMessage) {
+        firstFailureMessage = String(result?.message || "Cloud delivery failed.").trim();
+      }
     }
-    shouldKeepEntry.add(queuedId);
-    if (!firstFailureMessage) {
-      firstFailureMessage = String(result?.message || "Cloud delivery failed.").trim();
-    }
+  } finally {
+    notificationOutboxRuntime.inFlight = false;
   }
 
+  const completedIds = new Set([...deliveredIds, ...savedWithoutPushIds]);
   const nextOutbox = allQueued.filter((entry) => {
     const queuedId = String(entry?.id || "").trim();
     if (!queuedId) {
       return false;
     }
-    if (deliveredIds.includes(queuedId)) {
+    if (completedIds.has(queuedId)) {
       return false;
     }
     if (!shouldFilterTargets) {
@@ -36234,16 +36438,25 @@ async function flushPendingNotificationOutbox(options = {}) {
   });
   savePendingNotificationOutbox(nextOutbox);
 
-  if (deliveredIds.length) {
+  if (completedIds.size) {
     scheduleNotificationRealtimeHydration(0);
   }
 
-  const failedCount = queueToAttempt.length - deliveredIds.length;
+  const failedCount = queueToAttempt.length - completedIds.size;
+  if (failedCount > 0) {
+    notificationOutboxRuntime.failureCount += 1;
+  } else {
+    notificationOutboxRuntime.failureCount = 0;
+  }
+  if (nextOutbox.length) {
+    schedulePendingNotificationOutboxRetry();
+  }
   return {
     ok: failedCount === 0,
     deferred: failedCount > 0,
-    syncedCount: deliveredIds.length,
+    syncedCount: completedIds.size,
     deliveredIds,
+    savedWithoutPushIds,
     message: failedCount > 0 ? (firstFailureMessage || "Cloud delivery is queued and will retry automatically.") : "",
   };
 }
@@ -36271,6 +36484,18 @@ function isNotificationVisibleToUser(notification, user) {
   }
   if (user.role === "admin") {
     return true;
+  }
+  const eligibilityStartMs = getUserCreatedAtMs(user);
+  const notificationCreatedAtMs = parseTimestampMs(notification?.createdAt || notification?.created_at || "");
+  if (
+    Number.isFinite(eligibilityStartMs)
+    && eligibilityStartMs > 0
+    && (
+      !Number.isFinite(notificationCreatedAtMs)
+      || notificationCreatedAtMs < eligibilityStartMs
+    )
+  ) {
+    return false;
   }
   if (notification.targetType === "year") {
     const targetYear = normalizeAcademicYearOrNull(notification.targetYear);

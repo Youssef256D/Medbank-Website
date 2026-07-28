@@ -112,35 +112,28 @@ async function loadAudienceTokens(
   notification: Record<string, unknown>,
 ): Promise<PushTokenRow[]> {
   const activeSince = new Date(Date.now() - ACTIVE_TOKEN_MAX_AGE_MS).toISOString();
-  const recipientUserId = String(notification.recipient_user_id || "").trim();
-  if (isUuid(recipientUserId)) {
-    const { data, error } = await adminClient
-      .from("push_device_tokens")
-      .select("id,user_id,token,platform")
-      .eq("user_id", recipientUserId)
-      .gte("updated_at", activeSince);
-    if (error) throw error;
-    return (data || []) as PushTokenRow[];
+  const notificationCreatedAtMs = Date.parse(String(notification.created_at || ""));
+  if (!Number.isFinite(notificationCreatedAtMs)) {
+    throw new Error("Notification creation time is invalid.");
   }
-
+  const notificationCreatedAt = new Date(notificationCreatedAtMs).toISOString();
+  const recipientUserId = String(notification.recipient_user_id || "").trim();
   const externalId = String(notification.external_id || "").trim();
   const yearMatch = externalId.match(YEAR_AUDIENCE_PATTERN);
-  if (!yearMatch) {
-    const { data, error } = await adminClient
-      .from("push_device_tokens")
-      .select("id,user_id,token,platform")
-      .gte("updated_at", activeSince);
-    if (error) throw error;
-    return (data || []) as PushTokenRow[];
-  }
-
-  const targetYear = Number(yearMatch[1]);
-  const { data: profiles, error: profileError } = await adminClient
+  let profileQuery = adminClient
     .from("profiles")
     .select("id")
-    .eq("role", "student")
-    .eq("approved", true)
-    .eq("academic_year", targetYear);
+    .lte("created_at", notificationCreatedAt);
+  if (isUuid(recipientUserId)) {
+    profileQuery = profileQuery.eq("id", recipientUserId);
+  } else if (yearMatch) {
+    profileQuery = profileQuery
+      .eq("role", "student")
+      .eq("approved", true)
+      .eq("academic_year", Number(yearMatch[1]));
+  }
+
+  const { data: profiles, error: profileError } = await profileQuery;
   if (profileError) throw profileError;
 
   const profileIds = (profiles || [])
@@ -309,7 +302,7 @@ Deno.serve(async (req) => {
 
   const { data: notification, error: notificationError } = await adminClient
     .from("notifications")
-    .select("id,external_id,recipient_user_id,title,message,target_route,target_mcq_subject,target_mcq_topic,target_video_course_id,is_active")
+    .select("id,external_id,recipient_user_id,title,message,target_route,target_mcq_subject,target_mcq_topic,target_video_course_id,is_active,created_at")
     .eq("id", notificationId)
     .eq("is_active", true)
     .maybeSingle();

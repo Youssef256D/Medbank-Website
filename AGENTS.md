@@ -188,6 +188,38 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-28 — Admin approval/refresh no longer blocked by push retries
+The admin `Refreshing...` hang was a frontend queue-coupling problem, not a
+normal Supabase free-tier request cap.
+
+1. `flushPendingSyncNow()` no longer drains the device-push notification outbox
+   unless explicitly requested. Admin approval/access writes and **Force
+   student refresh** therefore finish independently from old notification jobs.
+2. Notification delivery is now single-flight and bounded to five jobs per
+   pass, with a 25-second per-job timeout and exponential retry backoff. When
+   the notification row was saved but no registered device matches its
+   audience, the job is complete (the in-app notification remains available)
+   rather than being retried indefinitely.
+3. Enrollment hydration and admin-presence reads have abort timeouts. Manual
+   **Refresh from cloud** has a 90-second outer failsafe that clears
+   `state.adminDataRefreshing`, surfaces the timeout, and restores the button.
+4. The cloud status pill distinguishes admin reads (`Refreshing cloud
+   data...`) from student refresh publication (`Sending student refresh...`).
+5. New students no longer inherit old notifications. Hosted migration
+   `20260728152618_restrict_notifications_to_post_signup.sql` adds a
+   `profiles.created_at <= notifications.created_at` eligibility condition to
+   the notification SELECT policy. The SPA repeats the cutoff for relational
+   queries and local cached rendering.
+6. Deployed `send-push-notification` v8 applies the same profile-creation cutoff
+   before loading device tokens, so retrying an old notification cannot push it
+   to a newer account. Student-role verification returned zero visible
+   pre-signup notifications while preserving valid post-signup notifications.
+7. Static cache bust: `2026-07-28.02`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`,
+`supabase/functions/send-push-notification/index.ts`, migration and rollback
+`20260728152618_restrict_notifications_to_post_signup.sql`.
+
 ### 2026-07-24 — Google Play account-deletion web resource
 The public deletion pathway is now explicit and crawler-friendly.
 

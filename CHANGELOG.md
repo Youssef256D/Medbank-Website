@@ -9,6 +9,27 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-28 — Unblock admin approvals and cloud refresh
+- Admin user approval/access sync and both sidebar refresh actions no longer
+  wait for the device-push notification outbox. In-app notification delivery
+  stays independent and retries in the background.
+- Notification retries are single-flight, capped at five jobs per pass, bounded
+  to 25 seconds per job, and use exponential backoff. A notification already
+  saved in Supabase with no eligible registered device is now treated as
+  complete instead of retrying forever.
+- Added abort timeouts to enrollment and admin-presence reads, plus a 90-second
+  manual admin-refresh failsafe that clears the busy state and shows an error
+  instead of leaving the button on `Refreshing...`.
+- The cloud status pill now reports `Refreshing cloud data...` and
+  `Sending student refresh...` while those operations are active.
+- New students now receive only notifications created on or after their account
+  profile was created. Migration
+  `20260728152618_restrict_notifications_to_post_signup.sql` enforces the cutoff
+  in RLS, the SPA applies the same cutoff to queries and cached notifications,
+  and deployed `send-push-notification` v8 excludes newer accounts from older
+  push audiences.
+- Static cache bust: `2026-07-28.02`.
+
 ### 2026-07-24 — Google Play account-deletion web resource
 - Expanded the public Contact destination with prominent account-deletion
   steps, a pre-addressed support-email action, the account data deleted, the
