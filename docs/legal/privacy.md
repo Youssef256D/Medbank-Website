@@ -1,23 +1,24 @@
 ---
 title: Privacy Policy
 slug: privacy
-effectiveDate: 2026-06-30
+effectiveDate: 2026-07-28
 summary: How MedBank collects, uses, protects, and retains account, course, practice, and support data.
 ---
 
 # Privacy Policy
 
-Effective date: June 30, 2026
+Effective date: July 28, 2026
 
-MedBank is a browser-based study platform for medical MCQ practice and course
+MedBank is a web and mobile study platform for medical MCQ practice and course
 learning. This Privacy Policy explains what information MedBank collects, how it
-is used, and the choices available to students, administrators, and visitors.
+is used, and the choices available to students, administrators, mobile-app
+users, and website visitors.
 
 ## Who this policy covers
 
-This policy applies when you visit MedBank, create an account, sign in, complete
-practice sessions, use course materials, contact support, or administer courses
-and users.
+This policy applies when you use the MedBank website or mobile app, create an
+account, sign in, complete practice sessions, use course materials, receive
+notifications, contact support, or administer courses and users.
 
 MedBank is designed for study and education. It is not a medical-care service,
 electronic health record, clinical decision system, or emergency support channel.
@@ -50,10 +51,13 @@ admin-agent actions, approval requests, and audit logs.
 Support information may include the name, email address, message, and context
 you submit through MedBank support or contact forms.
 
-Device and technical information may include browser type, device type, IP-based
-network information available to hosting providers, session state, app version,
-local cache state, service-worker cache status, and basic error or diagnostic
-information needed to keep the app working.
+Device and technical information may include browser or operating-system type,
+device model and platform, IP-based network information available to service
+providers, session state, app version, a device-registration identifier, push
+notification token and delivery status, local cache state, service-worker cache
+status, and basic error or diagnostic information needed to keep MedBank
+working. MedBank does not use an advertising identifier and does not use this
+information to track you across other companies' apps or websites.
 
 ## How we use information
 
@@ -71,14 +75,17 @@ We use information to:
   unsafe content changes;
 - maintain, debug, and improve MedBank.
 
-We do not sell personal information.
+We do not sell personal information, display third-party advertising, or track
+users across other companies' apps or websites.
 
 ## Storage and service providers
 
-MedBank is a static web app served from GitHub Pages. Account, course, question,
+The MedBank website is a static web app served from GitHub Pages, and the mobile
+app is distributed through mobile app stores. Account, course, question,
 progress, enrollment, notification, support, and admin data are stored in the
 hosted Supabase project. Supabase Auth handles account authentication. Supabase
-Edge Functions handle sensitive admin actions and protected course-video flows.
+Edge Functions handle sensitive admin actions, device registration, push
+delivery coordination, and protected course-video flows.
 
 If Google sign-in is enabled and you choose to use it, Google may provide basic
 authentication information such as your email address and profile name so
@@ -87,10 +94,25 @@ MedBank can create or access your account.
 If protected course videos are used, Cloudflare Stream may be used to store or
 deliver video content and issue short-lived playback tokens.
 
+The mobile app uses Firebase Cloud Messaging to deliver optional administrative
+and course notifications. Firebase processes the app-instance push token,
+platform, and delivery information needed to route those messages. MedBank
+stores the token with the signed-in account so the intended user can receive a
+notification, and removes or replaces it when the user signs out or the token
+changes.
+
 Your browser may store local cache data for route memory, theme preference,
-offline safety, pending writes, and faster page loading. Browser storage is a
-convenience layer; hosted Supabase is the source of truth for account, course,
-question, enrollment, and progress data.
+offline safety, pending writes, and faster page loading. The mobile app stores
+authentication sessions in protected platform storage, such as the iOS Keychain
+or Android Keystore, and stores local preferences such as language, appearance,
+and safe session-recovery state. Local storage is a convenience and security
+layer; hosted Supabase is the source of truth for account, course, question,
+enrollment, and progress data.
+
+The current mobile release does not enable optional Sentry crash reporting. If
+diagnostic reporting is enabled in a future release, this policy and the
+app-store privacy disclosures will be updated before diagnostic data is
+collected.
 
 ## Retention
 
@@ -107,6 +129,11 @@ records may be retained for up to 90 days after deletion, then deleted or
 anonymized. A record may be retained longer only when required by law. Shared
 course and question-bank content that is not personal to the deleted account may
 remain so it stays available to other users.
+
+Push notification tokens and active device-registration records are retained
+only while needed to provide notification delivery and account-access controls.
+They are removed, replaced, or made inactive when the user signs out, the token
+changes, the device is unregistered, or the associated account is deleted.
 
 ## Sharing
 
@@ -139,6 +166,9 @@ request help correcting account, course, or access information through support.
 You can request account and data deletion using the Data Deletion Instructions.
 You can clear local browser storage from your browser settings, though doing so
 may remove local preferences or unsynced offline data.
+You can decline notification permission or disable notifications later in the
+mobile operating-system settings without losing access to MedBank's learning
+features.
 
 ## Children
 

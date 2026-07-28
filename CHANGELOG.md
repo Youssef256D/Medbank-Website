@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-07-28 — Expand privacy policy for the mobile apps
+- Updated the canonical and live privacy policy to cover iOS, iPadOS, and
+  Android in addition to the website.
+- Documented Supabase-backed mobile data, Firebase Cloud Messaging push tokens,
+  device registration, protected mobile session storage, local preferences,
+  notification choices, and the absence of advertising or cross-app tracking.
+- Clarified that optional Sentry diagnostics are disabled in the current mobile
+  release and require updated policy/store disclosures before future use.
+
 ### 2026-07-28 — Unblock admin approvals and cloud refresh
 - Admin user approval/access sync and both sidebar refresh actions no longer
   wait for the device-push notification outbox. In-app notification delivery

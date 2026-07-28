@@ -188,6 +188,17 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-07-28 — Privacy policy now covers web and mobile releases
+The canonical `docs/legal/privacy.md` and public `privacy.html` now disclose
+iOS/iPadOS/Android behavior: Supabase account and learning data, Firebase Cloud
+Messaging tokens and delivery information, device registration, protected
+mobile session storage, local preferences, and notification controls. The
+policy states that MedBank has no ads or cross-app tracking and that Sentry is
+disabled in the current mobile release.
+
+**Files touched:** `privacy.html`, `docs/legal/privacy.md`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-07-28 — Admin approval/refresh no longer blocked by push retries
 The admin `Refreshing...` hang was a frontend queue-coupling problem, not a
 normal Supabase free-tier request cap.
