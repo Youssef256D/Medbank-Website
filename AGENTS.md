@@ -189,6 +189,15 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-03 — Mobile store availability rows fixed
+The MedBank App campaign's three store cards are now full-width compact rows
+instead of narrow three-column tiles. Explicit CSS grid placement keeps icon →
+store name → device badge order stable, prevents AppGallery from breaking onto
+an orphaned final letter, and moves the badge below the name at 420px and
+narrower. Static cache bust: `2026-08-03.04`.
+
+**Files touched:** `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-03 — Dedicated MedBank App page with real store assets
 The public top bar now includes **MedBank App**. It scrolls to
 `#landing-mobile-app` while already on the homepage and otherwise opens the

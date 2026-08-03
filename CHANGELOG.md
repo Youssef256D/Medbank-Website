@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-03 — Mobile store cards no longer wrap awkwardly
+- Replaced the cramped three-column store-card layout with three compact
+  platform rows. Each row now keeps its icon, store name, and device badge in a
+  predictable reading order without splitting names such as AppGallery.
+- On narrow phones, the device badge moves below the store name to preserve
+  readable spacing. Verified at 1000 px and 390 px. Static cache bust:
+  `2026-08-03.04`.
+
 ### 2026-08-03 — Mobile app page now uses the real product assets
 - Added **MedBank App** to the public top bar. On the homepage it scrolls to
   the mobile-app campaign; from other public pages it opens the new dedicated

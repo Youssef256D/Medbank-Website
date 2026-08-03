@@ -3158,19 +3158,41 @@ body.is-routing .card {
 }
 
 .landing-simple .lp-store-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem;
   margin-top: 1.25rem;
 }
 
 .landing-simple .lp-store-card {
-  min-height: 104px;
-  padding: 0.75rem;
+  min-height: 72px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-content: center;
+  padding: 0.65rem 0.75rem;
+}
+
+.landing-simple .lp-store-icon {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.landing-simple .lp-store-copy {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .landing-simple .lp-store-copy strong {
-  font-size: 0.84rem;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-size: 0.92rem;
 }
 
 .landing-simple .lp-store-platform {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+  justify-self: end;
+  margin-top: 0;
+  white-space: nowrap;
   font-size: 0.62rem;
 }
 
@@ -3350,6 +3372,19 @@ body.is-routing .card {
 
   .landing-simple .lp-app-screen {
     flex-basis: min(68vw, 230px);
+  }
+}
+
+@media (max-width: 420px) {
+  .landing-simple .lp-store-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .landing-simple .lp-store-platform {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    margin-top: 0.18rem;
   }
 }
 
