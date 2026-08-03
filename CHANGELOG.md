@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-03 — Announce the upcoming mobile apps
+- Added a prominent homepage launch panel announcing that MedBank is coming
+  soon to Google Play, Apple's App Store, and Huawei AppGallery.
+- The announcement uses non-clickable store cards so visitors are not sent to
+  unavailable listings, plus a responsive MedBank phone preview that highlights
+  Video Courses, the MCQ Bank, progress tracking, and cross-device sync.
+- Updated the static first-paint fallback so the announcement is visible before
+  the SPA finishes loading. Static cache bust: `2026-08-03.01`.
+
 ### 2026-07-28 — Repair Google indexing signals after the Pages URL rename
 - Confirmed the former indexed Pages URL
   (`/o6u-medbank-app/`) returned a hard 404 after the repository was renamed to

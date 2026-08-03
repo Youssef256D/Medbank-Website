@@ -21235,6 +21235,7 @@ function getGsapRouteRevealTargets() {
     ".landing-auth-card",
     ".lp-product-head",
     ".lp-points li",
+    ".lp-app-release",
     ".lp-contact-card",
   ].join(", ");
   const seen = new Set();
@@ -21366,7 +21367,7 @@ function setupGsapMarketingPageMotion(gsap = getGsapMotionApi()) {
 
   const featureCards = Array.from(marketingPage.querySelectorAll(
     ".feature-showcase-card, .pricing-plan-card, .pricing-step-card, .contact-method-card, .landing-proof-card, "
-    + ".lp-points li, .lp-contact-card"
+    + ".lp-points li, .lp-store-card, .lp-contact-card"
   )).filter(_inVp);
   if (featureCards.length) {
     gsap.fromTo(featureCards,
@@ -21726,6 +21727,68 @@ function landingMcqBankSectionHtml() {
   `;
 }
 
+function landingMobileAppsSectionHtml() {
+  return `
+    <div class="lp-app-release">
+      <div class="lp-mobile-copy">
+        <p class="lp-launch-status"><span aria-hidden="true"></span> Mobile apps · Coming soon</p>
+        <h2 class="lp-mobile-title">MedBank is coming to your home screen.</h2>
+        <p class="lp-mobile-lede">The same protected video courses, course-aligned MCQs, explanations, and progress tracking — soon in dedicated mobile apps.</p>
+
+        <div class="lp-store-list" role="list" aria-label="MedBank mobile app release platforms">
+          <div class="lp-store-card" role="listitem" aria-label="Coming soon on Google Play for Android">
+            <span class="lp-store-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M4.5 3.3 19.8 12 4.5 20.7V3.3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="m5 3.8 9.4 10.7M5 20.2l9.4-10.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </span>
+            <span class="lp-store-copy"><small>Coming soon on</small><strong>Google Play</strong></span>
+            <span class="lp-store-platform">Android</span>
+          </div>
+
+          <div class="lp-store-card" role="listitem" aria-label="Coming soon on the App Store for iPhone and iPad">
+            <span class="lp-store-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="2.8" width="14" height="18.4" rx="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M9.2 16.2 12 7.8l2.8 8.4M10.1 13.4h3.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="lp-store-copy"><small>Coming soon on the</small><strong>App Store</strong></span>
+            <span class="lp-store-platform">iPhone · iPad</span>
+          </div>
+
+          <div class="lp-store-card" role="listitem" aria-label="Coming soon on Huawei AppGallery">
+            <span class="lp-store-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 11.2c-2.9-1.5-4.4-3.4-4.4-5.8 2.7.2 4.4 2.1 4.4 5.8Zm0 0c2.9-1.5 4.4-3.4 4.4-5.8-2.7.2-4.4 2.1-4.4 5.8ZM10.9 12c-3.1-.5-5.3.2-6.7 2.1 2.3 1.4 4.8.7 6.7-2.1Zm2.2 0c3.1-.5 5.3.2 6.7 2.1-2.3 1.4-4.8.7-6.7-2.1ZM12 13.1c-2.1 2.2-2.7 4.5-1.6 6.5 2.3-1.2 2.9-3.6 1.6-6.5Zm0 0c2.1 2.2 2.7 4.5 1.6 6.5-2.3-1.2-2.9-3.6-1.6-6.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="lp-store-copy"><small>Coming soon on</small><strong>Huawei AppGallery</strong></span>
+            <span class="lp-store-platform">Huawei devices</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="lp-app-preview" aria-hidden="true">
+        <div class="lp-preview-device">
+          <span class="lp-preview-speaker"></span>
+          <div class="lp-preview-topline">
+            <span class="lp-preview-mark">M</span>
+            <span>MedBank</span>
+            <span class="lp-preview-online"></span>
+          </div>
+          <div class="lp-preview-body">
+            <p class="lp-preview-kicker">One study space</p>
+            <p class="lp-preview-title">Watch. Practise. Review.</p>
+            <div class="lp-preview-rail">
+              <span>Video courses</span>
+              <span>MCQ bank</span>
+              <span>Progress</span>
+            </div>
+            <svg class="lp-preview-pulse" viewBox="0 0 240 46" preserveAspectRatio="none">
+              <path d="M0 25h46l12-15 18 29 19-36 20 32 13-10h112"/>
+            </svg>
+            <p class="lp-preview-sync">Your progress, synced across devices.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function landingCoursesSectionHtml() {
   return `
     <div class="lp-product">
@@ -21828,6 +21891,10 @@ function renderLanding() {
           </div>
           <p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>
         </div>
+      </section>
+
+      <section class="landing-scroll-section lp-section lp-mobile-launch" aria-label="MedBank mobile apps coming soon">
+        ${landingMobileAppsSectionHtml()}
       </section>
 
       <section id="landing-mcqs" class="landing-scroll-section lp-section">

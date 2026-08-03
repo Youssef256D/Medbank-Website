@@ -188,6 +188,18 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-03 — Upcoming mobile apps announced on the homepage
+The public homepage now includes a responsive launch panel immediately below
+the hero announcing upcoming releases on Google Play, Apple's App Store, and
+Huawei AppGallery. Store cards are intentionally non-clickable until real
+listing URLs exist. A phone-shaped MedBank study-loop preview provides the
+single visual signature, and reduced-motion users do not receive the status-dot
+animation. The same announcement appears in the static `index.html` first-paint
+fallback. Static cache bust: `2026-08-03.01`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-07-28 — Google indexing migration repaired after Pages URL rename
 The earlier repository rename changed the public path from
 `/o6u-medbank-app/` to `/Medbank-Website/`, but the old Pages URL returned a
