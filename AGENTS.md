@@ -189,6 +189,15 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-03 — Mobile app campaign header uses the app icon only
+The duplicate horizontal MedBank wordmark was removed from the mobile app
+campaign header. The square mobile app icon remains beside the coming-soon
+status in both the SPA render and static first-paint fallback. Static cache
+bust: `2026-08-03.05`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-08-03 — Mobile store availability rows fixed
 The MedBank App campaign's three store cards are now full-width compact rows
 instead of narrow three-column tiles. Explicit CSS grid placement keeps icon →

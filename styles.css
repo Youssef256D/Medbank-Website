@@ -3100,20 +3100,10 @@ body.is-routing .card {
 
 .landing-simple .lp-app-brandline > div {
   min-width: 0;
-  display: grid;
-  gap: 0.45rem;
 }
 
 .landing-simple .lp-app-brandline .lp-launch-status {
   margin: 0;
-}
-
-.landing-simple .lp-app-wordmark {
-  display: block;
-  width: min(100%, 12rem);
-  height: auto;
-  object-fit: contain;
-  object-position: left center;
 }
 
 .landing-simple .lp-mobile-title {
@@ -3329,10 +3319,6 @@ body.is-routing .card {
     width: 4rem;
     height: 4rem;
     border-radius: 1rem;
-  }
-
-  .landing-simple .lp-app-wordmark {
-    width: min(100%, 9.5rem);
   }
 
   .landing-simple .lp-mobile-title {

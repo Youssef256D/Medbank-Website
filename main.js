@@ -21744,7 +21744,6 @@ function landingMobileAppsSectionHtml() {
           <img class="lp-app-icon" src="Assets/mobile-app/medbank-app-icon.png" alt="" width="96" height="96" loading="lazy" decoding="async" />
           <div>
             <p class="lp-launch-status"><span aria-hidden="true"></span> Mobile apps · Coming soon</p>
-            <img class="lp-app-wordmark" src="Assets/mobile-app/medbank-app-logo.png" alt="MedBank" width="420" height="147" loading="lazy" decoding="async" />
           </div>
         </div>
         <h2 class="lp-mobile-title">Your complete medical study loop, now built for mobile.</h2>

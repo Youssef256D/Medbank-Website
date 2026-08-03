@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-03 — Mobile app campaign header simplified
+- Removed the duplicate horizontal MedBank wordmark from the mobile app
+  campaign and kept the square mobile app icon beside the coming-soon status.
+  Updated both the SPA and static first-paint markup. Static cache bust:
+  `2026-08-03.05`.
+
 ### 2026-08-03 — Mobile store cards no longer wrap awkwardly
 - Replaced the cramped three-column store-card layout with three compact
   platform rows. Each row now keeps its icon, store name, and device badge in a
