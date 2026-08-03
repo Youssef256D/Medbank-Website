@@ -94,7 +94,8 @@ Assets/                 Branding images.
 ```
 
 ### Routes (the `state.route` values the router handles)
-- **Public:** `landing`, `features`, `pricing`, `about`, `contact`
+- **Public:** `landing`, `mobile-app`, `mcqs`, `courses-platform`, `features`,
+  `pricing`, `about`, `contact`
 - **Auth:** `login`, `signup`, `forgot`, `reset-password`, `complete-profile`
 - **Student app:** `app-launcher`, `courses`, `dashboard`, `notifications`,
   `create-test`, `session`, `review`, `analytics`, `profile`
@@ -187,6 +188,24 @@ can reactivate them.
 ---
 
 ## 7. Refactor log (most recent first)
+
+### 2026-08-03 — Dedicated MedBank App page with real store assets
+The public top bar now includes **MedBank App**. It scrolls to
+`#landing-mobile-app` while already on the homepage and otherwise opens the
+dedicated public `#mobile-app` route. `mobile-app` is part of `KNOWN_ROUTES`,
+`PUBLIC_MARKETING_ROUTE_SET`, and `AUTH_ENTRY_ROUTE_SET`; keep those entries in
+sync if this page is renamed.
+
+The campaign uses the actual Flutter app icon, wordmark, and six English iPhone
+store screenshots copied from the sibling `Medbank-App` project into
+`Assets/mobile-app/`. The copies are web-sized and lazy-loaded; do not point the
+website at sibling-project paths because GitHub Pages cannot serve them. The
+gallery is horizontally scrollable with keyboard focus and scroll snapping.
+The static `index.html` first-paint fallback mirrors the SPA markup. Static
+cache bust: `2026-08-03.02`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`, `Assets/mobile-app/*`.
 
 ### 2026-08-03 — Upcoming mobile apps announced on the homepage
 The public homepage now includes a responsive launch panel immediately below

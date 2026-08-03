@@ -9,6 +9,19 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-03 — Mobile app page now uses the real product assets
+- Added **MedBank App** to the public top bar. On the homepage it scrolls to
+  the mobile-app campaign; from other public pages it opens the new dedicated
+  `#mobile-app` route.
+- Replaced the illustrative phone mockup with the real MedBank app icon,
+  wordmark, and six English iPhone screenshots imported from the Flutter
+  `Medbank-App` project: learning overview, MCQ Bank, tutor explanations,
+  results review, Video Courses, and profile/settings.
+- Expanded the copy from the prepared store listings to cover focused tutor or
+  timed tests, notes and mistake review, video-course progress, notifications,
+  English/Arabic support, themes, and phone/tablet layouts. Screenshots are
+  resized for the web and lazy-loaded. Static cache bust: `2026-08-03.02`.
+
 ### 2026-08-03 — Announce the upcoming mobile apps
 - Added a prominent homepage launch panel announcing that MedBank is coming
   soon to Google Play, Apple's App Store, and Huawei AppGallery.

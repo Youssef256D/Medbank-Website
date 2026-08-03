@@ -60,6 +60,7 @@ const GOOGLE_OAUTH_PENDING_KEY = "mcq_google_oauth_pending";
 const PASSWORD_RECOVERY_PENDING_KEY = "mcq_password_recovery_pending";
 const KNOWN_ROUTES = new Set([
   "landing",
+  "mobile-app",
   "mcqs",
   "courses-platform",
   "features",
@@ -99,8 +100,8 @@ const PRIVATE_ROUTE_SET = new Set([
   "profile",
   "admin",
 ]);
-const PUBLIC_MARKETING_ROUTE_SET = new Set(["landing", "mcqs", "courses-platform", "features", "pricing", "about", "contact"]);
-const AUTH_ENTRY_ROUTE_SET = new Set(["landing", "features", "pricing", "about", "contact", "login", "signup", "forgot"]);
+const PUBLIC_MARKETING_ROUTE_SET = new Set(["landing", "mobile-app", "mcqs", "courses-platform", "features", "pricing", "about", "contact"]);
+const AUTH_ENTRY_ROUTE_SET = new Set(["landing", "mobile-app", "features", "pricing", "about", "contact", "login", "signup", "forgot"]);
 // 2026-07-21 rename: the video learning platform and the MCQ subject list were
 // both called "courses". Old bookmarks, saved route memory, and any already
 // shipped mobile build still send the legacy ids, so map them forward instead
@@ -20606,6 +20607,9 @@ function render() {
         appEl.innerHTML = renderLanding();
         wireLanding();
         break;
+      case "mobile-app":
+        appEl.innerHTML = renderMobileAppPage();
+        break;
       case "mcqs":
         appEl.innerHTML = renderMcqBankPage();
         break;
@@ -20977,6 +20981,11 @@ function syncTopbar() {
   authActionsEl.classList.toggle("hidden", false);
 
   publicNavEl.classList.toggle("hidden", Boolean(user) || maintenanceRestricted);
+  if (!user && !maintenanceRestricted) {
+    publicNavEl.querySelectorAll("[data-nav]").forEach((button) => {
+      button.classList.toggle("is-active", button.getAttribute("data-nav") === state.route);
+    });
+  }
   if (user && !maintenanceRestricted) {
     const currentRoute = state.route;
     const isMcqRoute = ["dashboard", "create-test", "analytics", "qbank", "session", "review", "notifications", "profile"].includes(currentRoute);
@@ -21731,9 +21740,22 @@ function landingMobileAppsSectionHtml() {
   return `
     <div class="lp-app-release">
       <div class="lp-mobile-copy">
-        <p class="lp-launch-status"><span aria-hidden="true"></span> Mobile apps · Coming soon</p>
-        <h2 class="lp-mobile-title">MedBank is coming to your home screen.</h2>
-        <p class="lp-mobile-lede">The same protected video courses, course-aligned MCQs, explanations, and progress tracking — soon in dedicated mobile apps.</p>
+        <div class="lp-app-brandline">
+          <img class="lp-app-icon" src="Assets/mobile-app/medbank-app-icon.png" alt="" width="96" height="96" loading="lazy" decoding="async" />
+          <div>
+            <p class="lp-launch-status"><span aria-hidden="true"></span> Mobile apps · Coming soon</p>
+            <img class="lp-app-wordmark" src="Assets/mobile-app/medbank-app-logo.png" alt="MedBank" width="420" height="147" loading="lazy" decoding="async" />
+          </div>
+        </div>
+        <h2 class="lp-mobile-title">Your complete medical study loop, now built for mobile.</h2>
+        <p class="lp-mobile-lede">Use the same approved MedBank account to practise assigned MCQs, review explanations, continue video courses, and keep progress synced across phone, tablet, and web.</p>
+
+        <ul class="lp-app-feature-list" aria-label="MedBank mobile app features">
+          <li><strong>Focused tests</strong><span>Choose subjects and topics, then study in tutor or timed mode.</span></li>
+          <li><strong>Detailed review</strong><span>See explanations, revisit mistakes, and keep private question notes.</span></li>
+          <li><strong>Video learning</strong><span>Open enrolled courses, modules, materials, and lesson progress.</span></li>
+          <li><strong>Made for every screen</strong><span>English and Arabic, light and dark themes, phone and tablet layouts.</span></li>
+        </ul>
 
         <div class="lp-store-list" role="list" aria-label="MedBank mobile app release platforms">
           <div class="lp-store-card" role="listitem" aria-label="Coming soon on Google Play for Android">
@@ -21756,33 +21778,43 @@ function landingMobileAppsSectionHtml() {
             <span class="lp-store-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 11.2c-2.9-1.5-4.4-3.4-4.4-5.8 2.7.2 4.4 2.1 4.4 5.8Zm0 0c2.9-1.5 4.4-3.4 4.4-5.8-2.7.2-4.4 2.1-4.4 5.8ZM10.9 12c-3.1-.5-5.3.2-6.7 2.1 2.3 1.4 4.8.7 6.7-2.1Zm2.2 0c3.1-.5 5.3.2 6.7 2.1-2.3 1.4-4.8.7-6.7-2.1ZM12 13.1c-2.1 2.2-2.7 4.5-1.6 6.5 2.3-1.2 2.9-3.6 1.6-6.5Zm0 0c2.1 2.2 2.7 4.5 1.6 6.5-2.3-1.2-2.9-3.6-1.6-6.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
             </span>
-            <span class="lp-store-copy"><small>Coming soon on</small><strong>Huawei AppGallery</strong></span>
+            <span class="lp-store-copy"><small>Coming soon on Huawei</small><strong>AppGallery</strong></span>
             <span class="lp-store-platform">Huawei devices</span>
           </div>
         </div>
+        <p class="lp-app-access-note">Free to download · No ads or in-app purchases · Student access requires administrator approval.</p>
       </div>
 
-      <div class="lp-app-preview" aria-hidden="true">
-        <div class="lp-preview-device">
-          <span class="lp-preview-speaker"></span>
-          <div class="lp-preview-topline">
-            <span class="lp-preview-mark">M</span>
-            <span>MedBank</span>
-            <span class="lp-preview-online"></span>
-          </div>
-          <div class="lp-preview-body">
-            <p class="lp-preview-kicker">One study space</p>
-            <p class="lp-preview-title">Watch. Practise. Review.</p>
-            <div class="lp-preview-rail">
-              <span>Video courses</span>
-              <span>MCQ bank</span>
-              <span>Progress</span>
-            </div>
-            <svg class="lp-preview-pulse" viewBox="0 0 240 46" preserveAspectRatio="none">
-              <path d="M0 25h46l12-15 18 29 19-36 20 32 13-10h112"/>
-            </svg>
-            <p class="lp-preview-sync">Your progress, synced across devices.</p>
-          </div>
+      <div class="lp-app-showcase">
+        <div class="lp-screen-intro">
+          <div><span>Inside the app</span><strong>Real screens. One connected workspace.</strong></div>
+          <span aria-hidden="true">Swipe to explore →</span>
+        </div>
+        <div class="lp-screen-reel" tabindex="0" aria-label="MedBank mobile app screenshots. Scroll horizontally to explore all six screens.">
+          <figure class="lp-app-screen">
+            <img src="Assets/mobile-app/screen-01-learning-overview.png" alt="MedBank mobile learning overview with question, subject, course, and lesson progress cards" width="660" height="1434" loading="lazy" decoding="async" />
+            <figcaption><span>01</span>Learning overview</figcaption>
+          </figure>
+          <figure class="lp-app-screen">
+            <img src="Assets/mobile-app/screen-02-mcq-bank.png" alt="MedBank MCQ Bank showing test statistics, assigned subjects, notebook, and unfinished tests" width="660" height="1434" loading="lazy" decoding="async" />
+            <figcaption><span>02</span>MCQ Bank</figcaption>
+          </figure>
+          <figure class="lp-app-screen">
+            <img src="Assets/mobile-app/screen-03-tutor-question.png" alt="MedBank tutor-mode medical question with the correct answer and explanation revealed" width="660" height="1434" loading="lazy" decoding="async" />
+            <figcaption><span>03</span>Tutor explanations</figcaption>
+          </figure>
+          <figure class="lp-app-screen">
+            <img src="Assets/mobile-app/screen-04-test-results.png" alt="MedBank test results with score, correct and incorrect counts, and answer review" width="660" height="1434" loading="lazy" decoding="async" />
+            <figcaption><span>04</span>Results &amp; review</figcaption>
+          </figure>
+          <figure class="lp-app-screen">
+            <img src="Assets/mobile-app/screen-05-video-courses.png" alt="MedBank Video Courses screen with enrolled course progress" width="660" height="1434" loading="lazy" decoding="async" />
+            <figcaption><span>05</span>Video Courses</figcaption>
+          </figure>
+          <figure class="lp-app-screen">
+            <img src="Assets/mobile-app/screen-06-profile-settings.png" alt="MedBank profile showing assigned subjects, appearance, language, and help settings" width="660" height="1434" loading="lazy" decoding="async" />
+            <figcaption><span>06</span>Profile &amp; settings</figcaption>
+          </figure>
         </div>
       </div>
     </div>
@@ -21893,7 +21925,7 @@ function renderLanding() {
         </div>
       </section>
 
-      <section class="landing-scroll-section lp-section lp-mobile-launch" aria-label="MedBank mobile apps coming soon">
+      <section id="landing-mobile-app" class="landing-scroll-section lp-section lp-mobile-launch" aria-label="MedBank mobile apps coming soon">
         ${landingMobileAppsSectionHtml()}
       </section>
 
@@ -21917,6 +21949,14 @@ function renderMcqBankPage() {
   return `
     <section class="panel marketing-page landing-page landing-simple lp-standalone">
       ${landingMcqBankSectionHtml()}
+    </section>
+  `;
+}
+
+function renderMobileAppPage() {
+  return `
+    <section class="panel marketing-page landing-page landing-simple lp-standalone lp-mobile-app-page">
+      ${landingMobileAppsSectionHtml()}
     </section>
   `;
 }

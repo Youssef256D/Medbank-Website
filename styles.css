@@ -2787,123 +2787,6 @@ body.is-routing .card {
   font-weight: 700;
 }
 
-.landing-simple .lp-app-preview {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  justify-content: center;
-}
-
-.landing-simple .lp-preview-device {
-  width: min(100%, 255px);
-  min-height: 430px;
-  border: 7px solid color-mix(in srgb, var(--brand-strong) 78%, #071d22);
-  border-radius: 2.45rem;
-  background: linear-gradient(155deg, var(--brand-strong), color-mix(in srgb, var(--brand-strong) 68%, #071d22));
-  box-shadow: 0 28px 50px color-mix(in srgb, var(--brand-strong) 28%, transparent);
-  padding: 0.85rem;
-  color: #ffffff;
-  transform: rotate(3deg);
-}
-
-.landing-simple .lp-preview-speaker {
-  display: block;
-  width: 3.4rem;
-  height: 0.32rem;
-  margin: 0.1rem auto 1rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.32);
-}
-
-.landing-simple .lp-preview-topline {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 0.55rem;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.landing-simple .lp-preview-mark {
-  width: 1.75rem;
-  height: 1.75rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.58rem;
-  background: #ffffff;
-  color: var(--brand-strong);
-  font-family: var(--font-display);
-  font-size: 0.84rem;
-}
-
-.landing-simple .lp-preview-online {
-  width: 0.48rem;
-  height: 0.48rem;
-  border-radius: 50%;
-  background: #85f3ad;
-  box-shadow: 0 0 0 0.22rem rgba(133, 243, 173, 0.16);
-}
-
-.landing-simple .lp-preview-body {
-  margin-top: 1.6rem;
-}
-
-.landing-simple .lp-preview-kicker {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.landing-simple .lp-preview-title {
-  margin: 0.5rem 0 0;
-  font-family: var(--font-display);
-  font-size: 1.65rem;
-  font-weight: 650;
-  line-height: 1.05;
-  letter-spacing: -0.035em;
-}
-
-.landing-simple .lp-preview-rail {
-  display: grid;
-  gap: 0.55rem;
-  margin-top: 1.45rem;
-}
-
-.landing-simple .lp-preview-rail span {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 0.65rem 0.75rem;
-  font-size: 0.76rem;
-  font-weight: 650;
-}
-
-.landing-simple .lp-preview-pulse {
-  width: 100%;
-  height: 2.8rem;
-  margin-top: 1.2rem;
-  overflow: visible;
-}
-
-.landing-simple .lp-preview-pulse path {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2.3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.landing-simple .lp-preview-sync {
-  margin: 0.65rem 0 0;
-  color: rgba(255, 255, 255, 0.68);
-  font-size: 0.72rem;
-  line-height: 1.4;
-}
-
 @keyframes lp-launch-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(0.78); opacity: 0.72; }
@@ -3158,12 +3041,6 @@ body.is-routing .card {
     margin-top: 0;
   }
 
-  .landing-simple .lp-preview-device {
-    width: min(78vw, 245px);
-    min-height: 405px;
-    transform: rotate(1.5deg);
-  }
-
   .landing-simple .lp-points {
     grid-template-columns: 1fr;
   }
@@ -3180,6 +3057,299 @@ body.is-routing .card {
 @media (prefers-reduced-motion: reduce) {
   .landing-simple .lp-launch-status > span {
     animation: none;
+  }
+}
+
+/* MedBank App campaign: authentic store assets from the Flutter app project. */
+.landing-simple .lp-mobile-launch {
+  width: min(100%, 1180px);
+  scroll-margin-top: 6rem;
+}
+
+.landing-simple .lp-app-release {
+  grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr);
+  align-items: start;
+  gap: clamp(2rem, 4vw, 4rem);
+  padding: clamp(1.4rem, 3.3vw, 3rem);
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 30%),
+    var(--surface-strong);
+}
+
+.landing-simple .lp-app-release::after {
+  display: none;
+}
+
+.landing-simple .lp-app-brandline {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.15rem;
+}
+
+.landing-simple .lp-app-icon {
+  width: clamp(4.15rem, 6vw, 5.25rem);
+  height: clamp(4.15rem, 6vw, 5.25rem);
+  flex: 0 0 auto;
+  object-fit: cover;
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, var(--line));
+  border-radius: 1.25rem;
+  background: #ffffff;
+  box-shadow: 0 16px 30px color-mix(in srgb, var(--brand-strong) 15%, transparent);
+}
+
+.landing-simple .lp-app-brandline > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.landing-simple .lp-app-brandline .lp-launch-status {
+  margin: 0;
+}
+
+.landing-simple .lp-app-wordmark {
+  display: block;
+  width: min(100%, 12rem);
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.landing-simple .lp-mobile-title {
+  max-width: 660px;
+  font-size: clamp(2rem, 3.6vw, 3.2rem);
+}
+
+.landing-simple .lp-app-feature-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 1.45rem 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.landing-simple .lp-app-feature-list li {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+  padding: 0.9rem 1rem 0.95rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.landing-simple .lp-app-feature-list li:nth-child(even) {
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+}
+
+.landing-simple .lp-app-feature-list strong {
+  color: var(--text);
+  font-family: var(--font-heading);
+  font-size: 0.9rem;
+}
+
+.landing-simple .lp-app-feature-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.landing-simple .lp-store-list {
+  margin-top: 1.25rem;
+}
+
+.landing-simple .lp-store-card {
+  min-height: 104px;
+  padding: 0.75rem;
+}
+
+.landing-simple .lp-store-copy strong {
+  font-size: 0.84rem;
+}
+
+.landing-simple .lp-store-platform {
+  font-size: 0.62rem;
+}
+
+.landing-simple .lp-app-access-note {
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.landing-simple .lp-app-showcase {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--brand) 35%, transparent);
+  border-radius: clamp(1.15rem, 2.5vw, 1.8rem);
+  background:
+    radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent) 38%, transparent), transparent 30%),
+    linear-gradient(145deg, #071d22, color-mix(in srgb, var(--brand-strong) 72%, #071d22));
+  box-shadow: 0 26px 55px color-mix(in srgb, var(--brand-strong) 20%, transparent);
+  padding: clamp(1rem, 2.5vw, 1.55rem);
+}
+
+.landing-simple .lp-screen-intro {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.landing-simple .lp-screen-intro > div {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.landing-simple .lp-screen-intro span {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.landing-simple .lp-screen-intro strong {
+  color: #ffffff;
+  font-family: var(--font-heading);
+  font-size: clamp(1rem, 1.7vw, 1.2rem);
+}
+
+.landing-simple .lp-screen-reel {
+  display: flex;
+  gap: clamp(0.8rem, 1.5vw, 1.1rem);
+  margin: 0.9rem -0.2rem -0.25rem;
+  padding: 0.35rem 0.2rem 0.9rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.34) transparent;
+}
+
+.landing-simple .lp-screen-reel:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.landing-simple .lp-app-screen {
+  flex: 0 0 clamp(175px, 17vw, 220px);
+  min-width: 0;
+  margin: 0;
+  scroll-snap-align: start;
+}
+
+.landing-simple .lp-app-screen img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 660 / 1434;
+  object-fit: cover;
+  border: 5px solid rgba(255, 255, 255, 0.92);
+  border-radius: 1.45rem;
+  background: #eef5f3;
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.28);
+}
+
+.landing-simple .lp-app-screen figcaption {
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+  margin-top: 0.65rem;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.landing-simple .lp-app-screen figcaption span {
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.landing-simple.lp-mobile-app-page .lp-app-release {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+@media (max-width: 960px) {
+  .landing-simple .lp-app-release {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .landing-simple .lp-app-showcase {
+    width: 100%;
+  }
+
+  .landing-simple .lp-app-screen {
+    flex-basis: clamp(180px, 30vw, 225px);
+  }
+}
+
+@media (max-width: 720px) {
+  .landing-simple .lp-app-release {
+    gap: 1.65rem;
+    padding: 1.1rem;
+  }
+
+  .landing-simple .lp-app-brandline {
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .landing-simple .lp-app-icon {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 1rem;
+  }
+
+  .landing-simple .lp-app-wordmark {
+    width: min(100%, 9.5rem);
+  }
+
+  .landing-simple .lp-mobile-title {
+    font-size: clamp(1.9rem, 9.5vw, 2.55rem);
+  }
+
+  .landing-simple .lp-app-feature-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .landing-simple .lp-app-feature-list li,
+  .landing-simple .lp-app-feature-list li:nth-child(even) {
+    padding: 0.85rem 0;
+    border-left: 0;
+  }
+
+  .landing-simple .lp-store-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .landing-simple .lp-store-card {
+    min-height: 0;
+  }
+
+  .landing-simple .lp-app-showcase {
+    padding: 1rem;
+  }
+
+  .landing-simple .lp-screen-intro > span {
+    display: none;
+  }
+
+  .landing-simple .lp-screen-reel {
+    margin-right: -1rem;
+    padding-right: 1rem;
+  }
+
+  .landing-simple .lp-app-screen {
+    flex-basis: min(68vw, 230px);
   }
 }
 
