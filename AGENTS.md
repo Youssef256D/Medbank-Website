@@ -189,6 +189,17 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-04 — Sign in with Apple enabled
+The hosted Apple provider is configured for web and native sign-in. The primary
+App ID is `com.medbank`; the web Services ID is `com.medbank.web`; and Supabase
+accepts `com.medbank.web,com.medbank` in that order. The Apple callback points
+to the hosted Supabase Auth callback, and the website feature flag is now
+enabled. The client-secret JWT and `.p8` key remain outside the repository.
+Static cache bust: `2026-08-04.01`.
+
+**Files touched:** `supabase.config.js`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-08-03 — Account deletion moved to the legal footer
 The full account-deletion block was removed from the public Contact destination.
 The standalone `deletion.html` resource is now the single public page for the

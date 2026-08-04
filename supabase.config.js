@@ -20,8 +20,8 @@ window.__SUPABASE_CONFIG = {
   // served from the web URL but should still use the native callback scheme.
   forceMobileAuthRedirect: false,
   // Keep this aligned with Authentication -> Providers in Supabase.
-  // Apple is not configured, so do not advertise a broken login option.
-  appleOAuthEnabled: false,
+  // Apple OAuth is configured for the web Services ID and native bundle ID.
+  appleOAuthEnabled: true,
   // Optional storage bucket for uploaded question images.
   questionImageBucket: "question-images",
   // Optional private storage bucket for uploaded course lesson videos.
