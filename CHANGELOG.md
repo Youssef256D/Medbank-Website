@@ -14,7 +14,7 @@ hosted Supabase is the source of truth.
   ID, web Services ID, callback URL, private key, and hosted Supabase provider.
 - Kept the Services ID first in the Supabase client-ID list so web OAuth uses
   `com.medbank.web` while native sign-in continues to accept `com.medbank`.
-  Static cache bust: `2026-08-04.01`.
+  Static cache bust: `2026-08-04.02`.
 
 ### 2026-08-03 — Account deletion moved to a footer-linked page
 - Removed the duplicated account-deletion instructions from the public Contact

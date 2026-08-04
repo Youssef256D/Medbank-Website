@@ -195,7 +195,7 @@ App ID is `com.medbank`; the web Services ID is `com.medbank.web`; and Supabase
 accepts `com.medbank.web,com.medbank` in that order. The Apple callback points
 to the hosted Supabase Auth callback, and the website feature flag is now
 enabled. The client-secret JWT and `.p8` key remain outside the repository.
-Static cache bust: `2026-08-04.01`.
+Static cache bust: `2026-08-04.02`.
 
 **Files touched:** `supabase.config.js`, `index.html`, `CHANGELOG.md`,
 `AGENTS.md`.
