@@ -9,6 +9,25 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-04 — Video Course public IDs, YouTube lessons, and activation coupons
+- Added immutable numeric MedBank IDs for all 1,290 existing profiles and every
+  new profile while retaining Auth UUIDs as canonical keys. Profile copy UI,
+  admin display, and numeric-ID search are included.
+- Added normalized YouTube lesson authoring with live admin preview and
+  privacy-enhanced student embeds. Existing upload and Cloudflare paths remain;
+  private uploaded video signing is now authorized against the exact lesson.
+- Added hash-only, globally one-time full-course and multi-module coupons,
+  atomic redemption, additive module entitlements, access-source metadata,
+  admin bulk generation/filtering/export/statistics, student activation, and
+  locked-module rendering. Full access includes future published modules.
+- Tightened lesson/resource/progress/Storage RLS to the centralized full/module
+  resolver. Deployed `course-video-url` and the updated
+  `cloudflare-stream-token` Edge Functions.
+- Applied hosted migrations `20260804205400` and `20260804211839`. Rollback-only
+  database tests, real authenticated-role RLS checks, and a two-session race
+  test passed; the tagged race fixture was removed. Static cache bust:
+  `2026-08-04.06`.
+
 ### 2026-08-04 — Sign in with Apple enabled
 - Enabled the website Apple OAuth feature flag after configuring the Apple App
   ID, web Services ID, callback URL, private key, and hosted Supabase provider.

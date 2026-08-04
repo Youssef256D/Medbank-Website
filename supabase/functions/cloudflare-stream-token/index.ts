@@ -122,7 +122,7 @@ Deno.serve(async (req) => {
 
   const { data: lesson, error: lessonError } = await adminClient
     .from("platform_course_lessons")
-    .select("id,course_id,title,video_url,is_published,is_free_preview")
+    .select("id,course_id,module_id,title,video_url,is_published,is_free_preview")
     .eq("id", lessonId)
     .maybeSingle();
   if (lessonError || !lesson) {
@@ -146,14 +146,22 @@ Deno.serve(async (req) => {
       if (lesson.is_free_preview === true) {
         allowed = true;
       } else {
-        const { data: enrollment } = await adminClient
-          .from("platform_course_enrollments")
-          .select("id")
-          .eq("course_id", lesson.course_id)
-          .eq("user_id", actorId)
-          .limit(1)
-          .maybeSingle();
-        allowed = Boolean(enrollment?.id);
+        const [{ data: enrollment }, { data: entitlement }] = await Promise.all([
+          adminClient
+            .from("platform_course_enrollments")
+            .select("course_id")
+            .eq("course_id", lesson.course_id)
+            .eq("user_id", actorId)
+            .eq("access_scope", "full")
+            .maybeSingle(),
+          adminClient
+            .from("platform_course_module_entitlements")
+            .select("module_id")
+            .eq("module_id", lesson.module_id)
+            .eq("user_id", actorId)
+            .maybeSingle(),
+        ]);
+        allowed = Boolean(enrollment || entitlement);
       }
     }
   }

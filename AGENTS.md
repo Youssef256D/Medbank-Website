@@ -189,6 +189,29 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-04 — Video Course public IDs, YouTube lessons, and activation coupons
+Video Courses now use centralized full-course/module access. Do not treat the
+presence of a `platform_course_enrollments` row as proof that every module is
+open: inspect `access_scope` or call `get_my_platform_course_access()`. Existing
+rows were backfilled to `full/manual`; full access includes future modules and
+always overrides additive `platform_course_module_entitlements`.
+
+Profiles have an immutable `public_user_id` numeric display/admin key; UUIDs
+remain canonical. YouTube lessons store only a normalized 11-character
+`youtube_video_id` plus the original URL and render through
+`youtube-nocookie.com`. Coupons are globally one-time, hash-only, and redeemed
+only through `redeem_platform_course_coupon()` using `auth.uid()` plus a row
+lock. Plain codes are returned once by the admin generation RPC. Protected
+lesson/resource rows now require exact module/full access. Uploaded Video Course
+files are signed through `course-video-url`; direct student Storage SELECT was
+removed. Flutter contract: `docs/video-courses-mobile-integration.md`. Static
+cache bust: `2026-08-04.06`.
+
+**Files touched:** `main.js`, `styles.css`, `bootstrap.js`, `sw.js`,
+`video-courses-utils.js`, `package.json`, Video Course migrations/tests/docs,
+`supabase/config.toml`, `course-video-url`, `cloudflare-stream-token`,
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-04 — Sign in with Apple enabled
 The hosted Apple provider is configured for web and native sign-in. The primary
 App ID is `com.medbank`; the web Services ID is `com.medbank.web`; and Supabase

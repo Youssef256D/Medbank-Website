@@ -201,7 +201,7 @@ function syncNativeAppBodyClass() {
 syncNativeAppBodyClass();
 const ADMIN_DATA_PAGES = ["dashboard", "users", "mcq-subjects", "questions", "bulk-import", "notifications", "site-access", "ai-agents", "activity", "logs"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
-const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "enrollments", "suggestions", "announcements", "requests", "availability"]);
+const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
 const ADMIN_AUTO_REFRESH_PAGES = new Set(["dashboard", "users"]);
 const PRIMARY_ADMIN_ASSISTANT_NAME = "Hermes Admin Assistant";
@@ -449,6 +449,7 @@ const state = {
   coursesLoadedAt: 0,
   coursesCatalog: [],
   coursesEnrollments: [],
+  coursesAccess: [],
   coursesRequests: [],
   coursesProgress: [],
   coursesDetail: null,
@@ -457,6 +458,10 @@ const state = {
   coursesResources: [],
   coursesAnnouncements: [],
   coursesSuggestions: [],
+  courseCouponModalOpen: false,
+  courseCouponCode: "",
+  courseCouponSubmitting: false,
+  courseCouponResult: null,
   coursesWatchedLessonIds: new Set(),
   coursesTransitionMode: "",
   coursesComingSoonEnabled: false,
@@ -477,6 +482,25 @@ const state = {
   adminCoursesPlatformEnrollments: [],
   adminCoursesPlatformTopics: [],
   adminCoursesPlatformProfiles: [],
+  adminCourseCoupons: [],
+  adminCourseCouponStats: null,
+  adminCourseCouponLoading: false,
+  adminCourseCouponError: "",
+  adminCourseCouponCourseId: "",
+  adminCourseCouponType: "full_course",
+  adminCourseCouponModuleIds: [],
+  adminCourseCouponQuantity: 1,
+  adminCourseCouponExpiresAt: "",
+  adminCourseCouponBatchName: "",
+  adminCourseCouponNote: "",
+  adminCourseCouponSearch: "",
+  adminCourseCouponStatus: "all",
+  adminCourseCouponFilterType: "all",
+  adminCourseCouponCreatedFrom: "",
+  adminCourseCouponCreatedTo: "",
+  adminCourseCouponRedeemedFrom: "",
+  adminCourseCouponRedeemedTo: "",
+  adminCourseCouponGenerated: [],
   adminCourseBuilderCourseId: "",
   adminCourseBuilderLessonId: "",
   adminCourseBuilderPreview: false,
@@ -4389,7 +4413,7 @@ async function bootstrapRelationalProfileFromAuth(authUser, fallbackUser = null)
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
       .eq("id", profileRow.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -4486,7 +4510,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
       .eq("id", authUser.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -4683,6 +4707,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
   }
 
   const updatedUser = upsertLocalUserFromAuth(authUser, {
+    publicUserId: Number(profile.public_user_id) || localUser?.publicUserId || null,
     name: String(profile.full_name || "").trim() || localUser?.name || "Student",
     email: normalizedEmail,
     phone: resolvedPhone,
@@ -5203,7 +5228,7 @@ async function revalidateApprovedStudentAccess(user = null, options = {}) {
     const { data, error } = await runWithTimeoutResult(
       client
         .from("profiles")
-        .select("id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
         .eq("id", profileId)
         .maybeSingle(),
       PROFILE_LOOKUP_TIMEOUT_MS,
@@ -5542,6 +5567,8 @@ function matchesAdminUserSearchTerm(account, term) {
   const year = role === "student" ? normalizeAcademicYearOrNull(account.academicYear) : null;
   const semester = role === "student" ? normalizeAcademicSemesterOrNull(account.academicSemester) : null;
   const searchableParts = [
+    account.publicUserId,
+    account.public_user_id,
     account.name,
     account.email,
     account.phone,
@@ -9413,7 +9440,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
     const profilesResult = await fetchRowsPaged((from, to) => (
       client
         .from("profiles")
-        .select("id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to)
@@ -9432,7 +9459,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
   } else {
     const { data: profile, error } = await client
       .from("profiles")
-      .select("id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
       .eq("id", currentUser.supabaseAuthId)
       .maybeSingle();
     if (error) {
@@ -9656,6 +9683,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
     }
     return {
       id: profile.id,
+      publicUserId: Number(profile.public_user_id) || existing?.publicUserId || null,
       name: resolvedName,
       email: resolvedEmail,
       password: existing?.password || "",
@@ -16312,6 +16340,7 @@ function seedData() {
   const createLocalDemoUsers = () => [
     {
       id: "u_admin",
+      publicUserId: 90000001,
       name: "MedBank Demo Admin",
       email: DEMO_ADMIN_EMAIL,
       password: "admin123",
@@ -16329,6 +16358,7 @@ function seedData() {
     },
     {
       id: "u_student",
+      publicUserId: 90000002,
       name: "MedBank Approved Demo Student",
       email: DEMO_STUDENT_EMAIL,
       password: "student123",
@@ -16346,6 +16376,7 @@ function seedData() {
     },
     {
       id: "u_student_pending",
+      publicUserId: 90000003,
       name: "MedBank Pending Demo Student",
       email: DEMO_PENDING_STUDENT_EMAIL,
       password: "student123",
@@ -28118,11 +28149,20 @@ function renderProfile() {
   const user = getCurrentUser();
   const queue = load(STORAGE_KEYS.incorrectQueue, {})[user.id] || [];
   const isGoogleAuthUser = getAuthProviderFromUser(user) === "google";
+  const publicUserId = Number(user?.publicUserId || user?.public_user_id) || null;
 
   return `
     <section class="panel">
       <h2 class="title">Profile & Settings</h2>
       <p class="subtle">Manage account details and credentials.</p>
+      <article class="card profile-public-id-card" aria-labelledby="profile-public-id-title">
+        <div>
+          <p class="kicker">Your permanent MedBank ID</p>
+          <h3 id="profile-public-id-title">${publicUserId ? escapeHtml(String(publicUserId)) : "Loading..."}</h3>
+          <p class="subtle">Share this numeric ID with an administrator to identify your account without sharing your email or phone.</p>
+        </div>
+        <button class="btn ghost" type="button" data-action="copy-public-user-id" ${publicUserId ? `data-public-user-id="${escapeHtml(String(publicUserId))}"` : "disabled"}>Copy User ID</button>
+      </article>
       <div class="grid-2" style="margin-top: 0.9rem;">
         <form id="profile-form" class="card" autocomplete="on">
           <h4>Account</h4>
@@ -28163,6 +28203,24 @@ function renderProfile() {
 }
 
 function wireProfile() {
+  appEl.querySelector("[data-action='copy-public-user-id']")?.addEventListener("click", async (event) => {
+    const value = String(event.currentTarget?.getAttribute("data-public-user-id") || "").trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      const input = document.createElement("textarea");
+      input.value = value;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+    }
+    toast("User ID copied.");
+  });
   const form = document.getElementById("profile-form");
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -28966,6 +29024,12 @@ function renderAdminCoursesPlatformSidebarNav(activeSection) {
         <path d="M22 11l-3 3-2-2"></path>
       </svg>
     `],
+    ["coupons", "Activation Coupons", `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 12a2 2 0 0 0 0-4V4H4v4a2 2 0 0 0 0 4v4a2 2 0 0 0 0 4h16v-4a2 2 0 0 0 0-4z"></path>
+        <path d="M12 4v16"></path>
+      </svg>
+    `],
     ["suggestions", "Suggestions", `
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
@@ -29357,6 +29421,7 @@ function renderAdmin() {
                   <span>${escapeHtml(account.email)}</span>
                   ${authProviderIcon}
                 </small><br />
+                <small class="admin-account-public-id">MedBank ID: <b>${escapeHtml(String(account.publicUserId || account.public_user_id || "Pending"))}</b></small><br />
                 <label class="admin-inline-phone-field">
                   <input
                     class="admin-mini-input admin-inline-phone-input"
@@ -29432,7 +29497,7 @@ function renderAdmin() {
         <div class="flex-between" style="gap: 1rem;">
           <div>
             <h3 style="margin: 0;">Users</h3>
-            <p class="subtle">Add users, assign year/semester, change roles, and manage account access. Use commas in search to match multiple phones, names, or emails at once.</p>
+            <p class="subtle">Add users, assign year/semester, change roles, and manage account access. Search by MedBank ID, phone, name, or email.</p>
           </div>
           <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem;">
             <div style="display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; justify-content: flex-end;">
@@ -29503,7 +29568,7 @@ function renderAdmin() {
                 id="admin-user-search"
                 type="search"
                 value="${escapeHtml(userSearchQuery)}"
-                placeholder="Name, email, phone, year, semester, or comma/newline-separated values"
+                placeholder="MedBank ID, name, email, phone, year, or semester"
               />
             </label>
             <label>Year
@@ -43982,7 +44047,7 @@ const COURSE_PLATFORM_TABLES = new Set([
 ]);
 
 const COURSE_PLATFORM_COURSE_SELECT = "id,course_code,course_name,academic_year,academic_semester,is_active,description,cover_image_url,intro_video_url,instructor_name,instructor_bio,level,estimated_duration,is_published,enrollment_mode,price,updated_at";
-const COURSE_PLATFORM_LESSON_SELECT = "id,course_id,module_id,is_published,is_free_preview,position,title,description,lesson_type,duration_seconds,video_url,video_provider,content_html,created_at,updated_at";
+const COURSE_PLATFORM_LESSON_SELECT = "id,course_id,module_id,is_published,is_free_preview,position,title,description,lesson_type,duration_seconds,video_url,video_provider,youtube_video_id,video_original_url,content_html,created_at,updated_at";
 const LOCAL_DEMO_PLATFORM_IDS = {
   enrolledCourse: "11111111-1111-4111-8111-111111111111",
   suggestedCourse: "22222222-2222-4222-8222-222222222222",
@@ -44015,7 +44080,7 @@ function getCoursesPlatformClient() {
   return getRelationalClient();
 }
 
-const ADMIN_COURSE_PLATFORM_PROFILE_SELECT = "id,full_name,email,phone,academic_year,academic_semester,role,approved,courses_access_enabled";
+const ADMIN_COURSE_PLATFORM_PROFILE_SELECT = "id,public_user_id,full_name,email,phone,academic_year,academic_semester,role,approved,courses_access_enabled";
 
 function normalizeAdminCoursePlatformProfileRow(profile = {}) {
   const profileId = String(profile?.id || "").trim();
@@ -44025,6 +44090,7 @@ function normalizeAdminCoursePlatformProfileRow(profile = {}) {
   const role = String(profile?.role || "student").trim().toLowerCase() === "admin" ? "admin" : "student";
   return {
     id: profileId,
+    public_user_id: Number(profile?.public_user_id || profile?.publicUserId) || null,
     full_name: String(profile?.full_name || profile?.name || profile?.email || "Student").trim() || "Student",
     email: String(profile?.email || "").trim().toLowerCase(),
     phone: String(profile?.phone || "").trim(),
@@ -44101,6 +44167,7 @@ function resetStudentCoursesPlatformState() {
   state.coursesError = "";
   state.coursesCatalog = [];
   state.coursesEnrollments = [];
+  state.coursesAccess = [];
   state.coursesRequests = [];
   state.coursesProgress = [];
   state.coursesDetail = null;
@@ -44297,6 +44364,7 @@ function normalizeStudentCoursesPlatformPayload(payload) {
   return {
     courses: Array.isArray(source.courses) ? source.courses : [],
     enrollments: Array.isArray(source.enrollments) ? source.enrollments : [],
+    access: Array.isArray(source.access) ? source.access : [],
     requests: Array.isArray(source.requests) ? source.requests : [],
     progress: Array.isArray(source.progress) ? source.progress : [],
     lessons: Array.isArray(source.lessons) ? source.lessons : [],
@@ -44312,6 +44380,7 @@ function applyStudentCoursesPlatformPayload(payload, options = {}) {
   const data = normalizeStudentCoursesPlatformPayload(payload);
   state.coursesCatalog = data.courses;
   state.coursesEnrollments = data.enrollments;
+  state.coursesAccess = data.access;
   state.coursesRequests = data.requests;
   state.coursesProgress = data.progress;
   state.coursesLessons = data.lessons;
@@ -44369,6 +44438,7 @@ function persistStudentCoursesPlatformCache(user = getCurrentUser()) {
     data: normalizeStudentCoursesPlatformPayload({
       courses: state.coursesCatalog,
       enrollments: state.coursesEnrollments,
+      access: state.coursesAccess,
       requests: state.coursesRequests,
       progress: state.coursesProgress,
       lessons: state.coursesLessons,
@@ -44579,14 +44649,33 @@ function readVideoFileDurationSeconds(file, options = {}) {
 
 function getCourseEnrollmentState(course, enrollments = state.coursesEnrollments, requests = state.coursesRequests) {
   const courseId = String(course?.id || course || "").trim();
-  const isEnrolled = (Array.isArray(enrollments) ? enrollments : []).some((row) => String(row?.course_id || "").trim() === courseId);
+  const enrollment = (Array.isArray(enrollments) ? enrollments : []).find((row) => String(row?.course_id || "").trim() === courseId) || null;
+  const access = window.MedBankVideoCourses?.resolveCourseAccess(state.coursesAccess, courseId) || {
+    hasAccess: Boolean(enrollment),
+    isFullCourse: String(enrollment?.access_scope || "full") === "full",
+    accessScope: String(enrollment?.access_scope || (enrollment ? "full" : "none")),
+    accessSource: String(enrollment?.access_source || "manual"),
+    moduleIds: new Set(),
+  };
+  const isEnrolled = Boolean(enrollment) || access.hasAccess;
   const request = (Array.isArray(requests) ? requests : []).find((row) => String(row?.course_id || "").trim() === courseId) || null;
   return {
     isEnrolled,
+    enrollment,
+    accessScope: access.accessScope,
+    accessSource: access.accessSource,
+    isFullCourse: access.isFullCourse,
+    moduleIds: access.moduleIds,
     request,
     requestStatus: String(request?.status || "").trim().toLowerCase(),
     mode: normalizeCoursePlatformMode(course?.enrollment_mode),
   };
+}
+
+function canOpenCourseModule(courseId, moduleId) {
+  const enrollment = getCourseEnrollmentState(courseId);
+  if (enrollment.isFullCourse) return true;
+  return enrollment.moduleIds instanceof Set && enrollment.moduleIds.has(String(moduleId || "").trim());
 }
 
 function getCoursePlatformLessonsForCourse(courseId, lessons = state.coursesLessons) {
@@ -44788,7 +44877,7 @@ async function loadStudentCoursesWithProgress(options = {}) {
     return Boolean(state.coursesLoadedAt);
   }
   try {
-    const [courses, enrollments, requests, progress, lessons, modules, announcements, suggestions] = await Promise.all([
+    const [courses, enrollments, access, requests, progress, lessons, modules, announcements, suggestions] = await Promise.all([
       runRelationalQueryWithTimeout(
         client
           .from("platform_courses")
@@ -44800,9 +44889,23 @@ async function loadStudentCoursesWithProgress(options = {}) {
         "Video Courses query timed out.",
       ),
       runRelationalQueryWithTimeout(
-        client.from("platform_course_enrollments").select("user_id,course_id,assigned_at").eq("user_id", userId),
+        client.from("platform_course_enrollments").select("user_id,course_id,assigned_at,access_scope,access_source,source_coupon_id").eq("user_id", userId),
         "Enrollment query timed out.",
       ),
+      runRelationalQueryWithTimeout(
+        client.rpc("get_my_platform_course_access"),
+        "Course access query timed out.",
+      ).catch((error) => {
+        if (isMissingRelationError(error)) {
+          return (state.coursesEnrollments || []).map((row) => ({
+            course_id: row.course_id,
+            access_scope: row.access_scope || "full",
+            access_source: row.access_source || "manual",
+            module_ids: [],
+          }));
+        }
+        throw error;
+      }),
       runRelationalQueryWithTimeout(
         client.from("platform_course_enrollment_requests").select("id,user_id,course_id,status,created_at,updated_at").eq("user_id", userId),
         "Enrollment request query timed out.",
@@ -44850,6 +44953,7 @@ async function loadStudentCoursesWithProgress(options = {}) {
     const nextPayload = normalizeStudentCoursesPlatformPayload({
       courses: (Array.isArray(courses) ? courses : []).filter((course) => course?.is_published !== false || getCourseEnrollmentState(course, enrollments, requests).isEnrolled),
       enrollments,
+      access,
       requests,
       progress,
       lessons,
@@ -45150,6 +45254,81 @@ async function requestCourseEnrollment(courseId) {
     toast(getErrorMessage(error, "Could not request enrollment."));
     return false;
   }
+}
+
+async function redeemCourseActivationCoupon() {
+  if (state.courseCouponSubmitting) return false;
+  const client = getCoursesPlatformClient();
+  const normalizedCode = window.MedBankVideoCourses?.normalizeCouponCode(state.courseCouponCode) || String(state.courseCouponCode || "").trim();
+  if (!client || !normalizedCode) {
+    toast("Enter a coupon code first.");
+    return false;
+  }
+  state.courseCouponSubmitting = true;
+  state.courseCouponResult = null;
+  state.skipNextRouteAnimation = true;
+  render();
+  try {
+    const result = await runRelationalQueryWithTimeout(
+      client.rpc("redeem_platform_course_coupon", { p_code: normalizedCode }),
+      "Coupon activation timed out.",
+    );
+    const payload = result && typeof result === "object" ? result : {};
+    if (payload.ok !== true) {
+      toast(window.MedBankVideoCourses?.couponErrorMessage(payload.code) || "The coupon could not be activated.");
+      return false;
+    }
+    state.courseCouponResult = payload;
+    state.courseCouponCode = "";
+    await loadStudentCoursesWithProgress({ force: true });
+    if (payload.course_id) {
+      await loadCourseModulesAndLessons(payload.course_id);
+    }
+    toast(payload.access_type === "module_access" ? "Course modules activated." : "Course activated.");
+    return true;
+  } catch (error) {
+    console.warn("Could not activate Video Course coupon.", error?.message || error);
+    toast("The coupon could not be activated. Please try again.");
+    return false;
+  } finally {
+    state.courseCouponSubmitting = false;
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+function renderCourseCouponModal() {
+  if (!state.courseCouponModalOpen) return "";
+  const result = state.courseCouponResult;
+  const moduleTitles = Array.isArray(result?.module_titles) ? result.module_titles : [];
+  return `
+    <div class="modal-backdrop course-coupon-modal" data-action="courses-close-coupon" role="presentation">
+      <section class="modal-card card" role="dialog" aria-modal="true" aria-labelledby="course-coupon-title" data-course-coupon-dialog>
+        <div class="flex-between">
+          <div><p class="kicker">Video Courses</p><h2 id="course-coupon-title" class="title">Activate a course</h2></div>
+          <button class="btn ghost admin-btn-sm" type="button" data-action="courses-close-coupon" aria-label="Close activation dialog">Close</button>
+        </div>
+        ${result?.ok ? `
+          <div class="course-coupon-success" role="status">
+            <h3>${escapeHtml(result.course_name || "Course activated")}</h3>
+            <p>${result.access_type === "module_access" ? "Your selected modules are ready in My Courses." : "You now have full-course access, including future published modules."}</p>
+            ${moduleTitles.length ? `<ul>${moduleTitles.map((title) => `<li>${escapeHtml(title)}</li>`).join("")}</ul>` : ""}
+            <button class="btn" type="button" data-action="courses-open-activated-course" data-course-id="${escapeHtml(result.course_id || "")}">Open course</button>
+          </div>
+        ` : `
+          <form id="course-coupon-form" autocomplete="off">
+            <p class="subtle">Enter the one-time code supplied by MedBank. Activation is permanently attached to this account.</p>
+            <label for="course-coupon-code">Coupon code</label>
+            <input id="course-coupon-code" name="couponCode" inputmode="text" autocapitalize="characters" spellcheck="false" value="${escapeHtml(state.courseCouponCode)}" placeholder="MBK-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" required autofocus />
+            <div class="stack">
+              <button class="btn ${state.courseCouponSubmitting ? "is-loading" : ""}" type="submit" ${state.courseCouponSubmitting ? "disabled" : ""}>${state.courseCouponSubmitting ? `<span class="inline-loader" aria-hidden="true"></span><span>Activating...</span>` : "Activate now"}</button>
+              <button class="btn ghost" type="button" data-action="courses-close-coupon" ${state.courseCouponSubmitting ? "disabled" : ""}>Cancel</button>
+            </div>
+          </form>
+        `}
+      </section>
+    </div>
+  `;
 }
 
 function openCourseMcqPractice(courseId, options = {}) {
@@ -45593,7 +45772,10 @@ function renderCoursesDashboard() {
         <h2 class="title">Welcome back${currentUser?.name ? `, ${escapeHtml(currentUser.name.split(" ")[0])}` : ""}</h2>
         <p class="subtle">Continue lessons, follow announcements, and track your learning from one Video Courses dashboard.</p>
       </div>
-      <button class="btn ghost admin-btn-sm" data-nav="app-launcher" type="button">Back to Apps</button>
+      <div class="stack">
+        <button class="btn" data-action="courses-open-coupon" type="button">Activate Course</button>
+        <button class="btn ghost admin-btn-sm" data-nav="app-launcher" type="button">Back to Apps</button>
+      </div>
     </section>
 
     <div class="courses-dashboard-layout-grid">
@@ -45696,6 +45878,7 @@ function renderCoursesDashboard() {
         ` : ""}
       </aside>
     </div>
+    ${renderCourseCouponModal()}
   `;
 }
 
@@ -45983,15 +46166,16 @@ function renderCourseDetail(courseId) {
             </div>
           ` : modules.map((module) => {
             const moduleLessons = lessons.filter((lesson) => String(lesson?.module_id || "").trim() === String(module?.id || "").trim());
+            const moduleUnlocked = canOpenCourseModule(course.id, module.id);
             return `
-              <details class="card course-module-card" ${isCoursesMobileViewport() ? "" : "open"}>
+              <details class="card course-module-card ${moduleUnlocked ? "is-unlocked" : "is-locked"}" ${isCoursesMobileViewport() ? "" : "open"}>
                 <summary class="course-module-head">
                   <div>
                     <h4>${escapeHtml(module.title)}</h4>
                     ${module.description ? `<p class="subtle">${escapeHtml(module.description)}</p>` : ""}
                   </div>
                   <span class="course-module-head-meta">
-                    <span>${moduleLessons.length} lesson${moduleLessons.length === 1 ? "" : "s"}</span>
+                    <span>${moduleUnlocked ? `${moduleLessons.length} lesson${moduleLessons.length === 1 ? "" : "s"}` : "Locked"}</span>
                     <svg class="course-module-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
                   </span>
                 </summary>
@@ -46000,7 +46184,7 @@ function renderCourseDetail(courseId) {
                     const progressRow = state.coursesProgress.find((row) => String(row?.lesson_id || "").trim() === String(lesson.id || "").trim());
                     const done = String(progressRow?.status || "").trim() === "completed" || Number(progressRow?.progress_percent) >= 100;
                     return `
-                      <button class="course-lesson-row" type="button" data-action="courses-open-lesson" data-course-id="${escapeHtml(course.id)}" data-lesson-id="${escapeHtml(lesson.id)}" ${canOpenLessons || lesson.is_free_preview ? "" : "disabled"}>
+                      <button class="course-lesson-row" type="button" data-action="courses-open-lesson" data-course-id="${escapeHtml(course.id)}" data-lesson-id="${escapeHtml(lesson.id)}" ${moduleUnlocked || lesson.is_free_preview ? "" : "disabled"}>
                         <span class="course-lesson-status ${done ? "is-complete" : ""}">${getLessonTypeIcon(lesson.lesson_type, done)} ${done ? "Done" : lesson.lesson_type || "Lesson"}</span>
                         <span>${escapeHtml(lesson.title)}</span>
                         <small>${escapeHtml(formatCourseDurationLabel(lesson.duration_seconds, lesson.is_free_preview ? "Preview" : ""))}</small>
@@ -46009,7 +46193,7 @@ function renderCourseDetail(courseId) {
                   }).join("") || `
                     <div class="course-lessons-empty-state">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                      <span>No lessons added yet in this module.</span>
+                      <span>${moduleUnlocked ? "No lessons added yet in this module." : "Activate access to unlock this module's lessons."}</span>
                     </div>
                   `}
                 </div>
@@ -46036,7 +46220,9 @@ function renderCourseDetail(courseId) {
             </div>
             <p class="subtle" style="margin: 0; font-size: 0.82rem; line-height: 1.45;">
               ${enrollment.isEnrolled 
-                ? "You have full access to this course. You can watch videos, complete lessons, and view announcements." 
+                ? enrollment.isFullCourse
+                  ? "You have full access to this course, including future published modules."
+                  : `You have access to ${enrollment.moduleIds.size} selected module${enrollment.moduleIds.size === 1 ? "" : "s"}. Other modules remain locked.`
                 : requestStatus === "pending" 
                   ? "Your enrollment request has been submitted and is currently pending administrator approval." 
                   : "You do not have access to this course yet. Request enrollment to gain access to materials and lessons."
@@ -46250,7 +46436,7 @@ function isDirectCourseVideoUrl(value) {
   }
 }
 
-function ensureCourseVideoSignedUrl(source) {
+function ensureCourseVideoSignedUrl(source, lessonId = state.coursesActiveLessonId) {
   const descriptor = parseSupabaseStorageObjectSource(source);
   if (!descriptor || descriptor.isPublic) {
     return Promise.resolve(String(source || "").trim());
@@ -46268,8 +46454,8 @@ function ensureCourseVideoSignedUrl(source) {
     return Promise.resolve("");
   }
 
-  const client = getRelationalClient() || getSupabaseAuthClient();
-  if (!client?.storage) {
+  const authClient = getSupabaseAuthClient();
+  if (!authClient || !isUuidValue(String(lessonId || "").trim())) {
     courseVideoRuntime.entries.set(cacheKey, {
       url: "",
       promise: null,
@@ -46284,20 +46470,19 @@ function ensureCourseVideoSignedUrl(source) {
     lastAttemptAt: Date.now(),
   };
   const promise = (async () => {
-    let resolvedUrl = "";
-    for (const expiresIn of QUESTION_IMAGE_SIGNED_URL_EXPIRY_OPTIONS) {
-      const signedResult = await runWithTimeoutResult(
-        client.storage
-          .from(descriptor.bucket)
-          .createSignedUrl(descriptor.objectPath, expiresIn),
-        SUPABASE_QUERY_TIMEOUT_MS,
-        "Video URL generation timed out.",
-      );
-      if (!signedResult?.error && signedResult?.data?.signedUrl) {
-        resolvedUrl = String(signedResult.data.signedUrl || "").trim();
-        break;
-      }
-    }
+    const tokenResult = await getValidSupabaseAccessToken(authClient);
+    if (!tokenResult.ok) return "";
+    const response = await fetchWithTimeout(`${SUPABASE_CONFIG.url}/functions/v1/course-video-url`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenResult.token}`,
+        apikey: SUPABASE_CONFIG.legacyAnonKey || SUPABASE_CONFIG.anonKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ lessonId: String(lessonId || "").trim() }),
+    }, ADMIN_REQUEST_TIMEOUT_MS);
+    const payload = await readJsonResponseSafe(response);
+    const resolvedUrl = response.ok && payload?.ok !== false ? String(payload?.signedUrl || "").trim() : "";
 
     const currentEntry = courseVideoRuntime.entries.get(cacheKey) || entry;
     currentEntry.url = resolvedUrl;
@@ -46319,7 +46504,7 @@ function ensureCourseVideoSignedUrl(source) {
   return promise;
 }
 
-function getRenderableCourseLessonVideoUrl(value) {
+function getRenderableCourseLessonVideoUrl(value, lessonId = state.coursesActiveLessonId) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (isUploadedCourseVideoSource(raw)) {
@@ -46332,7 +46517,7 @@ function getRenderableCourseLessonVideoUrl(value) {
     if (cachedEntry?.url) {
       return cachedEntry.url;
     }
-    ensureCourseVideoSignedUrl(raw)
+    ensureCourseVideoSignedUrl(raw, lessonId)
       .then((signedUrl) => {
         if (!signedUrl || state.route !== "video-courses" || state.coursesView !== "lesson") return;
         state.skipNextRouteAnimation = true;
@@ -46391,16 +46576,21 @@ function renderLessonViewer(lessonId) {
   const progressRow = state.coursesProgress.find((row) => String(row?.lesson_id || "").trim() === String(lesson.id || "").trim());
   const isComplete = String(progressRow?.status || "").trim() === "completed" || Number(progressRow?.progress_percent) >= 100;
   const rawVideoUrl = String(lesson.video_url || "").trim();
+  const youtubeVideoId = window.MedBankVideoCourses?.extractYouTubeVideoId(lesson.youtube_video_id || lesson.video_original_url) || "";
+  const isYouTubeVideo = String(lesson.video_provider || "").trim().toLowerCase() === "youtube" || Boolean(youtubeVideoId);
+  const youtubeEmbedUrl = isYouTubeVideo ? (window.MedBankVideoCourses?.buildYouTubeEmbedUrl(youtubeVideoId) || "") : "";
   const isCloudflareVideo = isCloudflareStreamVideoSource(rawVideoUrl);
   const cloudflareEntry = isCloudflareVideo ? getCloudflareStreamRuntimeEntry(lesson.id) : null;
   if (isCloudflareVideo && !cloudflareEntry?.iframeUrl && !cloudflareEntry?.promise) {
     requestCloudflareStreamPlaybackUrl(lesson.id).catch(() => { });
   }
-  const safeVideoUrl = isCloudflareVideo
-    ? String(cloudflareEntry?.iframeUrl || "").trim()
-    : getRenderableCourseLessonVideoUrl(rawVideoUrl);
+  const safeVideoUrl = isYouTubeVideo
+    ? youtubeEmbedUrl
+    : isCloudflareVideo
+      ? String(cloudflareEntry?.iframeUrl || "").trim()
+      : getRenderableCourseLessonVideoUrl(rawVideoUrl, lesson.id);
   const directVideo = isDirectCourseVideoUrl(rawVideoUrl);
-  const isVideoLesson = String(lesson.lesson_type || "").trim().toLowerCase() === "video" || Boolean(rawVideoUrl);
+  const isVideoLesson = String(lesson.lesson_type || "").trim().toLowerCase() === "video" || Boolean(rawVideoUrl) || isYouTubeVideo;
   const requiresVideoWatch = isVideoLesson && directVideo && Boolean(rawVideoUrl);
   const canCompleteLesson = isComplete || !requiresVideoWatch || hasWatchedCourseLessonVideo(lesson.id);
   const currentModule = (state.coursesModules || []).find((m) => String(m?.id || "").trim() === String(lesson.module_id || "").trim());
@@ -46451,9 +46641,15 @@ function renderLessonViewer(lessonId) {
           
           ${lesson.description && lesson.description !== currentModule?.title ? `<p class="lesson-description-text">${escapeHtml(lesson.description)}</p>` : ""}
 
-          ${isVideoLesson && !rawVideoUrl ? `
+          ${isVideoLesson && !rawVideoUrl && !isYouTubeVideo ? `
             <div class="lesson-video-placeholder">
               <span>No video file is attached to this lesson yet.</span>
+            </div>
+          ` : ""}
+
+          ${isYouTubeVideo && !youtubeEmbedUrl ? `
+            <div class="lesson-video-placeholder" role="status">
+              <span>This YouTube video is unavailable or has an invalid video ID.</span>
             </div>
           ` : ""}
 
@@ -46466,7 +46662,7 @@ function renderLessonViewer(lessonId) {
           
           ${safeVideoUrl ? `
             <div class="lesson-video" data-protected-course-content="true">
-              ${directVideo ? "" : renderVideoWatermarkLayer(buildVideoWatermarkLabel())}
+              ${directVideo || isYouTubeVideo ? "" : renderVideoWatermarkLayer(buildVideoWatermarkLabel())}
               ${directVideo 
                 ? renderDirectLessonVideoPlayer(safeVideoUrl, buildVideoWatermarkLabel())
                 : `<iframe src="${escapeHtml(safeVideoUrl)}" title="${escapeHtml(lesson.title)}" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
@@ -47084,6 +47280,26 @@ function wireLessonVideoPlayerControls() {
 }
 
 function wireCourses() {
+  const couponInput = document.getElementById("course-coupon-code");
+  couponInput?.addEventListener("input", (event) => {
+    state.courseCouponCode = window.MedBankVideoCourses?.normalizeCouponCode(event.target?.value) || String(event.target?.value || "").toUpperCase();
+    event.target.value = state.courseCouponCode;
+  });
+  document.getElementById("course-coupon-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    state.courseCouponCode = String(new FormData(event.currentTarget).get("couponCode") || state.courseCouponCode);
+    await redeemCourseActivationCoupon();
+  });
+  const couponDialog = document.querySelector("[data-course-coupon-dialog]");
+  couponDialog?.addEventListener("click", (event) => event.stopPropagation());
+  couponDialog?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || state.courseCouponRedeeming) return;
+    event.preventDefault();
+    state.courseCouponModalOpen = false;
+    state.courseCouponResult = null;
+    render();
+    window.setTimeout(() => appEl.querySelector("[data-action='open-course-coupon']")?.focus(), 0);
+  });
   document.getElementById("courses-search")?.addEventListener("input", (event) => {
     state.coursesSearch = String(event.target?.value || "");
     state.skipNextRouteAnimation = true;
@@ -47163,6 +47379,33 @@ function wireCourses() {
         state.coursesView = "home";
         state.coursesActiveCourseId = "";
         state.coursesActiveLessonId = "";
+        state.skipNextRouteAnimation = true;
+        render();
+        return;
+      }
+
+      if (action === "courses-open-coupon") {
+        state.courseCouponModalOpen = true;
+        state.courseCouponResult = null;
+        state.skipNextRouteAnimation = true;
+        render();
+        return;
+      }
+
+      if (action === "courses-close-coupon") {
+        if (state.courseCouponSubmitting) return;
+        state.courseCouponModalOpen = false;
+        state.courseCouponResult = null;
+        state.skipNextRouteAnimation = true;
+        render();
+        return;
+      }
+
+      if (action === "courses-open-activated-course" && courseId) {
+        state.courseCouponModalOpen = false;
+        state.courseCouponResult = null;
+        state.coursesView = "detail";
+        state.coursesActiveCourseId = courseId;
         state.skipNextRouteAnimation = true;
         render();
         return;
@@ -47323,7 +47566,7 @@ async function loadAdminCoursesPlatform(options = {}) {
       fetchRowsPagedOrThrow((from, to) => (
         client
           .from("platform_course_enrollments")
-          .select("user_id,course_id,assigned_at")
+          .select("user_id,course_id,assigned_at,access_scope,access_source,source_coupon_id")
           .range(from, to)
       ), { timeoutMessage: "Admin enrollment query timed out." }).catch(() => []),
       Promise.resolve([]),
@@ -48437,21 +48680,51 @@ async function uploadCourseLessonVideo(courseId, file, options = {}) {
   return `supabase-storage://${bucket}/${filePath}`;
 }
 
-async function resolveAdminLessonVideoUrl(courseId, data) {
+async function resolveAdminLessonVideoSource(courseId, data, existingLesson = null) {
   const uploadFile = getCourseVideoUploadFile(data);
   if (uploadFile) {
-    return uploadCourseLessonVideo(courseId, uploadFile, {
+    const videoUrl = await uploadCourseLessonVideo(courseId, uploadFile, {
       onProgress: typeof data?._uploadProgress === "function" ? data._uploadProgress : null,
     });
+    return {
+      video_url: videoUrl,
+      video_provider: isCloudflareStreamVideoSource(videoUrl) ? "cloudflare_stream" : "supabase_storage",
+      youtube_video_id: null,
+      video_original_url: null,
+    };
   }
-  return String(data.video_url || "").trim() || null;
+  if (data.remove_video === true) {
+    return { video_url: null, video_provider: null, youtube_video_id: null, video_original_url: null };
+  }
+  const youtubeUrl = String(data.youtube_url || "").trim();
+  if (youtubeUrl) {
+    const normalized = window.MedBankVideoCourses?.normalizeYouTubeVideoInput(youtubeUrl);
+    if (!normalized?.ok) {
+      throw new Error("Enter a valid YouTube watch, youtu.be, embed, Shorts, or Live URL.");
+    }
+    return {
+      video_url: null,
+      video_provider: "youtube",
+      youtube_video_id: normalized.videoId,
+      video_original_url: normalized.originalUrl,
+    };
+  }
+  if (existingLesson) {
+    return {
+      video_url: existingLesson.video_url || null,
+      video_provider: existingLesson.video_provider || null,
+      youtube_video_id: existingLesson.youtube_video_id || null,
+      video_original_url: existingLesson.video_original_url || null,
+    };
+  }
+  return { video_url: null, video_provider: null, youtube_video_id: null, video_original_url: null };
 }
 
 async function adminCreateLesson(courseId, moduleId, data) {
   const client = getCoursesPlatformClient();
   if (!client || !isUuidValue(courseId) || !isUuidValue(moduleId)) throw new Error("Lesson cannot be created.");
   const durationSeconds = await resolveAdminLessonDurationSeconds(data, 0);
-  const videoUrl = await resolveAdminLessonVideoUrl(courseId, data);
+  const videoSource = await resolveAdminLessonVideoSource(courseId, data);
   await runRelationalQueryWithTimeout(
     client.from("platform_course_lessons").insert({
       course_id: courseId,
@@ -48459,8 +48732,7 @@ async function adminCreateLesson(courseId, moduleId, data) {
       title: String(data.title || "").trim(),
       description: String(data.description || "").trim() || null,
       lesson_type: String(data.lesson_type || "video").trim() || "video",
-      video_url: videoUrl,
-      video_provider: String(data.video_provider || "").trim() || null,
+      ...videoSource,
       duration_seconds: durationSeconds,
       content_html: String(data.content_html || "").trim() || null,
       position: Number(data.position) || 0,
@@ -48478,14 +48750,13 @@ async function adminUpdateLesson(lessonId, data) {
   if (!client || !isUuidValue(lessonId)) throw new Error("Lesson cannot be updated.");
   const lesson = (state.adminCoursesPlatformLessons || []).find((entry) => String(entry?.id || "").trim() === String(lessonId || "").trim());
   const durationSeconds = await resolveAdminLessonDurationSeconds(data, lesson?.duration_seconds || 0);
-  const videoUrl = await resolveAdminLessonVideoUrl(lesson?.course_id || state.adminCourseBuilderCourseId, data);
+  const videoSource = await resolveAdminLessonVideoSource(lesson?.course_id || state.adminCourseBuilderCourseId, data, lesson);
   await runRelationalQueryWithTimeout(
     client.from("platform_course_lessons").update({
       title: String(data.title || "").trim(),
       description: String(data.description || "").trim() || null,
       lesson_type: String(data.lesson_type || "video").trim() || "video",
-      video_url: videoUrl,
-      video_provider: String(data.video_provider || "").trim() || null,
+      ...videoSource,
       duration_seconds: durationSeconds,
       content_html: String(data.content_html || "").trim() || null,
       position: Number(data.position) || 0,
@@ -48704,7 +48975,7 @@ async function adminResolveEnrollmentRequest(requestId, status) {
   );
   if (nextStatus === "approved") {
     await runRelationalQueryWithTimeout(
-      client.from("platform_course_enrollments").upsert({ user_id: request.user_id, course_id: request.course_id, assigned_by: getCurrentCoursePlatformUserId() || null }, { onConflict: "user_id,course_id", defaultToNull: false }),
+      client.from("platform_course_enrollments").upsert({ user_id: request.user_id, course_id: request.course_id, assigned_by: getCurrentCoursePlatformUserId() || null, access_scope: "full", access_source: "request", source_coupon_id: null }, { onConflict: "user_id,course_id", defaultToNull: false }),
       "Approved enrollment sync timed out.",
     );
     queueCoursePlatformStudentRefreshSignal(["platform_course_enrollments", "platform_course_enrollment_requests"]);
@@ -48733,6 +49004,9 @@ async function adminApproveAllPendingEnrollmentRequests(courseId = "") {
     user_id: request.user_id,
     course_id: request.course_id,
     assigned_by: isUuidValue(getCurrentCoursePlatformUserId()) ? getCurrentCoursePlatformUserId() : null,
+    access_scope: "full",
+    access_source: "request",
+    source_coupon_id: null,
   }));
   for (const batch of splitIntoBatches(enrollRows, ENROLLMENT_SYNC_WRITE_BATCH_SIZE)) {
     await runRelationalQueryWithTimeout(
@@ -48887,6 +49161,9 @@ async function adminEnrollPlatformCourseUser(courseId, userId) {
       user_id: targetUserId,
       course_id: targetCourseId,
       assigned_by: isUuidValue(getCurrentCoursePlatformUserId()) ? getCurrentCoursePlatformUserId() : null,
+      access_scope: "full",
+      access_source: "manual",
+      source_coupon_id: null,
     }, { onConflict: "user_id,course_id", defaultToNull: false }),
     "Course enrollment save timed out.",
   );
@@ -48928,6 +49205,9 @@ async function adminEnrollPlatformCourseUsers(courseId, userIds) {
         user_id: userId,
         course_id: targetCourseId,
         assigned_by: assignedBy,
+        access_scope: "full",
+        access_source: "manual",
+        source_coupon_id: null,
       })),
       { onConflict: "user_id,course_id", defaultToNull: false },
     ),
@@ -49415,10 +49695,12 @@ function getAdminPlatformProfileDisplayName(profile) {
 
 function getAdminPlatformProfileMeta(profile) {
   const pieces = [];
+  const publicUserId = Number(profile?.public_user_id || profile?.publicUserId) || null;
   const email = String(profile?.email || "").trim();
   const phone = String(profile?.phone || "").trim();
   const year = normalizeAcademicYearOrNull(profile?.academic_year);
   const semester = normalizeAcademicSemesterOrNull(profile?.academic_semester);
+  if (publicUserId) pieces.push(`MedBank ID ${publicUserId}`);
   if (email) pieces.push(email);
   if (phone) pieces.push(phone);
   if (year !== null && semester !== null) pieces.push(`Y${year} S${semester}`);
@@ -49436,6 +49718,7 @@ function getAdminPlatformProfileSearchText(profile) {
   }
   return normalizeNotificationTargetSearchText([
     profile?.id,
+    profile?.public_user_id,
     profile?.full_name,
     profile?.email,
     profile?.phone,
@@ -49767,6 +50050,136 @@ function renderAdminCourseEnrollmentsSection(courses, selectedCourseId, rows) {
   `;
 }
 
+async function loadAdminCourseCouponData(options = {}) {
+  const client = getCoursesPlatformClient();
+  const courseId = String(options.courseId || state.adminCourseCouponCourseId || state.adminCourseBuilderCourseId || "").trim();
+  if (!client || !isUuidValue(courseId) || state.adminCourseCouponLoading) return false;
+  state.adminCourseCouponCourseId = courseId;
+  state.adminCourseCouponLoading = true;
+  state.adminCourseCouponError = "";
+  try {
+    const dateValue = (value, endOfDay = false) => {
+      const raw = String(value || "").trim();
+      return raw ? `${raw}T${endOfDay ? "23:59:59.999" : "00:00:00"}Z` : null;
+    };
+    const [coupons, stats] = await Promise.all([
+      runRelationalQueryWithTimeout(client.rpc("admin_list_platform_course_coupons", {
+        p_course_id: courseId,
+        p_coupon_type: state.adminCourseCouponFilterType === "all" ? null : state.adminCourseCouponFilterType,
+        p_status: state.adminCourseCouponStatus,
+        p_search: String(state.adminCourseCouponSearch || "").trim() || null,
+        p_created_from: dateValue(state.adminCourseCouponCreatedFrom),
+        p_created_to: dateValue(state.adminCourseCouponCreatedTo, true),
+        p_redeemed_from: dateValue(state.adminCourseCouponRedeemedFrom),
+        p_redeemed_to: dateValue(state.adminCourseCouponRedeemedTo, true),
+        p_limit: 250,
+        p_offset: 0,
+      }), "Coupon list query timed out."),
+      runRelationalQueryWithTimeout(client.rpc("admin_get_platform_course_coupon_stats", { p_course_id: courseId }), "Coupon statistics query timed out."),
+    ]);
+    state.adminCourseCoupons = Array.isArray(coupons) ? coupons : [];
+    state.adminCourseCouponStats = stats && typeof stats === "object" ? stats : {};
+    return true;
+  } catch (error) {
+    console.warn("Could not load Video Course coupons.", error?.message || error);
+    state.adminCourseCouponError = getErrorMessage(error, "Coupon data could not be loaded.");
+    return false;
+  } finally {
+    state.adminCourseCouponLoading = false;
+  }
+}
+
+async function generateAdminCourseCoupons(form) {
+  const client = getCoursesPlatformClient();
+  const data = new FormData(form);
+  const courseId = String(data.get("course_id") || "").trim();
+  const couponType = String(data.get("coupon_type") || "full_course").trim();
+  const moduleIds = [...form.querySelectorAll("input[name='module_ids']:checked")].map((input) => String(input.value || "").trim()).filter(isUuidValue);
+  const quantity = Math.max(1, Math.min(500, Math.round(Number(data.get("quantity")) || 1)));
+  if (!client || !isUuidValue(courseId)) throw new Error("Select a Video Course.");
+  if (couponType === "module_access" && !moduleIds.length) throw new Error("Select at least one module.");
+  const rows = await runRelationalQueryWithTimeout(client.rpc("admin_generate_platform_course_coupons", {
+    p_course_id: courseId,
+    p_coupon_type: couponType,
+    p_module_ids: moduleIds,
+    p_quantity: quantity,
+    p_expires_at: String(data.get("expires_at") || "").trim() || null,
+    p_batch_name: String(data.get("batch_name") || "").trim() || null,
+    p_note: String(data.get("note") || "").trim() || null,
+  }), "Coupon generation timed out.");
+  state.adminCourseCouponGenerated = Array.isArray(rows) ? rows : [];
+  await loadAdminCourseCouponData({ courseId });
+  return state.adminCourseCouponGenerated;
+}
+
+function exportAdminCourseCoupons(rows = state.adminCourseCoupons, options = {}) {
+  const generated = options.generated === true;
+  const header = generated
+    ? ["coupon_code", "coupon_type", "course_id", "module_ids", "expires_at", "batch_name", "created_at"]
+    : ["code_preview", "status", "coupon_type", "course_name", "modules", "batch_name", "created_at", "redeemed_at", "student_public_id", "student_name"];
+  const quote = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const body = (Array.isArray(rows) ? rows : []).map((row) => generated
+    ? [row.coupon_code, row.coupon_type, row.course_id, (row.module_ids || []).join("|"), row.expires_at, row.batch_name, row.created_at]
+    : [row.code_preview, row.status, row.coupon_type, row.course_name, (row.module_titles || []).join("|"), row.batch_name, row.created_at, row.redeemed_at, row.redeemed_public_user_id, row.redeemed_name]
+  ).map((values) => values.map(quote).join(","));
+  downloadBlobFile(new Blob([[header.join(","), ...body].join("\n")], { type: "text/csv;charset=utf-8" }), generated ? "medbank-new-coupons.csv" : "medbank-coupon-report.csv");
+}
+
+function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
+  const selectedId = String(state.adminCourseCouponCourseId || selectedCourseId || courses[0]?.id || "").trim();
+  if (selectedId && state.adminCourseCouponCourseId !== selectedId) state.adminCourseCouponCourseId = selectedId;
+  if (selectedId && !state.adminCourseCouponLoading && !state.adminCourseCouponStats && !state.adminCourseCouponError) {
+    loadAdminCourseCouponData({ courseId: selectedId }).then(() => {
+      if (state.route === "admin" && getAdminCoursePlatformSection() === "coupons") { state.skipNextRouteAnimation = true; render(); }
+    });
+  }
+  const courseModules = (state.adminCoursesPlatformModules || []).filter((module) => String(module.course_id || "") === selectedId);
+  const stats = state.adminCourseCouponStats || {};
+  const generated = state.adminCourseCouponGenerated || [];
+  const coupons = state.adminCourseCoupons || [];
+  return `
+    <div class="admin-coupon-page">
+      <section class="card admin-coupon-generator">
+        <div class="flex-between"><div><h3>Activation coupons</h3><p class="subtle">Plain codes are displayed only once. MedBank stores only a SHA-256 hash and a four-character preview.</p></div><button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-coupons">Refresh</button></div>
+        <form id="admin-course-coupon-generate-form" autocomplete="off">
+          <div class="course-builder-grid compact">
+            <label>Course<select name="course_id" id="admin-coupon-course">${courses.map((course) => `<option value="${escapeHtml(course.id)}" ${String(course.id) === selectedId ? "selected" : ""}>${escapeHtml(getCoursePlatformCourseTitle(course))}</option>`).join("")}</select></label>
+            <label>Access type<select name="coupon_type" id="admin-coupon-type"><option value="full_course" ${state.adminCourseCouponType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponType === "module_access" ? "selected" : ""}>Selected modules</option></select></label>
+            <label>Quantity<input name="quantity" type="number" min="1" max="500" value="${escapeHtml(state.adminCourseCouponQuantity)}" required /></label>
+            <label>Expires at (optional)<input name="expires_at" type="datetime-local" value="${escapeHtml(state.adminCourseCouponExpiresAt)}" /></label>
+            <label>Batch name<input name="batch_name" maxlength="120" value="${escapeHtml(state.adminCourseCouponBatchName)}" /></label>
+            <label>Internal note<input name="note" maxlength="500" value="${escapeHtml(state.adminCourseCouponNote)}" /></label>
+          </div>
+          ${state.adminCourseCouponType === "module_access" ? `<fieldset class="admin-coupon-modules"><legend>Modules granted</legend>${courseModules.map((module) => `<label><input type="checkbox" name="module_ids" value="${escapeHtml(module.id)}" ${state.adminCourseCouponModuleIds.includes(String(module.id)) ? "checked" : ""} /> ${escapeHtml(module.title)}</label>`).join("") || `<p class="subtle">This course has no modules.</p>`}</fieldset>` : `<p class="subtle">Full-course coupons include all current and future published modules.</p>`}
+          <button class="btn" type="submit">Generate secure coupon${Number(state.adminCourseCouponQuantity) === 1 ? "" : "s"}</button>
+        </form>
+      </section>
+
+      ${generated.length ? `<section class="card admin-coupon-generated" role="status"><div class="flex-between"><div><h3>New codes — save now</h3><p class="subtle">These plaintext values cannot be recovered after leaving this screen.</p></div><div class="stack"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-copy-generated-coupons">Copy all</button><button class="btn ghost admin-btn-sm" type="button" data-action="admin-download-generated-coupons">Download CSV</button></div></div><textarea readonly rows="${Math.min(12, generated.length + 1)}">${escapeHtml(generated.map((row) => row.coupon_code).join("\n"))}</textarea></section>` : ""}
+
+      <section class="admin-coupon-stats" aria-label="Coupon statistics">
+        ${[["Total", stats.total], ["Full course", stats.full_course], ["Module", stats.module_access], ["Redeemed", stats.redeemed], ["Students", stats.students], ["Unused", stats.unused], ["Expired", stats.expired], ["Disabled", stats.disabled], ["Rate", `${Number(stats.redemption_rate || 0)}%`]].map(([label, value]) => `<article class="card"><b>${escapeHtml(String(value ?? 0))}</b><span>${escapeHtml(label)}</span></article>`).join("")}
+      </section>
+
+      <section class="card admin-coupon-report">
+        <div class="flex-between"><div><h3>Coupon records</h3><p class="subtle">Search previews, batches, student names, or MedBank IDs.</p></div><button class="btn ghost admin-btn-sm" type="button" data-action="admin-export-coupons">Export report</button></div>
+        <form id="admin-course-coupon-filter-form" class="admin-coupon-filters" autocomplete="off">
+          <input name="search" type="search" value="${escapeHtml(state.adminCourseCouponSearch)}" placeholder="Preview, batch, student ID..." />
+          <select name="coupon_type"><option value="all">All types</option><option value="full_course" ${state.adminCourseCouponFilterType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponFilterType === "module_access" ? "selected" : ""}>Module</option></select>
+          <select name="status"><option value="all">All statuses</option>${["unused", "used", "expired", "disabled"].map((status) => `<option value="${status}" ${state.adminCourseCouponStatus === status ? "selected" : ""}>${status[0].toUpperCase() + status.slice(1)}</option>`).join("")}</select>
+          <label>Created from<input name="created_from" type="date" value="${escapeHtml(state.adminCourseCouponCreatedFrom)}" /></label><label>Created to<input name="created_to" type="date" value="${escapeHtml(state.adminCourseCouponCreatedTo)}" /></label>
+          <label>Redeemed from<input name="redeemed_from" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedFrom)}" /></label><label>Redeemed to<input name="redeemed_to" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedTo)}" /></label>
+          <button class="btn ghost admin-btn-sm" type="submit">Apply filters</button>
+        </form>
+        ${state.adminCourseCouponLoading ? `<div class="courses-empty"><span class="inline-loader"></span><p>Loading coupons...</p></div>` : state.adminCourseCouponError ? `<p class="form-error">${escapeHtml(state.adminCourseCouponError)}</p>` : coupons.length ? `<div class="table-wrap"><table><thead><tr><th>Preview</th><th>Type / modules</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead><tbody>${coupons.map((coupon) => `<tr><td><code>••••-${escapeHtml(coupon.code_preview)}</code></td><td>${escapeHtml(coupon.coupon_type === "full_course" ? "Full course" : (coupon.module_titles || []).join(", ") || "Modules")}</td><td><span class="status-badge is-${coupon.status === "used" ? "approved" : coupon.status === "unused" ? "pending" : "rejected"}">${escapeHtml(coupon.status)}</span></td><td>${escapeHtml(coupon.batch_name || "—")}</td><td>${escapeHtml(formatReportDateTime(coupon.created_at))}</td><td>${coupon.redeemed_public_user_id ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(coupon.redeemed_public_user_id)}">${escapeHtml(coupon.redeemed_name || "Student")} · ${escapeHtml(coupon.redeemed_public_user_id)}</button><small>${escapeHtml(formatReportDateTime(coupon.redeemed_at))}</small>` : "—"}</td><td>${coupon.status === "unused" ? `<button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-disable-coupon" data-coupon-id="${escapeHtml(coupon.id)}">Disable</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="subtle">No coupons match these filters.</p>`}
+      </section>
+
+      <div class="grid-2 admin-coupon-insights"><section class="card"><h3>Redemptions over time</h3>${(stats.redemptions_over_time || []).length ? `<ul>${stats.redemptions_over_time.map((item) => `<li><span>${escapeHtml(item.day)}</span><b>${escapeHtml(item.count)}</b></li>`).join("")}</ul>` : `<p class="subtle">No redemptions yet.</p>`}</section><section class="card"><h3>Most activated modules</h3>${(stats.redemptions_by_module || []).length ? `<ul>${stats.redemptions_by_module.map((item) => `<li><span>${escapeHtml(item.module_title)}</span><b>${escapeHtml(item.redemptions)}</b></li>`).join("")}</ul>` : `<p class="subtle">No module redemptions yet.</p>`}</section></div>
+      <section class="card admin-coupon-insights"><h3>Recent redemptions</h3>${(stats.recent_redemptions || []).length ? `<ul>${stats.recent_redemptions.map((item) => `<li><span><button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(item.public_user_id)}">${escapeHtml(item.student_name || "Student")} · ${escapeHtml(item.public_user_id)}</button><small>${escapeHtml(item.course_name || "Video Course")} · ${escapeHtml(item.coupon_type === "module_access" ? "Module access" : "Full course")}</small></span><b>${escapeHtml(formatReportDateTime(item.redeemed_at))}</b></li>`).join("")}</ul>` : `<p class="subtle">No recent redemptions.</p>`}</section>
+    </div>
+  `;
+}
+
 function getAdminCoursePlatformSection() {
   const section = String(state.adminCoursePlatformSection || "").trim();
   return ADMIN_COURSES_PLATFORM_SECTIONS.has(section) ? section : "builder";
@@ -50037,7 +50450,11 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
                 <option value="mixed" ${getAdminCourseBuilderOptionSelected(dk, "lesson_type", "mixed", "video")}>Mixed</option>
               </select>
             </label>
-            <label>Video URL<input name="video_url" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "video_url", ""))}" /></label>
+            <label class="course-builder-wide">YouTube URL
+              <input name="youtube_url" data-youtube-url-input value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "youtube_url", ""))}" placeholder="https://youtu.be/..." />
+              <small class="subtle">Unlisted links work, but anyone who obtains the link may watch it outside MedBank.</small>
+            </label>
+            <div class="course-builder-wide youtube-admin-preview" data-youtube-preview aria-live="polite"></div>
             ${renderAdminCourseVideoUploadField(dk, "Upload video")}
             <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "position", moduleLessons.length + 1))}" /></label>
             <label class="course-builder-check"><input type="checkbox" name="is_free_preview" ${getAdminCourseBuilderCheckboxState(dk, "is_free_preview", false)} /> Free preview</label>
@@ -50074,9 +50491,13 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
                 <option value="mixed" ${getAdminCourseBuilderOptionSelected(dkLesson, "lesson_type", "mixed", lesson.lesson_type)}>Mixed</option>
               </select>
             </label>
-            <label>Video URL<input name="video_url" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkLesson, "video_url", lesson.video_url || ""))}" /></label>
+            <label class="course-builder-wide">YouTube URL
+              <input name="youtube_url" data-youtube-url-input value="${escapeHtml(getAdminCourseBuilderFieldValue(dkLesson, "youtube_url", lesson.video_original_url || (lesson.video_provider === "youtube" ? lesson.youtube_video_id || "" : "")))}" placeholder="https://youtu.be/..." />
+              <small class="subtle">Paste a watch, youtu.be, embed, Shorts, or Live URL. The normalized video ID is stored.</small>
+            </label>
+            <div class="course-builder-wide youtube-admin-preview" data-youtube-preview aria-live="polite"></div>
             ${renderAdminCourseVideoUploadField(dkLesson, "Replace video")}
-            <label>Video provider<input name="video_provider" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkLesson, "video_provider", lesson.video_provider || ""))}" /></label>
+            <label class="course-builder-check"><input type="checkbox" name="remove_video" /> Remove current video</label>
             <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkLesson, "position", lesson.position || 0))}" /></label>
             <label class="course-builder-check"><input type="checkbox" name="is_free_preview" ${getAdminCourseBuilderCheckboxState(dkLesson, "is_free_preview", lesson.is_free_preview)} /> Free preview</label>
             <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dkLesson, "is_published", lesson.is_published)} /> Published</label>
@@ -50427,6 +50848,8 @@ function adminRenderCourseBuilder(courseId) {
 
         ${activePlatformSection === "enrollments" && selectedCourse ? renderAdminCourseEnrollmentsSection(courses, selectedCourseId, rows) : ""}
 
+        ${activePlatformSection === "coupons" && selectedCourse ? renderAdminCourseCouponsSection(courses, selectedCourseId, rows) : ""}
+
         ${activePlatformSection === "requests" ? renderAdminRequestsSection(courses) : ""}
       `}
     </section>
@@ -50462,6 +50885,21 @@ function readFormDataObject(form) {
 function wireAdminCoursesPlatformBuilder() {
   const root = document.getElementById("admin-courses-platform-builder");
   if (!root) return;
+
+  const syncYouTubePreview = (input) => {
+    const preview = input?.closest("form")?.querySelector("[data-youtube-preview]");
+    if (!preview) return;
+    const raw = String(input?.value || "").trim();
+    if (!raw) {
+      preview.innerHTML = `<p class="subtle">Paste a YouTube URL to preview it before saving.</p>`;
+      return;
+    }
+    const normalized = window.MedBankVideoCourses?.normalizeYouTubeVideoInput(raw);
+    preview.innerHTML = normalized?.ok
+      ? `<div class="youtube-admin-preview-frame"><iframe src="${escapeHtml(normalized.embedUrl)}" title="YouTube lesson preview" allow="encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe></div><p class="subtle">Video ID: <code>${escapeHtml(normalized.videoId)}</code></p>`
+      : `<p class="form-error" role="alert">Unsupported YouTube URL. Use a watch, youtu.be, embed, Shorts, or Live link.</p>`;
+  };
+  root.querySelectorAll("[data-youtube-url-input]").forEach(syncYouTubePreview);
 
   const draftInputTimers = new WeakMap();
   const persistAdminCourseBuilderDraft = (form) => {
@@ -50659,6 +51097,20 @@ function wireAdminCoursesPlatformBuilder() {
       event.preventDefault();
       const lessonId = form.closest("[data-lesson-id]")?.getAttribute("data-lesson-id") || "";
       runAdminCourseAction("Resource added.", () => adminCreateResource(lessonId, readFormDataObject(form)), form);
+    } else if (id === "admin-course-coupon-generate-form") {
+      event.preventDefault();
+      runAdminCourseAction("Coupon codes generated. Save the plaintext codes now.", () => generateAdminCourseCoupons(form), form);
+    } else if (id === "admin-course-coupon-filter-form") {
+      event.preventDefault();
+      const data = new FormData(form);
+      state.adminCourseCouponSearch = String(data.get("search") || "");
+      state.adminCourseCouponFilterType = String(data.get("coupon_type") || "all");
+      state.adminCourseCouponStatus = String(data.get("status") || "all");
+      state.adminCourseCouponCreatedFrom = String(data.get("created_from") || "");
+      state.adminCourseCouponCreatedTo = String(data.get("created_to") || "");
+      state.adminCourseCouponRedeemedFrom = String(data.get("redeemed_from") || "");
+      state.adminCourseCouponRedeemedTo = String(data.get("redeemed_to") || "");
+      runAdminCourseAction("Coupon filters applied.", () => loadAdminCourseCouponData({ courseId: state.adminCourseCouponCourseId }), form);
     } else if (id === "admin-course-announcement-form") {
       event.preventDefault();
       runAdminCourseAction("Announcement posted.", () => adminCreateAnnouncement(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);
@@ -50718,6 +51170,19 @@ function wireAdminCoursesPlatformBuilder() {
       state.adminCourseBuilderActiveParentId = "";
       state.skipNextRouteAnimation = true;
       render();
+    } else if (target.id === "admin-coupon-course") {
+      state.adminCourseCouponCourseId = String(target.value || "");
+      state.adminCourseBuilderCourseId = state.adminCourseCouponCourseId;
+      state.adminCourseCouponStats = null;
+      state.adminCourseCoupons = [];
+      state.adminCourseCouponGenerated = [];
+      state.adminCourseCouponModuleIds = [];
+      rerenderAdminCourses();
+    } else if (target.id === "admin-coupon-type") {
+      state.adminCourseCouponType = String(target.value || "full_course");
+      rerenderAdminCourses();
+    } else if (target.name === "module_ids") {
+      state.adminCourseCouponModuleIds = [...root.querySelectorAll("input[name='module_ids']:checked")].map((input) => String(input.value || ""));
     } else if (
       target.id === "admin-course-table-filter-year" || 
       target.hasAttribute("data-action") && target.getAttribute("data-action") === "admin-course-table-filter"
@@ -50754,7 +51219,9 @@ function wireAdminCoursesPlatformBuilder() {
       });
     };
 
-    if (target.id === "admin-course-table-search") {
+    if (target.hasAttribute("data-youtube-url-input")) {
+      syncYouTubePreview(target);
+    } else if (target.id === "admin-course-table-search") {
       state.adminCourseTableSearch = String(target.value || "");
       rerenderAdminCourses();
     } else if (target.id === "admin-course-enrollment-search") {
@@ -50792,6 +51259,27 @@ function wireAdminCoursesPlatformBuilder() {
 
     if (action === "admin-courses-platform-refresh") {
       runAdminCourseAction("Courses platform refreshed.", () => loadAdminCoursesPlatform({ force: true }));
+    } else if (action === "admin-refresh-coupons") {
+      runAdminCourseAction("Coupon data refreshed.", () => loadAdminCourseCouponData({ courseId: state.adminCourseCouponCourseId }));
+    } else if (action === "admin-copy-generated-coupons") {
+      navigator.clipboard.writeText((state.adminCourseCouponGenerated || []).map((row) => row.coupon_code).join("\n")).then(() => toast("Coupon codes copied.")).catch(() => toast("Could not copy coupon codes."));
+    } else if (action === "admin-download-generated-coupons") {
+      exportAdminCourseCoupons(state.adminCourseCouponGenerated, { generated: true });
+    } else if (action === "admin-export-coupons") {
+      exportAdminCourseCoupons();
+    } else if (action === "admin-disable-coupon") {
+      const couponId = String(button.getAttribute("data-coupon-id") || "");
+      if (!window.confirm("Disable this unused coupon? It cannot be redeemed afterward.")) return;
+      runAdminCourseAction("Coupon disabled.", async () => {
+        const result = await runRelationalQueryWithTimeout(getCoursesPlatformClient().rpc("admin_disable_platform_course_coupon", { p_coupon_id: couponId }), "Coupon disable timed out.");
+        if (result?.ok !== true) throw new Error("Coupon is already used, disabled, or unavailable.");
+        await loadAdminCourseCouponData({ courseId: state.adminCourseCouponCourseId });
+      });
+    } else if (action === "admin-open-coupon-student") {
+      state.adminUserSearch = String(button.getAttribute("data-public-user-id") || "");
+      state.adminPage = "users";
+      state.skipNextRouteAnimation = true;
+      render();
     } else if (action === "admin-create-platform-course") {
       state.adminCoursePlatformSection = "builder";
       state.adminCourseBuilderActiveType = "course-create";

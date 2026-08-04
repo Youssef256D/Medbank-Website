@@ -47,6 +47,63 @@
   --shadow-medium: var(--shadow);
 }
 
+/* 2026-08 Video Course IDs, YouTube lessons, and activation coupons */
+.profile-public-id-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  border-color: color-mix(in srgb, var(--brand) 34%, var(--line));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 9%, var(--surface)), var(--surface));
+}
+.profile-public-id-card h3 { margin: .15rem 0; font-size: clamp(1.65rem, 4vw, 2.35rem); letter-spacing: .08em; }
+.profile-public-id-card p { margin: .2rem 0 0; }
+.admin-account-public-id { color: var(--brand-strong); }
+.course-module-card.is-locked { opacity: .82; border-style: dashed; }
+.course-module-card.is-locked .course-module-head-meta { color: var(--muted); }
+.course-coupon-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(5, 22, 31, .58);
+  backdrop-filter: blur(5px);
+}
+.course-coupon-modal .modal-card { width: min(100%, 560px); max-height: min(88vh, 720px); overflow: auto; }
+.course-coupon-modal form { display: grid; gap: .8rem; }
+.course-coupon-success { display: grid; gap: .8rem; }
+.course-coupon-success h3, .course-coupon-success p { margin: 0; }
+.youtube-admin-preview { min-height: 3rem; }
+.youtube-admin-preview-frame { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: .8rem; background: #050505; }
+.youtube-admin-preview-frame iframe { width: 100%; height: 100%; border: 0; }
+.admin-coupon-page { display: grid; gap: 1rem; }
+.admin-coupon-generator form, .admin-coupon-report { display: grid; gap: 1rem; }
+.admin-coupon-modules { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .55rem; border: 1px solid var(--line); border-radius: .8rem; padding: .8rem; }
+.admin-coupon-modules legend { padding: 0 .35rem; font-weight: 800; }
+.admin-coupon-generated textarea { width: 100%; margin-top: .8rem; font: 600 .9rem/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.admin-coupon-stats { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
+.admin-coupon-stats article { display: grid; gap: .2rem; }
+.admin-coupon-stats b { font-size: 1.55rem; color: var(--brand-strong); }
+.admin-coupon-stats span { color: var(--muted); font-size: .82rem; }
+.admin-coupon-filters { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: .7rem; align-items: end; }
+.admin-coupon-filters label { margin: 0; }
+.admin-coupon-report table small { display: block; margin-top: .3rem; }
+.admin-coupon-insights ul { list-style: none; padding: 0; margin: .7rem 0 0; display: grid; gap: .55rem; }
+.admin-coupon-insights li { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--line); padding-bottom: .5rem; }
+
+@media (max-width: 760px) {
+  .profile-public-id-card { align-items: stretch; flex-direction: column; }
+  .profile-public-id-card .btn { width: 100%; }
+  .admin-coupon-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-coupon-filters { grid-template-columns: 1fr; }
+  .admin-coupon-generator .flex-between, .admin-coupon-generated .flex-between, .admin-coupon-report .flex-between { align-items: flex-start; flex-direction: column; }
+}
+
 /* ==========================================================================
    CAPACITOR NATIVE APP — 2026 mobile product system
    Every rule in this layer is gated by body.native-app. The GitHub Pages web

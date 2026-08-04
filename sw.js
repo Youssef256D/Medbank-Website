@@ -12,6 +12,7 @@ const PRECACHE_URLS = [
   "./index.html",
   `./styles.css${versionSuffix}`,
   `./bootstrap.js${versionSuffix}`,
+  `./video-courses-utils.js${versionSuffix}`,
   `./main.js${versionSuffix}`,
   `./supabase.config.js${versionSuffix}`,
   "./manifest.webmanifest",
