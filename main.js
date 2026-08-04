@@ -20721,6 +20721,9 @@ function render() {
         wireLanding();
     }
   }
+  if (isPublicMarketingRoute && appEl.querySelector(".marketing-page")) {
+    appEl.insertAdjacentHTML("beforeend", marketingFooterHtml());
+  }
   discardUnrestoredLessonVideoContainer();
 
   const isAdminQuestionModalOpen = state.route === "admin" && state.adminPage === "questions" && state.adminQuestionModalOpen;
@@ -21870,32 +21873,23 @@ function landingContactBodyHtml() {
       </div>
       <p class="lp-contact-hint">Message or call for contact and pricing details.</p>
     </div>
-    <section id="account-deletion" class="lp-deletion" aria-labelledby="account-deletion-title">
-      <div class="lp-deletion-head">
-        <p class="lp-kicker">Account deletion</p>
-        <h3 id="account-deletion-title">Delete your MedBank account and associated data.</h3>
-        <p>You can request deletion even if you can no longer open the app. Send the request from the email address connected to your MedBank account so support can verify ownership.</p>
-      </div>
-      <ol class="lp-deletion-steps">
-        <li>Email <strong>Code.Youssefaayoub@gmail.com</strong> from your registered account email.</li>
-        <li>Include your full name, account email, and the words “Delete my MedBank account and associated data.”</li>
-        <li>Respond to any reasonable ownership-verification request from MedBank support.</li>
-        <li>After verification, the request is normally completed within 30 days and support sends a confirmation.</li>
-      </ol>
-      <a class="btn lp-deletion-request" href="mailto:Code.Youssefaayoub@gmail.com?subject=MedBank%20account%20deletion%20request&amp;body=Please%20delete%20my%20MedBank%20account%20and%20associated%20data.%0A%0AAccount%20email%3A%20%0AFull%20name%3A%20">Request account deletion</a>
-      <div class="lp-deletion-groups">
-        <div>
-          <h4>Data deleted</h4>
-          <p>Your Supabase Auth account and authentication identifiers; profile and contact data; access and enrollment records; tests, responses, notes, flags, analytics, and review queues; notification state; lesson progress; and other user-scoped app data tied to your account.</p>
+  `;
+}
+
+function marketingFooterHtml() {
+  return `
+    <footer class="marketing-footer">
+      <div class="marketing-footer-inner">
+        <div class="marketing-footer-brand">
+          <strong>MedBank</strong>
+          <span>Medical learning, kept focused.</span>
         </div>
-        <div>
-          <h4>Data retained</h4>
-          <p>Shared course or question-bank content that is not personal to your account may remain. Limited support, security, fraud-prevention, audit, legal, and residual backup records may be retained for up to 90 days, then deleted or anonymized unless a longer period is required by law.</p>
-        </div>
+        <nav class="marketing-footer-links" aria-label="Legal links">
+          <a href="privacy.html">Privacy policy</a>
+          <a href="deletion.html">Account deletion</a>
+        </nav>
       </div>
-      <p class="lp-deletion-retention"><strong>Retention:</strong> previous-test history is automatically pruned after 20 days. A verified account-deletion request removes active account data sooner; residual backups and the limited records described above may remain for no more than 90 days unless legally required.</p>
-      <a class="lp-deletion-details" href="deletion.html">Read the full MedBank data-deletion instructions</a>
-    </section>
+    </footer>
   `;
 }
 

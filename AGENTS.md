@@ -189,6 +189,17 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-03 — Account deletion moved to the legal footer
+The full account-deletion block was removed from the public Contact destination.
+The standalone `deletion.html` resource is now the single public page for the
+request process, deleted/retained data, and retention periods. Every public
+marketing route receives a shared footer with Privacy Policy and Account
+Deletion links, and the static first-paint fallback mirrors it. Static cache
+bust: `2026-08-03.06`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-08-03 — Mobile app campaign header uses the app icon only
 The duplicate horizontal MedBank wordmark was removed from the mobile app
 campaign header. The square mobile app icon remains beside the coming-soon

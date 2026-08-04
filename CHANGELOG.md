@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-03 — Account deletion moved to a footer-linked page
+- Removed the duplicated account-deletion instructions from the public Contact
+  section. The existing standalone `deletion.html` page remains the single
+  public source for the request steps, deleted/retained data, and retention
+  periods.
+- Added a responsive legal footer to every public marketing route and the
+  static first-paint fallback, with direct links to the Privacy Policy and
+  Account Deletion pages. Static cache bust: `2026-08-03.06`.
+
 ### 2026-08-03 — Mobile app campaign header simplified
 - Removed the duplicate horizontal MedBank wordmark from the mobile app
   campaign and kept the square mobile app icon beside the coming-soon status.

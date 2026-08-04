@@ -2929,88 +2929,61 @@ body.is-routing .card {
   color: var(--muted);
 }
 
-.landing-simple .lp-deletion {
-  margin-top: clamp(2rem, 5vw, 3.2rem);
+.marketing-footer {
   border-top: 1px solid var(--line);
-  padding-top: clamp(1.7rem, 4vw, 2.4rem);
-}
-
-.landing-simple .lp-deletion-head h3 {
-  margin: 0;
-  font-family: var(--font-heading);
-  font-size: clamp(1.35rem, 2.6vw, 1.85rem);
-  line-height: 1.2;
-  color: var(--text);
-}
-
-.landing-simple .lp-deletion-head > p:last-child {
-  margin: 0.75rem 0 0;
-  line-height: 1.65;
-  color: var(--muted);
-}
-
-.landing-simple .lp-deletion-steps {
-  margin: 1.35rem 0 0;
-  padding-left: 1.35rem;
-  display: grid;
-  gap: 0.65rem;
-  color: var(--text);
-  line-height: 1.55;
-}
-
-.landing-simple .lp-deletion-steps li {
-  padding-left: 0.25rem;
-}
-
-.landing-simple .lp-deletion strong,
-.landing-simple .lp-deletion a {
-  overflow-wrap: anywhere;
-}
-
-.landing-simple .lp-deletion-request {
-  margin-top: 1.35rem;
-}
-
-.landing-simple .lp-deletion-groups {
-  margin-top: 1.5rem;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.landing-simple .lp-deletion-groups > div {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
   background: var(--surface-strong);
-  padding: 1rem 1.05rem;
 }
 
-.landing-simple .lp-deletion-groups h4 {
-  margin: 0 0 0.45rem;
-  font-family: var(--font-heading);
-  font-size: 1rem;
+.marketing-footer-inner {
+  width: min(100% - 2rem, 1180px);
+  min-height: 112px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.5rem 0;
+}
+
+.marketing-footer-brand {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.marketing-footer-brand strong {
   color: var(--text);
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 700;
 }
 
-.landing-simple .lp-deletion-groups p,
-.landing-simple .lp-deletion-retention {
-  margin: 0;
-  font-size: 0.92rem;
-  line-height: 1.6;
+.marketing-footer-brand span {
   color: var(--muted);
+  font-size: 0.9rem;
 }
 
-.landing-simple .lp-deletion-retention {
-  margin-top: 1rem;
-  border-left: 3px solid var(--brand);
-  padding: 0.15rem 0 0.15rem 0.85rem;
+.marketing-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.55rem 1.2rem;
 }
 
-.landing-simple .lp-deletion-details {
-  display: inline-block;
-  margin-top: 1rem;
+.marketing-footer-links a {
+  border-radius: 0.35rem;
   color: var(--brand-strong);
-  font-weight: 600;
+  font-size: 0.92rem;
+  font-weight: 650;
+  text-underline-offset: 0.2em;
+}
+
+.marketing-footer-links a:hover {
+  color: var(--brand);
+}
+
+.marketing-footer-links a:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
 }
 
 .landing-simple.lp-standalone {
@@ -3045,12 +3018,21 @@ body.is-routing .card {
     grid-template-columns: 1fr;
   }
 
-  .landing-simple .lp-deletion-groups {
-    grid-template-columns: 1fr;
-  }
-
   .landing-simple .lp-hero-actions .btn {
     flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .marketing-footer-inner {
+    min-height: 0;
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 1.35rem 0 calc(1.35rem + env(safe-area-inset-bottom));
+  }
+
+  .marketing-footer-links {
+    justify-content: flex-start;
   }
 }
 
