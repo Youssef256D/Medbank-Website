@@ -1,0 +1,11 @@
+-- Ledger placeholder. Intentionally contains no statements.
+--
+-- The MedBank ID renumbering (8-digit -> compact IDs from 100) was applied to
+-- production directly rather than through `supabase db push`, so it landed in
+-- the migration ledger under this version with no matching file. That mismatch
+-- made every later `db push` fail its history check.
+--
+-- The actual SQL lives in 20260805031500_shorten_public_user_ids.sql, which is
+-- the same change under an earlier version and is also marked applied. Do NOT
+-- run either file again: the renumber is not idempotent, and re-running it
+-- would reassign MedBank IDs that students and admins already rely on.
