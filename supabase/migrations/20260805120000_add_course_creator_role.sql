@@ -396,4 +396,17 @@ grant execute on function public.creator_submit_course_for_review(uuid) to authe
 grant execute on function public.admin_review_platform_course(uuid, boolean, text) to authenticated;
 grant execute on function public.creator_get_course_stats(uuid) to authenticated;
 
+
+
+-- ---------------------------------------------------------------------------
+-- Supabase's default privileges also grant EXECUTE on new public-schema
+-- functions to `anon`, and `revoke ... from public` does not undo a direct
+-- grant. Revoke explicitly: all three require a signed-in admin or course
+-- owner, so anon must not reach them at all.
+-- ---------------------------------------------------------------------------
+
+revoke execute on function public.admin_review_platform_course(uuid, boolean, text) from anon;
+revoke execute on function public.creator_get_course_stats(uuid) from anon;
+revoke execute on function public.creator_submit_course_for_review(uuid) from anon;
+
 commit;
