@@ -19855,3 +19855,234 @@ body.theme-dark .course-card-actions .btn.is-suggestion-btn:hover {
     margin-top: 0.9rem;
   }
 }
+
+/* ===================================================================== */
+/* Video Course activation modal — voucher redesign (2026-08-05)          */
+/* ===================================================================== */
+.course-coupon-modal .modal-card.course-coupon-card {
+  width: min(100%, 470px);
+  padding: 1.4rem 1.5rem 1.5rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--line));
+  background:
+    radial-gradient(120% 90% at 50% -20%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 55%),
+    var(--surface-strong);
+  box-shadow: 0 24px 60px rgba(5, 22, 31, 0.35);
+}
+.course-coupon-card form { display: grid; gap: 1rem; }
+.course-coupon-head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.05rem; }
+.course-coupon-glyph {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 12px;
+  color: var(--brand-strong);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand) 26%, transparent);
+}
+.course-coupon-glyph svg { width: 1.35rem; height: 1.35rem; }
+.course-coupon-heading { flex: 1 1 auto; min-width: 0; }
+.course-coupon-kicker {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-strong);
+}
+.course-coupon-heading h2 {
+  margin: 0.1rem 0 0;
+  font-family: var(--font-heading);
+  font-size: 1.45rem;
+  line-height: 1.15;
+  color: var(--ink);
+}
+.course-coupon-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.course-coupon-close:hover,
+.course-coupon-close:focus-visible {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+}
+.course-coupon-close svg { width: 0.95rem; height: 0.95rem; }
+.course-coupon-lede { margin: 0; color: var(--muted); font-size: 0.93rem; line-height: 1.55; }
+.course-coupon-voucher {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1rem 1.1rem 0.9rem;
+  border: 1.5px dashed color-mix(in srgb, var(--brand) 42%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--brand) 5%, var(--surface-strong));
+}
+.course-coupon-voucher label {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-strong);
+}
+.course-coupon-modal input#course-coupon-code {
+  width: 100%;
+  border: 0;
+  border-bottom: 2px solid color-mix(in srgb, var(--brand) 35%, var(--line));
+  border-radius: 0;
+  background: transparent;
+  padding: 0.3rem 0.05rem 0.45rem;
+  font-family: var(--mb-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-size: clamp(0.98rem, 2.6vw, 1.18rem);
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink);
+  caret-color: var(--brand);
+  outline: none;
+  box-shadow: none;
+  transition: border-color 0.15s ease;
+}
+.course-coupon-modal input#course-coupon-code::placeholder {
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
+  letter-spacing: 0.12em;
+}
+.course-coupon-modal input#course-coupon-code:focus { border-bottom-color: var(--brand); }
+.course-coupon-hint { margin: 0; font-size: 0.78rem; color: var(--muted); }
+.course-coupon-actions { display: grid; gap: 0.5rem; }
+.course-coupon-actions .btn { width: 100%; justify-content: center; }
+.course-coupon-submit { font-weight: 750; }
+.course-coupon-success {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0 0.2rem;
+}
+.course-coupon-seal {
+  display: grid;
+  place-items: center;
+  width: 3.4rem;
+  height: 3.4rem;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--brand);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--brand) 16%, transparent);
+  animation: course-coupon-seal-pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.course-coupon-seal svg { width: 1.6rem; height: 1.6rem; }
+.course-coupon-success-kicker {
+  margin: 0.5rem 0 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-strong);
+}
+.course-coupon-success h3 { margin: 0; font-size: 1.3rem; color: var(--ink); }
+.course-coupon-success-copy { margin: 0; color: var(--muted); font-size: 0.92rem; line-height: 1.5; }
+.course-coupon-module-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0;
+  padding: 0;
+}
+.course-coupon-module-chips li {
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--brand-strong);
+  background: color-mix(in srgb, var(--brand) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand) 24%, transparent);
+}
+.course-coupon-open { margin-top: 0.55rem; min-width: 60%; justify-content: center; }
+@keyframes course-coupon-seal-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .course-coupon-seal { animation: none; }
+}
+@media (max-width: 480px) {
+  .course-coupon-modal .modal-card.course-coupon-card { padding: 1.15rem 1.05rem 1.2rem; }
+  .course-coupon-heading h2 { font-size: 1.25rem; }
+}
+
+/* ===================================================================== */
+/* YouTube lessons play inside the MedBank lesson player (2026-08-05)     */
+/* ===================================================================== */
+.lesson-video[data-youtube-lesson-player] iframe[data-youtube-lesson-iframe] {
+  z-index: 1;
+  pointer-events: none;
+}
+.lesson-video-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.lesson-video[data-youtube-lesson-player].is-yt-paused .lesson-video-shield {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.86) 0%, rgba(0, 0, 0, 0.55) 18%, rgba(0, 0, 0, 0.32) 45%, rgba(0, 0, 0, 0.55) 100%);
+}
+.lesson-video[data-youtube-lesson-player].is-yt-ended .lesson-video-shield {
+  background: rgba(0, 0, 0, 0.9);
+}
+.lesson-video-bigplay {
+  display: grid;
+  place-items: center;
+  width: 4.4rem;
+  height: 4.4rem;
+  border-radius: 999px;
+  border: 0;
+  background: color-mix(in srgb, var(--brand, #177e89) 88%, #000000);
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.85);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.lesson-video[data-youtube-lesson-player].is-yt-paused .lesson-video-bigplay,
+.lesson-video[data-youtube-lesson-player].is-yt-ended .lesson-video-bigplay {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+.lesson-video-bigplay:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 3px;
+}
+.lesson-video-bigplay svg { width: 1.7rem; height: 1.7rem; }
+.lesson-video-bigplay-play svg { fill: currentColor; }
+.lesson-video-bigplay-play,
+.lesson-video-bigplay-replay { display: grid; place-items: center; }
+.lesson-video-bigplay-replay { display: none; }
+.lesson-video[data-youtube-lesson-player].is-yt-ended .lesson-video-bigplay-play { display: none; }
+.lesson-video[data-youtube-lesson-player].is-yt-ended .lesson-video-bigplay-replay { display: grid; }
+@media (prefers-reduced-motion: reduce) {
+  .lesson-video-bigplay,
+  .lesson-video-shield { transition: none; }
+}
+@media (max-width: 640px) {
+  .lesson-video-bigplay { width: 3.4rem; height: 3.4rem; }
+  .lesson-video-bigplay svg { width: 1.3rem; height: 1.3rem; }
+}

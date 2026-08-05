@@ -189,6 +189,45 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-05 — Activation modal redesign, in-site YouTube player, short MedBank IDs
+Three changes; no auth/access/RLS behavior touched.
+
+1. **Coupon modal redesign.** `renderCourseCouponModal()` now renders a
+   voucher-style dialog (`.course-coupon-card`, `.course-coupon-voucher`,
+   `.course-coupon-success`). All wiring ids/actions are unchanged
+   (`course-coupon-form`, `course-coupon-code`, `courses-close-coupon`,
+   `courses-open-activated-course`); only markup/CSS changed. New CSS is
+   appended at the end of `styles.css`, token-based for all three themes.
+2. **YouTube lessons use the internal player.** `renderLessonViewer` routes
+   YouTube lessons through `renderYouTubeLessonVideoPlayer()`: a
+   `youtube-nocookie` embed with `controls=0&enablejsapi=1` driven by the
+   shared `.lesson-video-controls` bar over the widget postMessage protocol
+   (`wireYouTubeLessonVideoPlayerControls`, `youtubeLessonRuntime`). No
+   external YouTube script is loaded (CSP unchanged; `frame-src` already
+   allowed the embed host). A click shield + paused/ended overlays hide
+   YouTube chrome; the watermark layer now renders over YouTube lessons.
+   Controls markup is shared via `renderLessonVideoControlsMarkup()`. Note:
+   re-renders reload the iframe (iframes cannot be detached without reload);
+   the runtime restores position/rate/mute on the iframe `load` event.
+   Fullscreen prefers native element fullscreen, falling back to the existing
+   pseudo-fullscreen helpers.
+3. **Short MedBank IDs + admin ID search fix.** `matchesAdminUserSearchTerm`
+   now returns an exact match on `publicUserId` before the digits-only query
+   falls into the exact-phone path (that path previously swallowed all-digit
+   ID searches). Migration `20260805031500_shorten_public_user_ids.sql`
+   (rollback in `supabase/rollbacks/`) renumbers `profiles.public_user_id`
+   from the 8-digit range to sequential IDs starting at 100 by disabling the
+   immutability trigger inside the migration only; the sequence and check
+   constraint move to `>= 100`. **Not yet applied to the hosted project** —
+   apply before shipping frontend copy that assumes short IDs. Demo accounts
+   now use 901/902/903.
+4. **Static cache bust:** `2026-08-05.01`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`supabase/migrations/20260805031500_shorten_public_user_ids.sql`,
+`supabase/rollbacks/20260805031500_shorten_public_user_ids.sql`,
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-04 — Video Course public IDs, YouTube lessons, and activation coupons
 Video Courses now use centralized full-course/module access. Do not treat the
 presence of a `platform_course_enrollments` row as proof that every module is

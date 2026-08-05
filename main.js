@@ -1135,6 +1135,18 @@ const cloudflareStreamRuntime = {
   renderHandle: null,
   tusClientPromise: null,
 };
+const youtubeLessonRuntime = {
+  playerId: "medbank-lesson-youtube",
+  lessonId: "",
+  time: 0,
+  duration: 0,
+  paused: true,
+  ended: false,
+  rate: 1,
+  muted: false,
+  container: null,
+  messageListenerWired: false,
+};
 let notificationRealtimeChannel = null;
 let notificationRealtimeSubscriptionKey = "";
 let notificationRealtimeSubscribed = false;
@@ -5558,6 +5570,11 @@ function matchesAdminUserSearchTerm(account, term) {
     return false;
   }
   const normalizedPhoneSearch = normalizeNotificationTargetPhoneSearchText(term);
+  const digitsOnlySearch = String(term || "").replace(/\D/g, "");
+  const accountPublicUserId = String(Number(account.publicUserId || account.public_user_id) || "").trim();
+  if (digitsOnlySearch && accountPublicUserId && digitsOnlySearch === accountPublicUserId) {
+    return true;
+  }
   if (shouldUseExactAdminUserPhoneMatch(term)) {
     const normalizedExactPhoneSearch = normalizeAdminUserPhoneExactMatchValue(term);
     const normalizedExactPhone = normalizeAdminUserPhoneExactMatchValue(account.phone);
@@ -16340,7 +16357,7 @@ function seedData() {
   const createLocalDemoUsers = () => [
     {
       id: "u_admin",
-      publicUserId: 90000001,
+      publicUserId: 901,
       name: "MedBank Demo Admin",
       email: DEMO_ADMIN_EMAIL,
       password: "admin123",
@@ -16358,7 +16375,7 @@ function seedData() {
     },
     {
       id: "u_student",
-      publicUserId: 90000002,
+      publicUserId: 902,
       name: "MedBank Approved Demo Student",
       email: DEMO_STUDENT_EMAIL,
       password: "student123",
@@ -16376,7 +16393,7 @@ function seedData() {
     },
     {
       id: "u_student_pending",
-      publicUserId: 90000003,
+      publicUserId: 903,
       name: "MedBank Pending Demo Student",
       email: DEMO_PENDING_STUDENT_EMAIL,
       password: "student123",
@@ -45303,25 +45320,40 @@ function renderCourseCouponModal() {
   const moduleTitles = Array.isArray(result?.module_titles) ? result.module_titles : [];
   return `
     <div class="modal-backdrop course-coupon-modal" data-action="courses-close-coupon" role="presentation">
-      <section class="modal-card card" role="dialog" aria-modal="true" aria-labelledby="course-coupon-title" data-course-coupon-dialog>
-        <div class="flex-between">
-          <div><p class="kicker">Video Courses</p><h2 id="course-coupon-title" class="title">Activate a course</h2></div>
-          <button class="btn ghost admin-btn-sm" type="button" data-action="courses-close-coupon" aria-label="Close activation dialog">Close</button>
-        </div>
+      <section class="modal-card card course-coupon-card ${result?.ok ? "is-activated" : ""}" role="dialog" aria-modal="true" aria-labelledby="course-coupon-title" data-course-coupon-dialog>
+        <header class="course-coupon-head">
+          <span class="course-coupon-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 11v2"/><path d="M13 17v2"/></svg>
+          </span>
+          <div class="course-coupon-heading">
+            <p class="course-coupon-kicker">Video Courses</p>
+            <h2 id="course-coupon-title">Activate a course</h2>
+          </div>
+          <button class="course-coupon-close" type="button" data-action="courses-close-coupon" aria-label="Close activation dialog">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </header>
         ${result?.ok ? `
           <div class="course-coupon-success" role="status">
-            <h3>${escapeHtml(result.course_name || "Course activated")}</h3>
-            <p>${result.access_type === "module_access" ? "Your selected modules are ready in My Courses." : "You now have full-course access, including future published modules."}</p>
-            ${moduleTitles.length ? `<ul>${moduleTitles.map((title) => `<li>${escapeHtml(title)}</li>`).join("")}</ul>` : ""}
-            <button class="btn" type="button" data-action="courses-open-activated-course" data-course-id="${escapeHtml(result.course_id || "")}">Open course</button>
+            <span class="course-coupon-seal" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <p class="course-coupon-success-kicker">Course activated</p>
+            <h3>${escapeHtml(result.course_name || "Your course")}</h3>
+            <p class="course-coupon-success-copy">${result.access_type === "module_access" ? "These modules are now open in My Courses:" : "You have full access to every module, including ones published later."}</p>
+            ${moduleTitles.length ? `<ul class="course-coupon-module-chips">${moduleTitles.map((title) => `<li>${escapeHtml(title)}</li>`).join("")}</ul>` : ""}
+            <button class="btn course-coupon-open" type="button" data-action="courses-open-activated-course" data-course-id="${escapeHtml(result.course_id || "")}">Open course</button>
           </div>
         ` : `
           <form id="course-coupon-form" autocomplete="off">
-            <p class="subtle">Enter the one-time code supplied by MedBank. Activation is permanently attached to this account.</p>
-            <label for="course-coupon-code">Coupon code</label>
-            <input id="course-coupon-code" name="couponCode" inputmode="text" autocapitalize="characters" spellcheck="false" value="${escapeHtml(state.courseCouponCode)}" placeholder="MBK-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" required autofocus />
-            <div class="stack">
-              <button class="btn ${state.courseCouponSubmitting ? "is-loading" : ""}" type="submit" ${state.courseCouponSubmitting ? "disabled" : ""}>${state.courseCouponSubmitting ? `<span class="inline-loader" aria-hidden="true"></span><span>Activating...</span>` : "Activate now"}</button>
+            <p class="course-coupon-lede">Enter the one-time code you received from MedBank. It unlocks the course for this account, permanently.</p>
+            <div class="course-coupon-voucher">
+              <label for="course-coupon-code">Activation code</label>
+              <input id="course-coupon-code" name="couponCode" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false" value="${escapeHtml(state.courseCouponCode)}" placeholder="MBK-" required autofocus />
+              <p class="course-coupon-hint">Dashes are added for you as you type.</p>
+            </div>
+            <div class="course-coupon-actions">
+              <button class="btn course-coupon-submit ${state.courseCouponSubmitting ? "is-loading" : ""}" type="submit" ${state.courseCouponSubmitting ? "disabled" : ""}>${state.courseCouponSubmitting ? `<span class="inline-loader" aria-hidden="true"></span><span>Activating...</span>` : "Activate course"}</button>
               <button class="btn ghost" type="button" data-action="courses-close-coupon" ${state.courseCouponSubmitting ? "disabled" : ""}>Cancel</button>
             </div>
           </form>
@@ -46292,10 +46324,8 @@ function renderVideoWatermarkLayer(label) {
   `;
 }
 
-function renderDirectLessonVideoPlayer(safeVideoUrl, watermarkLabel) {
+function renderLessonVideoControlsMarkup() {
   return `
-    <video id="course-lesson-video-player" playsinline preload="metadata" disablepictureinpicture disableremoteplayback x-webkit-airplay="deny" oncontextmenu="return false;" src="${escapeHtml(safeVideoUrl)}"></video>
-    ${renderVideoWatermarkLayer(watermarkLabel)}
     <div class="lesson-video-controls" data-video-controls>
       <button class="lesson-video-control-btn" type="button" data-video-control="play" aria-label="Play video">
         <span data-video-play-icon>
@@ -46323,6 +46353,48 @@ function renderDirectLessonVideoPlayer(safeVideoUrl, watermarkLabel) {
         <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="8 3 3 3 3 8"></polyline><polyline points="16 3 21 3 21 8"></polyline><polyline points="21 16 21 21 16 21"></polyline><polyline points="3 16 3 21 8 21"></polyline></svg>
       </button>
     </div>
+  `;
+}
+
+function renderDirectLessonVideoPlayer(safeVideoUrl, watermarkLabel) {
+  return `
+    <video id="course-lesson-video-player" playsinline preload="metadata" disablepictureinpicture disableremoteplayback x-webkit-airplay="deny" oncontextmenu="return false;" src="${escapeHtml(safeVideoUrl)}"></video>
+    ${renderVideoWatermarkLayer(watermarkLabel)}
+    ${renderLessonVideoControlsMarkup()}
+  `;
+}
+
+function buildYouTubeLessonPlayerEmbedUrl(videoId) {
+  const normalizedId = window.MedBankVideoCourses?.extractYouTubeVideoId(videoId) || "";
+  if (!normalizedId) return "";
+  const params = new URLSearchParams({
+    autoplay: "0",
+    controls: "0",
+    enablejsapi: "1",
+    playsinline: "1",
+    rel: "0",
+    modestbranding: "1",
+    iv_load_policy: "3",
+    disablekb: "1",
+    fs: "0",
+    origin: window.location.origin,
+  });
+  return `https://www.youtube-nocookie.com/embed/${normalizedId}?${params.toString()}`;
+}
+
+function renderYouTubeLessonVideoPlayer(videoId, lessonTitle, watermarkLabel) {
+  const embedUrl = buildYouTubeLessonPlayerEmbedUrl(videoId);
+  if (!embedUrl) return "";
+  return `
+    <iframe data-youtube-lesson-iframe src="${escapeHtml(embedUrl)}" title="${escapeHtml(lessonTitle || "Lesson video")}" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    ${renderVideoWatermarkLayer(watermarkLabel)}
+    <div class="lesson-video-shield" data-youtube-shield>
+      <button class="lesson-video-bigplay" type="button" data-youtube-bigplay aria-label="Play video">
+        <span class="lesson-video-bigplay-play" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="8 5 19 12 8 19 8 5"></polygon></svg></span>
+        <span class="lesson-video-bigplay-replay" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></span>
+      </button>
+    </div>
+    ${renderLessonVideoControlsMarkup()}
   `;
 }
 
@@ -46661,11 +46733,13 @@ function renderLessonViewer(lessonId) {
           ` : ""}
           
           ${safeVideoUrl ? `
-            <div class="lesson-video" data-protected-course-content="true">
+            <div class="lesson-video" data-protected-course-content="true" ${isYouTubeVideo ? `data-youtube-lesson-player="true"` : ""}>
               ${directVideo || isYouTubeVideo ? "" : renderVideoWatermarkLayer(buildVideoWatermarkLabel())}
-              ${directVideo 
+              ${directVideo
                 ? renderDirectLessonVideoPlayer(safeVideoUrl, buildVideoWatermarkLabel())
-                : `<iframe src="${escapeHtml(safeVideoUrl)}" title="${escapeHtml(lesson.title)}" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
+                : isYouTubeVideo
+                  ? renderYouTubeLessonVideoPlayer(youtubeVideoId, lesson.title, buildVideoWatermarkLabel())
+                  : `<iframe src="${escapeHtml(safeVideoUrl)}" title="${escapeHtml(lesson.title)}" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
               }
             </div>
           ` : ""}
@@ -47279,6 +47353,220 @@ function wireLessonVideoPlayerControls() {
   syncControls();
 }
 
+function getYouTubeLessonContainer() {
+  const container = youtubeLessonRuntime.container;
+  return container?.isConnected ? container : null;
+}
+
+function postYouTubeLessonMessage(payload) {
+  const iframe = getYouTubeLessonContainer()?.querySelector("[data-youtube-lesson-iframe]");
+  if (!iframe?.contentWindow) return;
+  try {
+    iframe.contentWindow.postMessage(JSON.stringify(payload), "https://www.youtube-nocookie.com");
+  } catch {
+    // The embed may not be ready to receive commands yet; the next sync retries.
+  }
+}
+
+function sendYouTubeLessonCommand(func, args = []) {
+  postYouTubeLessonMessage({ event: "command", func, args, id: youtubeLessonRuntime.playerId, channel: "widget" });
+}
+
+function startYouTubeLessonHandshake() {
+  postYouTubeLessonMessage({ event: "listening", id: youtubeLessonRuntime.playerId, channel: "widget" });
+}
+
+function syncYouTubeLessonControls() {
+  const container = getYouTubeLessonContainer();
+  if (!container) return;
+  const rt = youtubeLessonRuntime;
+  const playSvg = `<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="8 5 19 12 8 19 8 5"></polygon></svg>`;
+  const pauseSvg = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14"></rect><rect x="14" y="5" width="4" height="14"></rect></svg>`;
+  const volumeSvg = `<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.5 5.5a9 9 0 0 1 0 13"></path></svg>`;
+  const mutedSvg = `<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="22" y1="9" x2="16" y2="15"></line><line x1="16" y1="9" x2="22" y2="15"></line></svg>`;
+  container.classList.toggle("is-yt-paused", rt.paused && !rt.ended);
+  container.classList.toggle("is-yt-ended", rt.ended);
+  const playIcon = container.querySelector("[data-video-play-icon]");
+  if (playIcon) playIcon.innerHTML = rt.paused ? playSvg : pauseSvg;
+  container.querySelector("[data-video-control='play']")?.setAttribute("aria-label", rt.paused ? "Play video" : "Pause video");
+  const muteIcon = container.querySelector("[data-video-mute-icon]");
+  if (muteIcon) muteIcon.innerHTML = rt.muted ? mutedSvg : volumeSvg;
+  container.querySelector("[data-video-control='mute']")?.setAttribute("aria-label", rt.muted ? "Unmute video" : "Mute video");
+  const currentTimeEl = container.querySelector("[data-video-time-current]");
+  const durationEl = container.querySelector("[data-video-time-duration]");
+  const duration = Number.isFinite(rt.duration) && rt.duration > 0 ? rt.duration : 0;
+  const current = rt.ended && duration ? duration : Math.max(0, Number(rt.time) || 0);
+  if (currentTimeEl) currentTimeEl.textContent = formatLessonVideoClock(current);
+  if (durationEl) durationEl.textContent = duration ? formatLessonVideoClock(duration) : "0:00";
+  const speedSelect = container.querySelector("[data-video-control='speed']");
+  if (speedSelect) {
+    const nextValue = String(Math.max(0.25, Math.min(3, Number(rt.rate) || 1)));
+    if (speedSelect.value !== nextValue) speedSelect.value = nextValue;
+  }
+  const seek = container.querySelector("[data-video-control='seek']");
+  if (seek && !seek.matches(":active")) {
+    const progressValue = duration ? (rt.ended ? 1000 : Math.max(0, Math.min(1000, Math.round((current / duration) * 1000)))) : 0;
+    seek.value = String(progressValue);
+    seek.style.setProperty("--lesson-video-progress", `${progressValue / 10}%`);
+  }
+  const bigPlay = container.querySelector("[data-youtube-bigplay]");
+  bigPlay?.setAttribute("aria-label", rt.ended ? "Replay video" : "Play video");
+}
+
+function handleYouTubeLessonWindowMessage(event) {
+  if (event.origin !== "https://www.youtube-nocookie.com") return;
+  if (!getYouTubeLessonContainer()) return;
+  let data = null;
+  try {
+    data = JSON.parse(String(event.data || ""));
+  } catch {
+    return;
+  }
+  if (!data || typeof data !== "object") return;
+  if (data.id && data.id !== youtubeLessonRuntime.playerId) return;
+  const rt = youtubeLessonRuntime;
+  const info = data.info && typeof data.info === "object" ? data.info : {};
+  if (Number.isFinite(info.duration)) rt.duration = info.duration;
+  if (Number.isFinite(info.currentTime)) rt.time = info.currentTime;
+  if (Number.isFinite(info.playbackRate)) rt.rate = info.playbackRate;
+  if (typeof info.muted === "boolean") rt.muted = info.muted;
+  const playerState = Number.isFinite(info.playerState) ? info.playerState : null;
+  if (playerState !== null) {
+    rt.ended = playerState === 0;
+    rt.paused = playerState !== 1 && playerState !== 3;
+  }
+  syncYouTubeLessonControls();
+}
+
+function wireYouTubeLessonVideoPlayerControls() {
+  const container = appEl.querySelector(".lesson-video[data-youtube-lesson-player]")
+    || document.querySelector("body > .lesson-video[data-youtube-lesson-player]");
+  if (!container) {
+    youtubeLessonRuntime.container = null;
+    return;
+  }
+  const rt = youtubeLessonRuntime;
+  rt.container = container;
+  const activeLessonId = String(state.coursesActiveLessonId || "").trim();
+  if (rt.lessonId !== activeLessonId) {
+    rt.lessonId = activeLessonId;
+    rt.time = 0;
+    rt.duration = 0;
+    rt.paused = true;
+    rt.ended = false;
+    rt.rate = 1;
+    rt.muted = false;
+  }
+  if (!rt.messageListenerWired) {
+    rt.messageListenerWired = true;
+    window.addEventListener("message", handleYouTubeLessonWindowMessage);
+  }
+  if (container.dataset.youtubeControlsWired === "true") {
+    startYouTubeLessonHandshake();
+    syncYouTubeLessonControls();
+    return;
+  }
+  container.dataset.youtubeControlsWired = "true";
+
+  const iframe = container.querySelector("[data-youtube-lesson-iframe]");
+  const restoreAfterLoad = () => {
+    startYouTubeLessonHandshake();
+    window.setTimeout(() => {
+      startYouTubeLessonHandshake();
+      if (rt.time > 1) sendYouTubeLessonCommand("seekTo", [rt.time, true]);
+      if (Number(rt.rate) !== 1) sendYouTubeLessonCommand("setPlaybackRate", [rt.rate]);
+      sendYouTubeLessonCommand(rt.muted ? "mute" : "unMute");
+      if (!rt.paused && !rt.ended) sendYouTubeLessonCommand("playVideo");
+    }, 420);
+  };
+  iframe?.addEventListener("load", restoreAfterLoad);
+  if (rt.time > 1) {
+    restoreAfterLoad();
+  } else {
+    startYouTubeLessonHandshake();
+    window.setTimeout(startYouTubeLessonHandshake, 600);
+  }
+
+  const togglePlay = () => {
+    if (Date.now() < Number(courseVideoRuntime.fullscreenInteractionLockedUntil || 0)) {
+      return;
+    }
+    if (rt.paused || rt.ended) {
+      sendYouTubeLessonCommand("playVideo");
+      rt.paused = false;
+      rt.ended = false;
+    } else {
+      sendYouTubeLessonCommand("pauseVideo");
+      rt.paused = true;
+    }
+    syncYouTubeLessonControls();
+  };
+
+  container.querySelector("[data-video-control='play']")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    togglePlay();
+  });
+  container.querySelector("[data-youtube-shield]")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    togglePlay();
+  });
+
+  const seek = container.querySelector("[data-video-control='seek']");
+  seek?.addEventListener("input", () => {
+    const duration = Number.isFinite(rt.duration) && rt.duration > 0 ? rt.duration : 0;
+    if (!duration) return;
+    const targetTime = (Number(seek.value) / 1000) * duration;
+    rt.time = targetTime;
+    rt.ended = false;
+    sendYouTubeLessonCommand("seekTo", [targetTime, true]);
+    seek.style.setProperty("--lesson-video-progress", `${Math.max(0, Math.min(1000, Number(seek.value) || 0)) / 10}%`);
+    syncYouTubeLessonControls();
+  });
+
+  container.querySelector("[data-video-control='speed']")?.addEventListener("change", (event) => {
+    const nextRate = Math.max(0.25, Math.min(3, Number(event.target?.value) || 1));
+    rt.rate = nextRate;
+    sendYouTubeLessonCommand("setPlaybackRate", [nextRate]);
+  });
+
+  container.querySelector("[data-video-control='mute']")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    rt.muted = !rt.muted;
+    sendYouTubeLessonCommand(rt.muted ? "mute" : "unMute");
+    syncYouTubeLessonControls();
+  });
+
+  container.querySelector("[data-video-control='fullscreen']")?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const nativeFullscreenActive = getActiveFullscreenElement() === container;
+    if (nativeFullscreenActive || getCurrentLessonVideoFullscreenContainer() === container) {
+      await exitLessonVideoFullscreen();
+    } else if (container.requestFullscreen || container.webkitRequestFullscreen) {
+      try {
+        if (container.requestFullscreen) {
+          await container.requestFullscreen();
+        } else {
+          container.webkitRequestFullscreen();
+        }
+      } catch {
+        await requestLessonVideoFullscreen(container);
+      }
+    } else {
+      const didEnterFullscreen = await requestLessonVideoFullscreen(container);
+      if (!didEnterFullscreen) {
+        toast("Fullscreen is not available in this browser view.");
+      }
+    }
+    syncYouTubeLessonControls();
+  });
+
+  syncYouTubeLessonControls();
+}
+
 function wireCourses() {
   const couponInput = document.getElementById("course-coupon-code");
   couponInput?.addEventListener("input", (event) => {
@@ -47333,6 +47621,7 @@ function wireCourses() {
   });
 
   wireLessonVideoPlayerControls();
+  wireYouTubeLessonVideoPlayerControls();
 
   const lessonVideoForCompletion = appEl.querySelector("#course-lesson-video-player");
   if (lessonVideoForCompletion && lessonVideoForCompletion.dataset.lessonCompletionWired !== "true") {

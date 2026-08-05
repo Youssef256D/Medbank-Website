@@ -9,6 +9,24 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-05 — Activation modal redesign, in-site YouTube player, short MedBank IDs
+- Redesigned the Video Course "Activate a course" modal as a voucher-style
+  dialog: ticket glyph header, dashed activation-code panel with monospace
+  uppercase entry, full-width activate action, and an animated "Course
+  activated" success state with module chips.
+- YouTube lessons now play inside the MedBank lesson player instead of showing
+  the raw YouTube embed. The site's own controls (play/pause, seek, time,
+  speed, mute, fullscreen) drive the privacy-enhanced embed over postMessage;
+  a click shield hides YouTube chrome and end screens, and the watermark layer
+  now covers YouTube lessons too.
+- Admin Users search now matches a numeric MedBank ID exactly before the
+  digits-only query is treated as a phone-number search (previously an ID query
+  returned no results).
+- Authored migration `20260805031500_shorten_public_user_ids` (with rollback)
+  to renumber MedBank IDs from 8 digits to compact IDs starting at 100.
+  Pending application to the hosted project. Local demo accounts use 901-903.
+- Static cache bust: `2026-08-05.01`.
+
 ### 2026-08-04 — Video Course public IDs, YouTube lessons, and activation coupons
 - Added immutable numeric MedBank IDs for all 1,290 existing profiles and every
   new profile while retaining Auth UUIDs as canonical keys. Profile copy UI,
