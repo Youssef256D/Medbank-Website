@@ -201,7 +201,7 @@ function syncNativeAppBodyClass() {
 syncNativeAppBodyClass();
 const ADMIN_DATA_PAGES = ["dashboard", "users", "mcq-subjects", "questions", "bulk-import", "notifications", "site-access", "ai-agents", "activity", "logs"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
-const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
+const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
 const ADMIN_AUTO_REFRESH_PAGES = new Set(["dashboard", "users"]);
 const PRIMARY_ADMIN_ASSISTANT_NAME = "Hermes Admin Assistant";
@@ -20323,7 +20323,11 @@ function getAdminCourseBuilderDraftKey(form) {
   }
   if (role === "admin-resource-create-form") {
     const lessonId = form.closest("[data-lesson-id]")?.getAttribute("data-lesson-id") || "";
-    return `admin-resource-create-form_${lessonId}`;
+    if (lessonId) return `admin-resource-create-form_${lessonId}`;
+    const moduleResourceId = form.closest("[data-module-resource-scope]")?.getAttribute("data-module-resource-scope") || "";
+    if (moduleResourceId) return `admin-module-resource-create-form_${moduleResourceId}`;
+    const courseResourceId = form.closest("[data-course-resource-scope]")?.getAttribute("data-course-resource-scope") || "";
+    return `admin-course-resource-create-form_${courseResourceId}`;
   }
   if (id === "admin-course-announcement-form") {
     return `admin-course-announcement-form_${courseId}`;
@@ -29034,6 +29038,12 @@ function renderAdminCoursesPlatformSidebarNav(activeSection) {
         <line x1="9" y1="15" x2="21" y2="15"></line>
       </svg>
     `],
+    ["approvals", "Course Approvals", `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 11l3 3L22 4"></path>
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+      </svg>
+    `],
     ["enrollments", "Enrolled Users", `
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
@@ -29071,9 +29081,17 @@ function renderAdminCoursesPlatformSidebarNav(activeSection) {
       </svg>
     `],
   ];
+  const pendingApprovalCount = (state.adminCoursesPlatformCourses || []).filter(
+    (course) => String(course?.review_status || "").trim() === "pending",
+  ).length;
   return items.map(([section, label, svg]) => {
-    const navBadge = section === "requests" && pendingRequestCount
-      ? `<span class="nav-badge">${pendingRequestCount > 99 ? "99+" : pendingRequestCount}</span>`
+    const badgeCount = section === "requests"
+      ? pendingRequestCount
+      : section === "approvals"
+        ? pendingApprovalCount
+        : 0;
+    const navBadge = badgeCount
+      ? `<span class="nav-badge">${badgeCount > 99 ? "99+" : badgeCount}</span>`
       : "";
     return `
     <button class="btn ghost ${activeSection === section ? "is-active" : ""}" type="button" data-action="admin-course-platform-section" data-section="${escapeHtml(section)}">
@@ -31001,6 +31019,14 @@ function wireAdmin() {
       }
       state.adminPage = ADMIN_COURSES_PLATFORM_PAGE;
       state.adminCoursePlatformSection = section;
+      // Approval cards jump straight to the course they are about.
+      const targetCourseId = String(button.getAttribute("data-course-id") || "").trim();
+      if (targetCourseId) {
+        state.adminCourseBuilderCourseId = targetCourseId;
+        state.adminCourseBuilderActiveType = null;
+        state.adminCourseBuilderActiveId = "";
+        state.adminCourseBuilderActiveParentId = "";
+      }
       state.adminCourseBuilderPreview = false;
       state.adminQuestionModalOpen = false;
       state.adminSelectedQuestionIds = [];
@@ -44064,6 +44090,8 @@ const COURSE_PLATFORM_TABLES = new Set([
 ]);
 
 const COURSE_PLATFORM_COURSE_SELECT = "id,course_code,course_name,academic_year,academic_semester,is_active,description,cover_image_url,intro_video_url,instructor_name,instructor_bio,level,estimated_duration,is_published,enrollment_mode,price,updated_at";
+// Admins additionally see the creator review workflow. Students never do.
+const ADMIN_COURSE_PLATFORM_COURSE_SELECT = `${COURSE_PLATFORM_COURSE_SELECT},owner_id,review_status,review_note,submitted_at,reviewed_at`;
 const COURSE_PLATFORM_LESSON_SELECT = "id,course_id,module_id,is_published,is_free_preview,position,title,description,lesson_type,duration_seconds,video_url,video_provider,youtube_video_id,video_original_url,content_html,created_at,updated_at";
 const LOCAL_DEMO_PLATFORM_IDS = {
   enrolledCourse: "11111111-1111-4111-8111-111111111111",
@@ -46261,6 +46289,18 @@ function renderCourseDetail(courseId) {
               }
             </p>
           </article>
+
+          ${enrollment.isEnrolled ? (() => {
+            const courseResources = (state.coursesResources || []).filter((resource) => !resource?.lesson_id && !resource?.module_id && String(resource?.course_id || "").trim() === String(course.id || "").trim());
+            return courseResources.length ? `
+              <article class="card course-materials-card">
+                <h3 style="margin: 0 0 0.5rem; font-size: 1rem; font-weight: 800;">Course materials</h3>
+                <div class="lesson-resources">
+                  ${courseResources.map((resource) => renderCourseMaterialLinkMarkup(resource)).join("")}
+                </div>
+              </article>
+            ` : "";
+          })() : ""}
         </aside>
       </div>
     </section>
@@ -46629,6 +46669,12 @@ function renderCourseMaterialIcon(resource) {
   return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`;
 }
 
+function renderCourseMaterialLinkMarkup(resource) {
+  const href = String(resource.external_url || resource.file_url || "").trim();
+  const materialUrl = getRenderableCourseMaterialUrl(href);
+  return `<a class="course-resource-link ${materialUrl ? "" : "is-loading"}" href="${escapeHtml(materialUrl || "#")}" target="_blank" rel="noopener" ${materialUrl ? "" : "aria-disabled=\"true\""}>${renderCourseMaterialIcon(resource)}<span>${escapeHtml(resource.title)}<small>${escapeHtml(resource.description || resource.resource_type || "Lesson material")}</small></span></a>`;
+}
+
 function hasWatchedCourseLessonVideo(lessonId) {
   return state.coursesWatchedLessonIds instanceof Set
     && state.coursesWatchedLessonIds.has(String(lessonId || "").trim());
@@ -46645,6 +46691,7 @@ function renderLessonViewer(lessonId) {
   const previous = index > 0 ? lessons[index - 1] : null;
   const next = index >= 0 && index < lessons.length - 1 ? lessons[index + 1] : null;
   const resources = (state.coursesResources || []).filter((resource) => String(resource?.lesson_id || "").trim() === String(lesson.id || "").trim());
+  const moduleResources = (state.coursesResources || []).filter((resource) => !resource?.lesson_id && String(resource?.module_id || "").trim() === String(lesson.module_id || "").trim() && String(lesson.module_id || "").trim() !== "");
   const progressRow = state.coursesProgress.find((row) => String(row?.lesson_id || "").trim() === String(lesson.id || "").trim());
   const isComplete = String(progressRow?.status || "").trim() === "completed" || Number(progressRow?.progress_percent) >= 100;
   const rawVideoUrl = String(lesson.video_url || "").trim();
@@ -46757,14 +46804,14 @@ function renderLessonViewer(lessonId) {
             </div>
           `}
           
-          ${resources.length ? `
+          ${resources.length || moduleResources.length ? `
             <div class="lesson-resources">
               <h3>Materials</h3>
-              ${resources.map((resource) => {
-                const href = String(resource.external_url || resource.file_url || "").trim();
-                const materialUrl = getRenderableCourseMaterialUrl(href);
-                return `<a class="course-resource-link ${materialUrl ? "" : "is-loading"}" href="${escapeHtml(materialUrl || "#")}" target="_blank" rel="noopener" ${materialUrl ? "" : "aria-disabled=\"true\""}>${renderCourseMaterialIcon(resource)}<span>${escapeHtml(resource.title)}<small>${escapeHtml(resource.description || resource.resource_type || "Lesson material")}</small></span></a>`;
-              }).join("")}
+              ${resources.map((resource) => renderCourseMaterialLinkMarkup(resource)).join("")}
+              ${moduleResources.length ? `
+                <small class="subtle" style="display: block; margin: 0.5rem 0 0.35rem; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.7rem;">Chapter materials</small>
+                ${moduleResources.map((resource) => renderCourseMaterialLinkMarkup(resource)).join("")}
+              ` : ""}
             </div>
           ` : ""}
         </article>
@@ -47816,7 +47863,7 @@ async function loadAdminCoursesPlatform(options = {}) {
       runRelationalQueryWithTimeout(
         client
           .from("platform_courses")
-          .select(COURSE_PLATFORM_COURSE_SELECT)
+          .select(ADMIN_COURSE_PLATFORM_COURSE_SELECT)
           .order("academic_year", { ascending: true })
           .order("academic_semester", { ascending: true })
           .order("course_name", { ascending: true }),
@@ -49075,12 +49122,13 @@ function getCourseMaterialUploadFile(data) {
   return null;
 }
 
-async function uploadCourseLessonMaterial(lesson, file) {
+async function uploadCourseLessonMaterial(scope, file) {
   const client = getCoursesPlatformClient();
   const bucket = String(SUPABASE_CONFIG.courseMaterialBucket || "").trim();
-  const courseId = String(lesson?.course_id || "").trim();
-  const lessonId = String(lesson?.id || "").trim();
-  if (!client?.storage || !isUuidValue(courseId) || !isUuidValue(lessonId)) {
+  const courseId = String(scope?.course_id || "").trim();
+  const lessonId = String(scope?.lesson_id || "").trim();
+  const moduleId = String(scope?.module_id || "").trim();
+  if (!client?.storage || !isUuidValue(courseId)) {
     throw new Error("Material upload needs an active Supabase session.");
   }
   if (!bucket) {
@@ -49100,7 +49148,12 @@ async function uploadCourseLessonMaterial(lesson, file) {
   const userScope = sanitizeStoragePathSegment(currentUser?.supabaseAuthId || currentUser?.id || "admin", "admin");
   const extension = resolveMaterialFileExtension(file.name, normalizedType);
   const fileId = sanitizeStoragePathSegment(makeId("lesson-material"), "lesson-material");
-  const filePath = `courses/${courseId}/lessons/${lessonId}/${userScope}/${Date.now()}-${fileId}.${extension}`;
+  const scopeSegment = lessonId
+    ? `lessons/${lessonId}`
+    : moduleId
+      ? `modules/${moduleId}`
+      : "course";
+  const filePath = `courses/${courseId}/${scopeSegment}/${userScope}/${Date.now()}-${fileId}.${extension}`;
   const uploadResult = await runWithTimeoutResult(
     client.storage
       .from(bucket)
@@ -49124,18 +49177,17 @@ async function uploadCourseLessonMaterial(lesson, file) {
   return `supabase-storage://${bucket}/${filePath}`;
 }
 
-async function adminCreateResource(lessonId, data) {
+async function insertCourseResourceRow(scope, data) {
   const client = getCoursesPlatformClient();
-  const lesson = (state.adminCoursesPlatformLessons || []).find((entry) => String(entry?.id || "").trim() === String(lessonId || "").trim());
-  if (!client || !lesson) throw new Error("Resource cannot be created.");
+  if (!client || !isUuidValue(scope?.course_id)) throw new Error("Resource cannot be created.");
   const uploadFile = getCourseMaterialUploadFile(data);
-  const uploadedMaterialUrl = uploadFile ? await uploadCourseLessonMaterial(lesson, uploadFile) : "";
+  const uploadedMaterialUrl = uploadFile ? await uploadCourseLessonMaterial(scope, uploadFile) : "";
   await runRelationalQueryWithTimeout(
     client.from("platform_course_resources").insert({
-      course_id: lesson.course_id,
-      module_id: lesson.module_id,
-      lesson_id: lesson.id,
-      title: String(data.title || "").trim() || String(uploadFile?.name || "").trim() || "Lesson material",
+      course_id: scope.course_id,
+      module_id: scope.module_id || null,
+      lesson_id: scope.lesson_id || null,
+      title: String(data.title || "").trim() || String(uploadFile?.name || "").trim() || "Course material",
       resource_type: String(data.resource_type || (uploadFile ? "material" : "file")).trim() || "file",
       file_url: uploadedMaterialUrl || String(data.file_url || "").trim() || null,
       external_url: String(data.external_url || "").trim() || null,
@@ -49147,6 +49199,29 @@ async function adminCreateResource(lessonId, data) {
   );
   await loadAdminCoursesPlatform({ force: true });
   return true;
+}
+
+async function adminCreateResource(lessonId, data) {
+  const lesson = (state.adminCoursesPlatformLessons || []).find((entry) => String(entry?.id || "").trim() === String(lessonId || "").trim());
+  if (!lesson) throw new Error("Resource cannot be created.");
+  return insertCourseResourceRow(
+    { course_id: lesson.course_id, module_id: lesson.module_id, lesson_id: lesson.id },
+    data,
+  );
+}
+
+async function adminCreateModuleResource(moduleId, data) {
+  const module = (state.adminCoursesPlatformModules || []).find((entry) => String(entry?.id || "").trim() === String(moduleId || "").trim());
+  if (!module) throw new Error("Resource cannot be created.");
+  return insertCourseResourceRow(
+    { course_id: module.course_id, module_id: module.id, lesson_id: null },
+    data,
+  );
+}
+
+async function adminCreateCourseResource(courseId, data) {
+  if (!isUuidValue(courseId)) throw new Error("Resource cannot be created.");
+  return insertCourseResourceRow({ course_id: courseId, module_id: null, lesson_id: null }, data);
 }
 
 async function adminDeleteResource(resourceId) {
@@ -49684,6 +49759,90 @@ function renderAdminCourseStatsCards(aggregates) {
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Pending requests</span><b>${stats.totalPendingRequests}</b></div>
     </div>
   `;
+}
+
+/// Courses submitted by creators from the app, waiting on an admin verdict.
+/// Creators build in the app; approving is admin-only and lives here.
+function renderAdminCourseApprovalsSection(courses) {
+  const byStatus = (status) => (courses || []).filter(
+    (course) => String(course?.review_status || "").trim() === status,
+  );
+  const pending = byStatus("pending");
+  const rejected = byStatus("rejected");
+
+  const courseCard = (course, showActions) => {
+    const submitted = course.submitted_at ? formatReportDateTime(course.submitted_at) : "—";
+    return `
+      <article class="card admin-approval-card" style="display: flex; flex-direction: column; gap: 0.65rem;">
+        <div class="flex-between">
+          <div>
+            <b>${escapeHtml(getCoursePlatformCourseTitle(course))}</b>
+            <p class="subtle" style="margin: 0.15rem 0 0; font-size: 0.82rem;">
+              Year ${escapeHtml(course.academic_year || "")} · Semester ${escapeHtml(course.academic_semester || "")}
+              ${course.instructor_name ? ` · ${escapeHtml(course.instructor_name)}` : ""}
+            </p>
+          </div>
+          <span class="status-badge is-${showActions ? "pending" : "rejected"}">${escapeHtml(showActions ? "In review" : "Changes requested")}</span>
+        </div>
+        ${course.description ? `<p class="subtle" style="margin: 0; font-size: 0.85rem;">${escapeHtml(course.description)}</p>` : ""}
+        <small class="subtle">Submitted ${escapeHtml(submitted)}</small>
+        ${course.review_note ? `<small class="subtle">Last note: ${escapeHtml(course.review_note)}</small>` : ""}
+        <div class="stack">
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(course.id)}">Open in builder</button>
+          ${showActions ? `
+            <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">Approve</button>
+            <button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-reject-course" data-course-id="${escapeHtml(course.id)}">Request changes</button>
+          ` : `
+            <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">Approve now</button>
+          `}
+        </div>
+      </article>
+    `;
+  };
+
+  return `
+    <div class="admin-approvals-page">
+      <section class="card">
+        <div class="flex-between">
+          <div>
+            <h3>Course approvals</h3>
+            <p class="subtle">Creators build courses in the MedBank app and submit them here. A course stays hidden from students until it is approved and published.</p>
+          </div>
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-courses-platform">Refresh</button>
+        </div>
+      </section>
+
+      <section style="margin-top: 1rem;">
+        <h4 style="margin: 0 0 0.6rem;">Waiting for review${pending.length ? ` (${pending.length})` : ""}</h4>
+        ${pending.length
+          ? `<div class="grid-2">${pending.map((course) => courseCard(course, true)).join("")}</div>`
+          : `<p class="subtle">No courses are waiting for review.</p>`
+        }
+      </section>
+
+      ${rejected.length ? `
+        <section style="margin-top: 1.5rem;">
+          <h4 style="margin: 0 0 0.6rem;">Changes requested (${rejected.length})</h4>
+          <div class="grid-2">${rejected.map((course) => courseCard(course, false)).join("")}</div>
+        </section>
+      ` : ""}
+    </div>
+  `;
+}
+
+async function adminReviewPlatformCourse(courseId, approved, note) {
+  const client = getCoursesPlatformClient();
+  if (!client || !isUuidValue(courseId)) throw new Error("Course cannot be reviewed.");
+  await runRelationalQueryWithTimeout(
+    client.rpc("admin_review_platform_course", {
+      p_course_id: courseId,
+      p_approved: Boolean(approved),
+      p_note: String(note || "").trim() || null,
+    }),
+    "Course review timed out.",
+  );
+  await loadAdminCoursesPlatform({ force: true });
+  return true;
 }
 
 function renderAdminCourseTableToolbar() {
@@ -50578,6 +50737,49 @@ function renderSyllabusOutline(selectedCourse, rows) {
   `;
 }
 
+function renderCourseMaterialManagerMarkup(dkResource, resources) {
+  return `
+    <form class="course-builder-form" data-role="admin-resource-create-form" style="border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 1.5rem;">
+      <h5>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.25rem; vertical-align: middle;">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="16"></line>
+          <line x1="8" y1="12" x2="16" y2="12"></line>
+        </svg>
+        Add material
+      </h5>
+      <div class="course-builder-grid compact">
+        <label>Title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "title", ""))}" required /></label>
+        <label>Type<input name="resource_type" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "resource_type", "material"))}" /></label>
+        <label>Upload material<input name="material_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.png,.jpg,.jpeg,.webp,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,image/png,image/jpeg,image/webp,application/zip" /></label>
+        <label>File URL<input name="file_url" placeholder="Optional existing file link" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "file_url", ""))}" /></label>
+        <label>External URL<input name="external_url" placeholder="Optional web link" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "external_url", ""))}" /></label>
+        <label>Description<input name="description" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "description", ""))}" /></label>
+        <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "position", resources.length + 1))}" /></label>
+        <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dkResource, "is_published", true)} /> Published</label>
+      </div>
+      <button class="btn ghost admin-btn-sm" type="submit" style="margin-top: 0.75rem;">Add material</button>
+    </form>
+
+    ${resources.length ? `
+      <div class="course-builder-resources" style="margin-top: 1rem;">
+        <h6 style="margin: 0 0 0.5rem 0; font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em;">Current Materials</h6>
+        ${resources.map((resource) => `
+          <div class="course-builder-resource" style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: var(--surface-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); margin-bottom: 0.35rem;">
+            <span style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted);">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+              </svg>
+              ${escapeHtml(resource.title)}
+            </span>
+            <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-resource" data-resource-id="${escapeHtml(resource.id)}">Delete</button>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
+  `;
+}
+
 function renderFocusedEditorPanel(selectedCourse, rows) {
   const activeType = state.adminCourseBuilderActiveType;
   const activeId = state.adminCourseBuilderActiveId;
@@ -50662,6 +50864,11 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
         </div>
       </form>
+
+      <div data-course-resource-scope="${escapeHtml(selectedCourseId)}">
+        <p class="subtle" style="margin: 1.25rem 0 0;">Course-wide materials shown to every enrolled student, regardless of module.</p>
+        ${renderCourseMaterialManagerMarkup(`admin-course-resource-create-form_${selectedCourseId}`, rows.resources.filter((resource) => !resource.lesson_id && !resource.module_id))}
+      </div>
     `;
   }
 
@@ -50696,6 +50903,8 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
       return `<p class="subtle">Module not found or deleted.</p>`;
     }
     const dk = `admin-module-form_${module.id}`;
+    const moduleResources = rows.resources.filter((resource) => !resource.lesson_id && String(resource.module_id || "") === String(module.id || ""));
+    const dkModuleResource = `admin-module-resource-create-form_${module.id}`;
     return `
       <div data-module-id="${escapeHtml(module.id)}">
         <form class="course-builder-form" data-role="admin-module-form">
@@ -50713,6 +50922,11 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
             <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-module" data-module-id="${escapeHtml(module.id)}">Delete module</button>
           </div>
         </form>
+
+        <div data-module-resource-scope="${escapeHtml(module.id)}">
+          <p class="subtle" style="margin: 1.25rem 0 0;">Chapter materials shown across every lesson in this module.</p>
+          ${renderCourseMaterialManagerMarkup(dkModuleResource, moduleResources)}
+        </div>
       </div>
     `;
   }
@@ -50799,44 +51013,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           </div>
         </form>
 
-        <form class="course-builder-form" data-role="admin-resource-create-form" style="border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 1.5rem;">
-          <h5>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.25rem; vertical-align: middle;">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="8" x2="12" y2="16"></line>
-              <line x1="8" y1="12" x2="16" y2="12"></line>
-            </svg>
-            Add material
-          </h5>
-          <div class="course-builder-grid compact">
-            <label>Title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "title", ""))}" required /></label>
-            <label>Type<input name="resource_type" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "resource_type", "material"))}" /></label>
-            <label>Upload material<input name="material_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.png,.jpg,.jpeg,.webp,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,image/png,image/jpeg,image/webp,application/zip" /></label>
-            <label>File URL<input name="file_url" placeholder="Optional existing file link" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "file_url", ""))}" /></label>
-            <label>External URL<input name="external_url" placeholder="Optional web link" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "external_url", ""))}" /></label>
-            <label>Description<input name="description" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "description", ""))}" /></label>
-            <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkResource, "position", lessonResources.length + 1))}" /></label>
-            <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dkResource, "is_published", true)} /> Published</label>
-          </div>
-          <button class="btn ghost admin-btn-sm" type="submit" style="margin-top: 0.75rem;">Add material</button>
-        </form>
-
-        ${lessonResources.length ? `
-          <div class="course-builder-resources" style="margin-top: 1rem;">
-            <h6 style="margin: 0 0 0.5rem 0; font-size: 0.8rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em;">Current Materials</h6>
-            ${lessonResources.map((resource) => `
-              <div class="course-builder-resource" style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: var(--surface-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); margin-bottom: 0.35rem;">
-                <span style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem;">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted);">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-                  </svg>
-                  ${escapeHtml(resource.title)}
-                </span>
-                <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-resource" data-resource-id="${escapeHtml(resource.id)}">Delete</button>
-              </div>
-            `).join("")}
-          </div>
-        ` : ""}
+        ${renderCourseMaterialManagerMarkup(dkResource, lessonResources)}
       </div>
     `;
   }
@@ -51140,6 +51317,8 @@ function adminRenderCourseBuilder(courseId) {
         ${activePlatformSection === "coupons" && selectedCourse ? renderAdminCourseCouponsSection(courses, selectedCourseId, rows) : ""}
 
         ${activePlatformSection === "requests" ? renderAdminRequestsSection(courses) : ""}
+
+        ${activePlatformSection === "approvals" ? renderAdminCourseApprovalsSection(courses) : ""}
       `}
     </section>
   `;
@@ -51385,7 +51564,15 @@ function wireAdminCoursesPlatformBuilder() {
     } else if (role === "admin-resource-create-form") {
       event.preventDefault();
       const lessonId = form.closest("[data-lesson-id]")?.getAttribute("data-lesson-id") || "";
-      runAdminCourseAction("Resource added.", () => adminCreateResource(lessonId, readFormDataObject(form)), form);
+      const moduleResourceId = form.closest("[data-module-resource-scope]")?.getAttribute("data-module-resource-scope") || "";
+      const courseResourceId = form.closest("[data-course-resource-scope]")?.getAttribute("data-course-resource-scope") || "";
+      if (lessonId) {
+        runAdminCourseAction("Resource added.", () => adminCreateResource(lessonId, readFormDataObject(form)), form);
+      } else if (moduleResourceId) {
+        runAdminCourseAction("Resource added.", () => adminCreateModuleResource(moduleResourceId, readFormDataObject(form)), form);
+      } else if (courseResourceId) {
+        runAdminCourseAction("Resource added.", () => adminCreateCourseResource(courseResourceId, readFormDataObject(form)), form);
+      }
     } else if (id === "admin-course-coupon-generate-form") {
       event.preventDefault();
       runAdminCourseAction("Coupon codes generated. Save the plaintext codes now.", () => generateAdminCourseCoupons(form), form);
@@ -51564,6 +51751,17 @@ function wireAdminCoursesPlatformBuilder() {
         if (result?.ok !== true) throw new Error("Coupon is already used, disabled, or unavailable.");
         await loadAdminCourseCouponData({ courseId: state.adminCourseCouponCourseId });
       });
+    } else if (action === "admin-refresh-courses-platform") {
+      runAdminCourseAction("Courses refreshed.", () => loadAdminCoursesPlatform({ force: true }));
+    } else if (action === "admin-approve-course") {
+      const courseId = String(button.getAttribute("data-course-id") || "");
+      if (!window.confirm("Approve this course? The creator will be able to publish it to students.")) return;
+      runAdminCourseAction("Course approved.", () => adminReviewPlatformCourse(courseId, true, ""));
+    } else if (action === "admin-reject-course") {
+      const courseId = String(button.getAttribute("data-course-id") || "");
+      const note = window.prompt("What should the creator change? This note is shown to them in the app.");
+      if (note === null) return;
+      runAdminCourseAction("Sent back to the creator.", () => adminReviewPlatformCourse(courseId, false, note));
     } else if (action === "admin-open-coupon-student") {
       state.adminUserSearch = String(button.getAttribute("data-public-user-id") || "");
       state.adminPage = "users";
