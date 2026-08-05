@@ -13,3 +13,6 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
+
+# Supabase CLI scratch space (version-check cache, project ref)
+supabase/.temp/
