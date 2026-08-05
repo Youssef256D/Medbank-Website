@@ -7,8 +7,9 @@ function isUuid(value: string): boolean {
   return UUID_PATTERN.test(String(value || "").trim());
 }
 
-function normalizeRole(value: unknown): "student" | "admin" {
-  return String(value || "").trim().toLowerCase() === "admin" ? "admin" : "student";
+function normalizeRole(value: unknown): "student" | "creator" | "admin" {
+  const role = String(value || "").trim().toLowerCase();
+  return role === "admin" || role === "creator" ? role : "student";
 }
 
 function normalizeOptionalAcademicNumber(value: unknown): number | null {
@@ -120,7 +121,7 @@ Deno.serve(async (req) => {
   const password = typeof body?.password === "string" ? body.password : "";
   const fullName = String(body?.fullName || "").trim();
   const role = normalizeRole(body?.role);
-  const approved = role === "admin" ? true : body?.approved === true;
+  const approved = role === "student" ? body?.approved === true : true;
   const phone = String(body?.phone || "").trim() || null;
   const academicYear = role === "student" ? normalizeOptionalAcademicNumber(body?.academicYear) : null;
   const academicSemester = role === "student" ? normalizeOptionalAcademicNumber(body?.academicSemester) : null;

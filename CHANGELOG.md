@@ -9,6 +9,33 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-05 — Assign the creator role from the admin dashboard
+The `creator` role existed in the database but could not be assigned from the
+app. Adding the UI required fixing a latent data-corruption bug first.
+
+1. **Role coercion no longer demotes creators.** 18 sites in `main.js` coerced
+   `role` to `"admin" | "student"`, including the profile write-back at
+   `syncProfilesToRelational`. A `creator` profile was flattened to `student` on
+   hydration and that demotion was then **written back to Supabase** on the next
+   admin save. All 18 now use the new `sanitizeUserRole()` helper, which
+   preserves `creator` and falls back to `student` for unknown values.
+2. **Two coercions are deliberately kept.** `user_presence` and
+   `user_activity_sessions` have `check (role in ('student','admin'))`, so a
+   creator is reported as a student in that telemetry. Both sites carry a
+   comment; do not "fix" them without widening the CHECK constraints first.
+3. **Admin Users row: role selector.** The two-way "Make admin / Make student"
+   button is now a Student/Creator/Admin `<select>` (`data-action=set-user-role`,
+   was `toggle-user-role`). Switching to creator clears MCQ year/semester and
+   assigns no curriculum courses; creators are auto-approved because an admin
+   provisions them deliberately. The self-edit guard is unchanged.
+4. **Add-user form** offers Creator alongside Student and Admin, and
+   `admin-create-user` accepts `creator` (it previously normalized any
+   non-`admin` role to `student`, silently downgrading the request).
+5. **Static cache bust:** `2026-08-05.02`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`supabase/functions/admin-create-user/index.ts`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-05 — Activation modal redesign, in-site YouTube player, short MedBank IDs
 - Redesigned the Video Course "Activate a course" modal as a voucher-style
   dialog: ticket glyph header, dashed activation-code panel with monospace

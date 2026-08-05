@@ -616,7 +616,7 @@ function normalizeAdminAddUserDraft(draft = null) {
     email: String(nextDraft.email || ""),
     password: String(nextDraft.password || ""),
     phone: String(nextDraft.phone || ""),
-    role: String(nextDraft.role || "") === "admin" ? "admin" : "student",
+    role: sanitizeUserRole(nextDraft.role),
     academicYear: String(sanitizeAcademicYear(nextDraft.academicYear || 1)),
     academicSemester: String(sanitizeAcademicSemester(nextDraft.academicSemester || 1)),
   };
@@ -4381,7 +4381,7 @@ function buildBootstrapProfileRowFromAuth(authUser, fallbackUser = null) {
   const fallbackSemester = normalizeAcademicSemesterOrNull(fallbackUser?.academicSemester);
   const phoneValidation = validateAndNormalizePhoneNumber(rawPhone);
   const normalizedPhone = phoneValidation.ok ? phoneValidation.number : "";
-  const role = fallbackUser?.role === "admin" ? "admin" : "student";
+  const role = sanitizeUserRole(fallbackUser?.role);
   const studentYear = role === "student" ? (metadataYear ?? fallbackYear) : null;
   const studentSemester = role === "student" ? (metadataSemester ?? fallbackSemester) : null;
   const approved = role === "admin";
@@ -4466,7 +4466,7 @@ async function triggerRelationalEnrollmentRepairFromProfile(profileOrRow) {
 }
 
 function shouldRepairEnrollmentRowsFromProfile(profile, enrollmentSnapshot, profileId) {
-  const role = String(profile?.role || "student") === "admin" ? "admin" : "student";
+  const role = sanitizeUserRole(profile?.role);
   if (role !== "student") {
     return false;
   }
@@ -4494,7 +4494,7 @@ async function repairRelationalEnrollmentRowsForProfileRows(profileRows = []) {
   const rows = Array.isArray(profileRows) ? profileRows : [];
   let repairedAny = false;
   for (const row of rows) {
-    const role = String(row?.role || "student") === "admin" ? "admin" : "student";
+    const role = sanitizeUserRole(row?.role);
     const year = normalizeAcademicYearOrNull(row?.academic_year);
     const semester = normalizeAcademicSemesterOrNull(row?.academic_semester);
     if (role !== "student" || year === null || semester === null || !isUuidValue(String(row?.id || "").trim())) {
@@ -4537,7 +4537,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
     return { user: localUser, approvalChecked: false };
   }
 
-  const role = String(profile.role || "student") === "admin" ? "admin" : "student";
+  const role = sanitizeUserRole(profile.role);
   const profileYear = normalizeAcademicYearOrNull(profile.academic_year);
   const profileSemester = normalizeAcademicSemesterOrNull(profile.academic_semester);
   const profileAuthProvider = normalizeAuthProvider(profile.auth_provider);
@@ -8535,7 +8535,7 @@ async function updateRelationalProfileApproval(profileIds, approved) {
   if (targetApproved) {
     targetIds = targetIds.filter((id) => {
       const row = existingRowsById.get(id);
-      const role = String(row?.role || "student").trim().toLowerCase() === "admin" ? "admin" : "student";
+      const role = sanitizeUserRole(row?.role);
       if (role !== "student") {
         return true;
       }
@@ -9542,8 +9542,8 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
       matchedLocalUserByProfileId.set(String(profile.id || "").trim(), existing);
     }
     const preferLocalOverDb = shouldPreferRecentLocalUserData(existing, profile.updated_at);
-    const dbRole = String(profile.role || "student") === "admin" ? "admin" : "student";
-    const localRole = String(existing?.role || "").trim().toLowerCase() === "admin" ? "admin" : "student";
+    const dbRole = sanitizeUserRole(profile.role);
+    const localRole = sanitizeUserRole(existing?.role);
     const role = preferLocalOverDb && existing ? localRole : dbRole;
     const profileYear = normalizeAcademicYearOrNull(profile.academic_year);
     const profileSemester = normalizeAcademicSemesterOrNull(profile.academic_semester);
@@ -9744,7 +9744,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
   if (isAdmin) {
     const backfillCandidates = profileRows
       .map((profile) => {
-        const role = String(profile?.role || "student") === "admin" ? "admin" : "student";
+        const role = sanitizeUserRole(profile?.role);
         if (role !== "student") {
           return null;
         }
@@ -14781,7 +14781,7 @@ async function syncProfilesToRelational(usersPayload, options = {}) {
         baseRow.academic_semester = user.role === "student" ? normalizedSemester : null;
       }
       if (canWriteAdminManagedFields) {
-        baseRow.role = user.role === "admin" ? "admin" : "student";
+        baseRow.role = sanitizeUserRole(user.role);
         baseRow.approved = Boolean(user.isApproved);
         baseRow.mcq_access_enabled = user.role === "admin" ? true : user.mcqAccessEnabled !== false;
         baseRow.courses_access_enabled = user.role === "admin" ? true : user.coursesAccessEnabled !== false;
@@ -18832,6 +18832,10 @@ async function pushCurrentUserPresence(options = {}) {
     user_id: currentUser.supabaseAuthId,
     full_name: String(currentUser.name || "").trim() || "Student",
     email: String(currentUser.email || "").trim().toLowerCase(),
+    // Deliberate: user_presence/user_activity_sessions have check (role in
+    // ('student','admin')), so a creator is reported as a student here. This is
+    // telemetry only and carries no permission meaning -- do not "fix" it to
+    // sanitizeUserRole() without first widening those CHECK constraints.
     role: currentUser.role === "admin" ? "admin" : "student",
     current_route: String(state.route || "").trim() || "dashboard",
     is_online: true,
@@ -18952,6 +18956,10 @@ async function pushCurrentUserActivitySession(options = {}) {
     user_id: currentUser.supabaseAuthId,
     full_name: String(currentUser.name || "").trim() || "Student",
     email: String(currentUser.email || "").trim().toLowerCase(),
+    // Deliberate: user_presence/user_activity_sessions have check (role in
+    // ('student','admin')), so a creator is reported as a student here. This is
+    // telemetry only and carries no permission meaning -- do not "fix" it to
+    // sanitizeUserRole() without first widening those CHECK constraints.
     role: currentUser.role === "admin" ? "admin" : "student",
     entry_route: siteActivityRuntime.entryRoute || route,
     current_route: route,
@@ -28645,16 +28653,23 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
     }
   }
 
-  const roleButton = row.querySelector("[data-action='toggle-user-role']");
-  if (roleButton) {
+  const roleSelect = row.querySelector("[data-action='set-user-role']");
+  if (roleSelect) {
     const currentAdmin = actorUser || getCurrentUser();
     const isSelf = account.id === currentAdmin?.id;
-    roleButton.disabled = Boolean(isSelf);
-    roleButton.textContent = account.role === "admin" ? "Make student" : "Make admin";
+    roleSelect.disabled = Boolean(isSelf) || roleSelect.dataset.busy === "1";
+    roleSelect.value = sanitizeUserRole(account.role);
   }
 
   patchAdminUsersPendingSummaryUi();
   return true;
+}
+
+function renderAdminUserRoleOptions(currentRole) {
+  const selected = sanitizeUserRole(currentRole);
+  return USER_ROLES
+    .map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${escapeHtml(getUserRoleLabel(role))}</option>`)
+    .join("");
 }
 
 function renderAdminAccessSwitchContent(label, enabled) {
@@ -29516,9 +29531,12 @@ function renderAdmin() {
                 <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-courses-access" role="switch" aria-checked="${coursesAccessEnabled ? "true" : "false"}" ${account.role === "admin" ? "disabled" : ""}>
                   ${renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled)}
                 </button>
-                <button class="btn ghost admin-btn-sm" data-action="toggle-user-role" ${isSelf ? "disabled" : ""}>
-                  ${account.role === "admin" ? "Make student" : "Make admin"}
-                </button>
+                <label class="admin-role-select-label">
+                  <span class="sr-only">Role for ${escapeHtml(account.name || account.email || "this user")}</span>
+                  <select class="admin-role-select admin-btn-sm" data-action="set-user-role" ${isSelf ? "disabled" : ""}>
+                    ${renderAdminUserRoleOptions(account.role)}
+                  </select>
+                </label>
                 <button class="btn danger admin-btn-sm" data-action="remove-user" ${isSelf ? "disabled" : ""}>Remove</button>
               </div>
             </td>
@@ -29565,6 +29583,7 @@ function renderAdmin() {
                 <label>Role
                   <select name="role">
                     <option value="student" ${addUserDraft.role === "student" ? "selected" : ""}>Student</option>
+                    <option value="creator" ${addUserDraft.role === "creator" ? "selected" : ""}>Creator</option>
                     <option value="admin" ${addUserDraft.role === "admin" ? "selected" : ""}>Admin</option>
                   </select>
                 </label>
@@ -30358,7 +30377,7 @@ function renderAdmin() {
           if (!userId) {
             return "";
           }
-          const roleLabel = entry.role === "admin" ? "admin" : "student";
+          const roleLabel = sanitizeUserRole(entry.role);
           const selected = targetUserId === userId;
           return `
                         <button
@@ -31803,7 +31822,7 @@ function wireAdmin() {
           if (!userId) {
             return "";
           }
-          const roleLabel = entry.role === "admin" ? "admin" : "student";
+          const roleLabel = sanitizeUserRole(entry.role);
           const canReceive = isUserAccessApproved(entry);
           const availabilityLabel = canReceive ? "" : " • pending approval";
           const isActive = selectedId === userId;
@@ -32741,11 +32760,14 @@ function wireAdmin() {
       return;
     }
 
-    const normalizedRole = role === "admin" ? "admin" : "student";
+    const normalizedRole = sanitizeUserRole(role);
+    // Creators own Video Courses; they have no MCQ curriculum enrollment.
     const assignedCourses =
       normalizedRole === "admin"
         ? [...allCourses]
-        : getCurriculumCourses(academicYear, academicSemester);
+        : normalizedRole === "creator"
+          ? []
+          : getCurriculumCourses(academicYear, academicSemester);
     const newStudentAutoApproval = normalizedRole === "student"
       ? shouldAutoApproveStudentAccess({
         role: "student",
@@ -32755,7 +32777,9 @@ function wireAdmin() {
         assignedCourses,
       })
       : false;
-    const newUserApproved = normalizedRole === "admin" ? true : newStudentAutoApproval;
+    // Admins and creators are provisioned deliberately by an admin, so they do
+    // not go through the student approval queue.
+    const newUserApproved = normalizedRole === "student" ? newStudentAutoApproval : true;
     const submitButton = addUserForm.querySelector("button[type='submit']");
     if (submitButton) {
       submitButton.dataset.baseLabel = submitButton.dataset.baseLabel || String(submitButton.textContent || "Add user").trim();
@@ -33867,9 +33891,12 @@ function wireAdmin() {
     });
   });
 
-  appEl.querySelectorAll("[data-action='toggle-user-role']").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const row = button.closest("tr[data-user-id]");
+  appEl.querySelectorAll("[data-action='set-user-role']").forEach((select) => {
+    select.addEventListener("change", async () => {
+      if (select.dataset.busy === "1") {
+        return;
+      }
+      const row = select.closest("tr[data-user-id]");
       const userId = row?.getAttribute("data-user-id");
       const current = getCurrentUser();
       if (!userId) {
@@ -33886,12 +33913,18 @@ function wireAdmin() {
         toast("Account not found.");
         return;
       }
+      const nextRole = sanitizeUserRole(select.value);
+      if (nextRole === sanitizeUserRole(users[idx].role)) {
+        return;
+      }
       const previousUser = {
         ...users[idx],
         assignedCourses: [...sanitizeCourseAssignments(users[idx].assignedCourses || [])],
       };
       const previousApproved = Boolean(users[idx].isApproved);
-      users[idx].role = users[idx].role === "admin" ? "student" : "admin";
+      select.dataset.busy = "1";
+      select.disabled = true;
+      users[idx].role = nextRole;
       if (users[idx].role === "student") {
         users[idx].academicYear = sanitizeAcademicYear(users[idx].academicYear || 1);
         users[idx].academicSemester = sanitizeAcademicSemester(users[idx].academicSemester || 1);
@@ -33907,6 +33940,16 @@ function wireAdmin() {
         users[idx].isApproved = studentAutoApproved;
         users[idx].approvedAt = studentAutoApproved ? users[idx].approvedAt || nowISO() : null;
         users[idx].approvedBy = studentAutoApproved ? users[idx].approvedBy || AUTO_APPROVAL_ACTOR : null;
+      } else if (users[idx].role === "creator") {
+        // Creators own Video Courses. They get no MCQ curriculum enrollment and
+        // none of the admin-wide course assignment.
+        users[idx].academicYear = null;
+        users[idx].academicSemester = null;
+        users[idx].assignedCourses = [];
+        users[idx].enrolledCourses = [];
+        users[idx].isApproved = true;
+        users[idx].approvedAt = nowISO();
+        users[idx].approvedBy = current?.email || "admin";
       } else {
         users[idx].academicYear = null;
         users[idx].academicSemester = null;
@@ -33936,6 +33979,9 @@ function wireAdmin() {
         render();
       } catch (syncError) {
         toast(`Role updated locally, but DB sync failed: ${getErrorMessage(syncError, "Sync failed.")}`);
+      } finally {
+        select.dataset.busy = "0";
+        select.disabled = false;
       }
     });
   });
@@ -37068,7 +37114,7 @@ function getNotificationTargetLabel(notification, users = null) {
   }
   const targetUser = findUserByNotificationTargetId(notification.targetUserId, users);
   if (targetUser) {
-    const roleLabel = targetUser.role === "admin" ? "admin" : "student";
+    const roleLabel = sanitizeUserRole(targetUser.role);
     return `${targetUser.name} (${roleLabel})`;
   }
   const target = String(notification.targetUserId || "").trim();
@@ -38171,7 +38217,7 @@ async function createSupabaseAuthUserAsAdmin(userPayload = {}) {
   const email = String(userPayload.email || "").trim().toLowerCase();
   const password = String(userPayload.password || "");
   const fullName = String(userPayload.fullName || userPayload.name || "").trim();
-  const role = String(userPayload.role || "student").trim() === "admin" ? "admin" : "student";
+  const role = sanitizeUserRole(userPayload.role);
   const approved = role === "admin" ? true : userPayload.approved === true;
   const phone = String(userPayload.phone || "").trim();
   const academicYear = role === "student" ? sanitizeAcademicYear(userPayload.academicYear || 1) : null;
@@ -38834,7 +38880,7 @@ function getUserEnrollmentScopeFingerprint(user) {
   if (!user || typeof user !== "object") {
     return "";
   }
-  const role = String(user?.role || "student").trim().toLowerCase() === "admin" ? "admin" : "student";
+  const role = sanitizeUserRole(user?.role);
   if (role !== "student") {
     return role;
   }
@@ -38848,7 +38894,7 @@ function hasStableStudentEnrollmentScope(user) {
   if (!user || typeof user !== "object") {
     return false;
   }
-  const role = String(user?.role || "student").trim().toLowerCase() === "admin" ? "admin" : "student";
+  const role = sanitizeUserRole(user?.role);
   if (role !== "student") {
     return true;
   }
@@ -41224,6 +41270,25 @@ function sanitizeAcademicYear(value) {
 
 function sanitizeAcademicSemester(value) {
   return normalizeAcademicSemesterOrNull(value) ?? 1;
+}
+
+// The three roles that exist in `profiles.role` (see the `app_user_role` enum).
+// Anything unrecognized falls back to the least-privileged role.
+const USER_ROLES = ["student", "creator", "admin"];
+
+// Preserves `creator` instead of flattening it to `student`. Use this anywhere a
+// role is read from Supabase or written back to it -- a two-way admin/student
+// coercion silently demotes creators on the next admin save.
+function sanitizeUserRole(value) {
+  const role = String(value ?? "").trim().toLowerCase();
+  return USER_ROLES.includes(role) ? role : "student";
+}
+
+function getUserRoleLabel(value) {
+  const role = sanitizeUserRole(value);
+  if (role === "admin") return "Admin";
+  if (role === "creator") return "Creator";
+  return "Student";
 }
 
 function getCurriculumCourses(year, semester) {
@@ -44132,7 +44197,7 @@ function normalizeAdminCoursePlatformProfileRow(profile = {}) {
   if (!isUuidValue(profileId)) {
     return null;
   }
-  const role = String(profile?.role || "student").trim().toLowerCase() === "admin" ? "admin" : "student";
+  const role = sanitizeUserRole(profile?.role);
   return {
     id: profileId,
     public_user_id: Number(profile?.public_user_id || profile?.publicUserId) || null,

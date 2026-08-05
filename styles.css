@@ -20086,3 +20086,28 @@ body.theme-dark .course-card-actions .btn.is-suggestion-btn:hover {
   .lesson-video-bigplay { width: 3.4rem; height: 3.4rem; }
   .lesson-video-bigplay svg { width: 1.3rem; height: 1.3rem; }
 }
+
+/* Admin Users: role selector (replaces the old two-way Make admin/Make student
+   toggle so the `creator` role can be assigned). Intentionally inherits the
+   base + per-theme `select` background/border so it matches every theme; only
+   the sizing is overridden. Specificity must beat `body.theme-* select`. */
+.admin-role-select-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+body select.admin-role-select {
+  width: auto;
+  min-width: 104px;
+  min-height: 32px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+body select.admin-role-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
