@@ -9,6 +9,38 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-06 — Role changes no longer revert after an admin save
+Changing a user's role in the admin dashboard could snap back to the previous
+role a moment later. The database write was always correct; the revert was
+purely a client-side race.
+
+1. **Root cause: `overlayConcurrentAdminUserWrites()` never overlaid `role`.**
+   The overlay exists so a profile hydration that started *before* an admin
+   action cannot save its stale snapshot over the fresh change. It covered
+   name/email/phone, approval, access flags, assigned courses, and year/semester
+   -- but not `role`. A hydration landing mid-change therefore restored whatever
+   role the server reported when that hydration began.
+2. **The admin short-circuit made it worse.** The function returned early and
+   unmodified when the fresh local role was `admin`, so promoting a user *to*
+   admin was reverted by the same race. Role is now overlaid *before* that
+   short-circuit, so both directions survive; the early return still prevents
+   student-shaped fields being overlaid onto an admin.
+3. **Creator scope is normalized in the overlay.** When the fresh role is
+   `creator`, assigned/enrolled courses are cleared and year/semester are nulled,
+   matching what the role-change handler writes.
+4. **Non-racing hydration is unchanged.** When no admin write landed during the
+   hydration window the snapshot still passes through untouched, so ordinary
+   server-wins behavior is preserved.
+5. **Static cache bust:** `2026-08-06.01`.
+
+**Verified** by driving the real admin UI in local demo mode (student -> creator
+and admin -> creator both persist) and by simulating the hydration race directly
+against `overlayConcurrentAdminUserWrites()`: a stale `admin` snapshot now
+resolves to `creator`, a stale `student` snapshot resolves to `admin`, and the
+no-race case still lets the server value win.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-05 — Assign the creator role from the admin dashboard
 The `creator` role existed in the database but could not be assigned from the
 app. Adding the UI required fixing a latent data-corruption bug first.

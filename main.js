@@ -11213,10 +11213,32 @@ function overlayConcurrentAdminUserWrites(nextUsers, hydrationStartedAt) {
   return nextUsers.map((entry) => {
     const authId = getUserProfileId(entry);
     const fresh = isUuidValue(authId) ? freshByAuthId.get(authId) : null;
-    if (!fresh || String(fresh.role || "").trim().toLowerCase() === "admin") {
+    if (!fresh) {
       return entry;
     }
     const overlay = { ...entry };
+    // Role must be overlaid before the admin short-circuit below, and in BOTH
+    // directions. Without this a role change made during a hydration window is
+    // reverted to whatever the server said when the hydration started -- the
+    // admin picks "Creator", the in-flight hydration lands, and the row snaps
+    // back to its previous role.
+    const freshRole = sanitizeUserRole(fresh.role);
+    overlay.role = freshRole;
+    if (fresh.profileUpdatedAt) {
+      overlay.profileUpdatedAt = maxIsoTimestamp(entry.profileUpdatedAt, fresh.profileUpdatedAt);
+    }
+    if (freshRole === "admin") {
+      // Admins carry no student enrollment scope, so the student-shaped fields
+      // below must not be overlaid onto them.
+      return overlay;
+    }
+    if (freshRole === "creator") {
+      // Creators own Video Courses and hold no MCQ curriculum enrollment.
+      overlay.assignedCourses = [];
+      overlay.enrolledCourses = [];
+      overlay.academicYear = null;
+      overlay.academicSemester = null;
+    }
     const freshName = String(fresh.name || "").trim();
     if (freshName) {
       overlay.name = freshName;
@@ -11228,9 +11250,6 @@ function overlayConcurrentAdminUserWrites(nextUsers, hydrationStartedAt) {
     const freshPhone = String(fresh.phone || "").trim();
     if (freshPhone) {
       overlay.phone = freshPhone;
-    }
-    if (fresh.profileUpdatedAt) {
-      overlay.profileUpdatedAt = maxIsoTimestamp(entry.profileUpdatedAt, fresh.profileUpdatedAt);
     }
     if (typeof fresh.isApproved === "boolean") {
       overlay.isApproved = fresh.isApproved;
