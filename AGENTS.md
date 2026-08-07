@@ -189,6 +189,49 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-07 — Sign-in survives a stalled first connection (ISP routing fault)
+**Read this before debugging "Supabase is temporarily unavailable" again — the
+cause was not Supabase and not the app.**
+
+`fzjzjzdamehxbgikiskt.supabase.co` resolves to two Cloudflare anycast
+addresses. From the affected network `104.18.38.10` is **blackholed** (100%
+packet loss; traceroute dies at `195.22.198.195`, an international transit hop)
+while `172.64.149.246` answers in ~66 ms. Measured with
+`curl --resolve`: the dead address never connects, the live one completes the
+whole request in 0.39 s. A client that picks the dead address stalls ~22-30 s in
+TCP connect before falling back — longer than `AUTH_SIGNIN_TIMEOUT_MS`.
+Meanwhile the project reported `ACTIVE_HEALTHY` on db/auth/rest/realtime/storage
+and a warmed browser fetch returned in 234 ms.
+
+Diagnosis recipe (do this first next time, it takes a minute):
+```
+curl -o /dev/null -w "dns:%{time_namelookup} connect:%{time_connect} firstbyte:%{time_starttransfer}\n" https://<ref>.supabase.co/auth/v1/health
+```
+A near-zero `dns` with a huge `connect` means routing, not database load. Then
+`dig +short <host>` and test each address with `curl --resolve host:443:<ip>`.
+
+1. **`preconnect` + `dns-prefetch` for the Supabase origin** in `index.html`
+   move the handshake to first paint. Keep them next to the font preconnects;
+   they are load-bearing on bad networks, not a micro-optimization.
+2. **`runSupabaseSignInWithTransientRetry()`** retries sign-in once, but *only*
+   for transient errors. It returns immediately on
+   `isInvalidLoginCredentialsMessage` / `isSupabaseAccessRevokedMessage` — do
+   not widen this, or a wrong password will consume the auth rate limit.
+3. **Deliberately not done:** the app cannot choose which IP the browser
+   connects to, so there is no further client-side fix. The durable fix is a
+   Supabase **custom domain** (different address set).
+4. **Static cache bust:** `2026-08-07.02`.
+
+**Also observed while diagnosing (not fixed, worth a low-traffic cleanup):**
+severe table bloat with `last_autovacuum` null on the hot tables —
+`test_history_entries` is 322 MB for 861 rows, `app_state` 472 MB for 2,985
+rows, `user_course_enrollments` 13 MB for 4,773 rows. Planner stats are stale
+(`n_live_tup` reads 0 for several populated tables). `VACUUM (ANALYZE)` is the
+safe first step; `VACUUM FULL` takes an ACCESS EXCLUSIVE lock and must wait for
+a low-traffic window. See `docs/supabase-disk-io-runbook.md`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-07 — Transient Supabase reads no longer lock students out
 After a bulk content upload, many students were stuck on **"Course Access Needs
 Attention"** and the profile page showed a permanent **"Loading..."** MedBank ID.

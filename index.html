@@ -33,7 +33,7 @@
   <meta name="robots" content="index, follow, max-image-preview:large" />
   <meta name="googlebot" content="index, follow, max-image-preview:large" />
   <meta name="application-name" content="MedBank" />
-  <meta name="app-version" content="2026-08-07.01" />
+  <meta name="app-version" content="2026-08-07.02" />
   <title>MedBank | Medical MCQ Bank &amp; Video Courses</title>
   <link rel="canonical" href="https://youssef256d.github.io/Medbank-Website/" />
   <link rel="sitemap" type="application/xml" href="https://youssef256d.github.io/Medbank-Website/sitemap.xml" />
@@ -63,6 +63,15 @@
   <link rel="icon" type="image/png" sizes="512x512" href="Assets/branding/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!--
+    Start the Supabase TCP/TLS handshake at first paint instead of at the moment
+    the user submits the login form. On networks where one of the host's anycast
+    IPs is unreachable, the first connection can stall for ~30s while the client
+    falls back to a working address; doing that during page load absorbs the
+    stall, and every later request reuses the warmed connection.
+  -->
+  <link rel="dns-prefetch" href="https://fzjzjzdamehxbgikiskt.supabase.co" />
+  <link rel="preconnect" href="https://fzjzjzdamehxbgikiskt.supabase.co" crossorigin />
   <link
     rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap&subset=latin"

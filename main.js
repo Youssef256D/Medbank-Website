@@ -4346,6 +4346,39 @@ function runSupabaseAuthRequestWithTimeout(authClient, requestFactory, timeoutMs
   });
 }
 
+// Sign-in retry for networks where the FIRST TCP connection to the Supabase
+// host stalls (e.g. one of the host's anycast IPs being blackholed by an ISP,
+// which strands the connection until the OS falls back to a working address).
+// Once any connection is established the browser reuses it, so an immediate
+// second attempt usually completes in a few hundred ms.
+//
+// Only transient failures are retried. A wrong password, a banned account, or
+// any other definitive answer from the server is returned as-is -- retrying
+// those would burn the user's auth rate limit for nothing.
+async function runSupabaseSignInWithTransientRetry(authClient, requestFactory, options = {}) {
+  const attempts = Math.max(1, Number(options?.attempts) || 2);
+  const timeoutMs = Math.max(1, Number(options?.timeoutMs) || AUTH_SIGNIN_TIMEOUT_MS);
+  const timeoutMessage = String(options?.timeoutMessage || "Login request timed out. Check your internet and try again.");
+  let result = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    result = await runSupabaseAuthRequestWithTimeout(authClient, requestFactory, timeoutMs, timeoutMessage);
+    const error = result?.error;
+    if (!error) {
+      return result;
+    }
+    if (isInvalidLoginCredentialsMessage(error) || isSupabaseAccessRevokedMessage(error)) {
+      return result;
+    }
+    if (!isLikelyTransientSupabaseError(error)) {
+      return result;
+    }
+    if (attempt < attempts - 1) {
+      console.warn(`Sign-in attempt ${attempt + 1} hit a transient network error; retrying on the warmed connection.`, getErrorMessage(error, ""));
+    }
+  }
+  return result;
+}
+
 async function fetchWithTimeout(resource, options = {}, timeoutMs = ADMIN_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => {
@@ -22938,11 +22971,13 @@ function wireAuth(mode) {
       };
       try {
         if (authClient) {
-          const { data, error } = await runSupabaseAuthRequestWithTimeout(
+          const { data, error } = await runSupabaseSignInWithTransientRetry(
             authClient,
             () => authClient.auth.signInWithPassword({ email, password }),
-            AUTH_SIGNIN_TIMEOUT_MS,
-            "Login request timed out. Check your internet and try again.",
+            {
+              timeoutMs: AUTH_SIGNIN_TIMEOUT_MS,
+              timeoutMessage: "Login request timed out. Check your internet and try again.",
+            },
           );
           if (!error && data?.user) {
             let user = upsertLocalUserFromAuth(data.user, {}, {

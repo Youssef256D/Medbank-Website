@@ -9,6 +9,37 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-07 — Sign-in survives a stalled first connection
+"Supabase is temporarily unavailable" on sign-in was traced to a **network
+routing fault, not to Supabase and not to the app.** DNS for
+`fzjzjzdamehxbgikiskt.supabase.co` returns two Cloudflare anycast addresses;
+from the affected network one of them (`104.18.38.10`) is blackholed — 100%
+packet loss, traceroute dying in transit — while the other
+(`172.64.149.246`) answers in ~66 ms. When a client picks the dead address the
+TCP connect stalls ~22-30 s before falling back, which is longer than the
+app's auth timeout. Supabase itself was `ACTIVE_HEALTHY` throughout and served
+requests in ~130 ms once connected.
+
+Because the browser reuses an established connection, only the *first*
+connection is affected — which is exactly why the failure looked random and
+hit only some students.
+
+1. **`<link rel="preconnect">` to the Supabase host.** The handshake now starts
+   at first paint instead of at form submit, so the stall is absorbed while the
+   page is loading rather than surfacing as a login error.
+2. **Sign-in retries transient failures once.**
+   `runSupabaseSignInWithTransientRetry()` retries only timeouts / 5xx /
+   network errors; a wrong password or a banned account is returned
+   immediately and never retried, so a failed login cannot burn the auth rate
+   limit.
+3. **Static cache bust:** `2026-08-07.02`.
+
+**Not fixed by this change:** the blackholed route itself is outside the app.
+A Supabase **custom domain** would move the API onto a different address set
+and is the durable fix.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-07 — Transient Supabase reads no longer lock students out
 Students were stuck on **"Course Access Needs Attention"** after a content
 upload, and the profile page showed a permanent **"Loading..."** MedBank ID.
