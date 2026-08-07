@@ -9,6 +9,39 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-07 — Transient Supabase reads no longer lock students out
+Students were stuck on **"Course Access Needs Attention"** after a content
+upload, and the profile page showed a permanent **"Loading..."** MedBank ID.
+Both were client-side bugs; no student had actually lost access.
+
+1. **A failed enrollment read was recorded as "no enrollment".** A timed-out or
+   5xx `user_course_enrollments` read produced a blocking access issue that was
+   then *persisted onto the local user*, so one blip during a post-upload
+   traffic spike blocked every MCQ route until a fully successful refresh
+   happened to land. `hydrateRelationalProfiles` was worse: it swallowed the
+   error, leaving empty diagnostics that were read as a genuine
+   `missing_enrollment`. Both paths now go through
+   `resolveStudentEnrollmentAccessIssue()`, which distinguishes "the index is
+   empty" from "the index was not read".
+2. **Enrollment-derived issues are no longer sticky.** `getStudentAccessIssue()`
+   discards a stored `enrollment_query_failed` / `missing_enrollment` /
+   `inactive_enrollment` when the student currently resolves to real courses.
+   Already-stuck students recover on their next page load — no admin force
+   refresh, no data migration. Admin decisions (`not_approved`,
+   `profile_incomplete`, `missing_enrollment_term`) stay authoritative.
+3. **Failed reads no longer wipe cached enrollment.** Both paths keep the last
+   known-good `enrolledCourses` instead of writing an empty list, and the
+   enrollment write-repair no longer fires off a read that failed.
+4. **Enrollment reads retry.** `runSupabaseQueryWithTransientRetry()` retries
+   transient failures (timeout/5xx/rate limit) with exponential backoff.
+5. **MedBank ID fixed.** `upsertLocalUserFromAuth()` accepted a `publicUserId`
+   override but never wrote it to the user object, so every auth event rebuilt
+   the local user without it and the profile card showed "Loading..." forever.
+   It is now carried through and preserved across token refreshes.
+6. **Static cache bust:** `2026-08-07.01`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-06 — Role changes no longer revert after an admin save
 Changing a user's role in the admin dashboard could snap back to the previous
 role a moment later. The database write was always correct; the revert was

@@ -189,6 +189,55 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-07 — Transient Supabase reads no longer lock students out
+After a bulk content upload, many students were stuck on **"Course Access Needs
+Attention"** and the profile page showed a permanent **"Loading..."** MedBank ID.
+Neither was a real access or database problem.
+
+1. **Invariant added: an unread enrollment index is not an empty one.** A
+   timed-out/5xx `user_course_enrollments` read used to become a blocking
+   `enrollment_query_failed`, which was then *persisted* onto the local user.
+   `hydrateRelationalProfiles()` was worse — it swallowed the error and left
+   `enrollmentDiagnosticsMap = {}`, which downstream read as a genuine
+   `missing_enrollment`, so a load spike fabricated "you have no enrollment" for
+   whole cohorts. Both paths now call `resolveStudentEnrollmentAccessIssue()`.
+   **Do not reintroduce a code path that derives an access issue from enrollment
+   data without first checking whether the read succeeded.**
+2. **`ENROLLMENT_DERIVED_ACCESS_ISSUE_CODES` are non-sticky.**
+   `getStudentAccessIssue()` drops a stored `enrollment_query_failed` /
+   `missing_enrollment` / `inactive_enrollment` when the student currently
+   resolves to courses (`getAvailableCoursesForUser`, which falls back to
+   curriculum courses from the approved year/semester). Stuck students therefore
+   self-heal on the next page load with no migration and no admin force refresh.
+   `not_approved` / `profile_incomplete` / `missing_enrollment_term` are admin
+   decisions and remain authoritative. RLS is still the real gate — the frontend
+   issue is a UX affordance only, so letting a student through on a failed read
+   cannot leak content.
+3. **Failed reads preserve cached enrollment.** Both paths fall back to the
+   existing `enrolledCourses` instead of writing `[]`, and
+   `shouldBackfillStudentEnrollment` is gated on `!enrollmentFetchFailed` so a
+   failed read cannot trigger a bogus enrollment "repair" write.
+4. **`runSupabaseQueryWithTransientRetry()`** (next to
+   `runSupabaseQueryWithAbortTimeout`) retries transient errors with exponential
+   backoff; the enrollment batch read uses it.
+5. **`upsertLocalUserFromAuth()` now persists `publicUserId`.** It accepted the
+   override but never wrote it into `nextUser`, so every auth event/token
+   refresh rebuilt the local user without it. `profiles.public_user_id` is NOT
+   NULL server-side, so a missing local value always means a lost merge, never
+   missing data.
+6. **Static cache bust:** `2026-08-07.01`.
+
+**Verified** by lifting the real `resolveStudentEnrollmentAccessIssue` /
+`getStudentAccessIssue` out of `main.js` into a Node harness (11 cases: failed
+read with and without fallback, fabricated `missing_enrollment`, genuine empty
+and inactive enrollment, stale-issue clearing, admin decisions preserved), and by
+driving the running app: a demo student given the exact stuck
+`enrollment_query_failed` state now renders dashboard/create-test/analytics/
+profile normally with the MedBank ID shown, while unapproved and
+incomplete-profile students are still routed to their gates.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-06 — Role changes no longer revert after an admin save
 Changing a user's role in the admin dashboard could snap back to the previous
 role a moment later. The database write was always correct; the revert was

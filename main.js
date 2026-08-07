@@ -4276,6 +4276,27 @@ function isTimeoutResultError(error) {
   return String(error?.code || "").trim().toUpperCase() === "TIMEOUT";
 }
 
+// Retries a Supabase read that failed for a transient reason (timeout, 5xx,
+// rate limit, dropped connection). Publishing a large batch of content causes a
+// burst of student reads, and a single blip must not be reported to the caller
+// as "this student has no access" -- see resolveStudentEnrollmentAccessIssue.
+async function runSupabaseQueryWithTransientRetry(createQuery, timeoutMs, timeoutMessage, options = {}) {
+  const attempts = Math.max(1, Number(options?.attempts) || 3);
+  const baseDelayMs = Math.max(0, Number(options?.baseDelayMs ?? 400));
+  let result = { data: null, error: { code: "TIMEOUT", message: timeoutMessage } };
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    result = await runSupabaseQueryWithAbortTimeout(createQuery, timeoutMs, timeoutMessage);
+    if (!result?.error || !isLikelyTransientSupabaseError(result.error)) {
+      return result;
+    }
+    if (attempt < attempts - 1 && baseDelayMs > 0) {
+      const backoffMs = baseDelayMs * (2 ** attempt);
+      await new Promise((resolve) => window.setTimeout(resolve, backoffMs));
+    }
+  }
+  return result;
+}
+
 function isLikelyTransientSupabaseError(error) {
   if (!error) {
     return false;
@@ -4574,6 +4595,14 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
         enrollmentFetchFailed = true;
       }
     }
+    if (enrollmentFetchFailed) {
+      // A failed read taught us nothing, so keep the last known-good enrollment
+      // instead of writing an empty set over it.
+      const cachedEnrolledCourses = sanitizeCourseAssignments(localUser?.enrolledCourses || []);
+      if (cachedEnrolledCourses.length) {
+        relationalAssignedCourses = cachedEnrolledCourses;
+      }
+    }
   }
   const normalizedEmail = String(profile.email || authUser.email || localUser?.email || "").trim().toLowerCase();
   const metadataEnrollmentYear = normalizeAcademicYearOrNull(
@@ -4658,25 +4687,16 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
     const rawEnrollmentCount = Number(diagnostics.rawEnrollmentCount || 0);
     const activeEnrollmentCount = Number(diagnostics.activeEnrollmentCount || 0);
     const profileTermDetails = { profileYear, profileSemester, year, semester };
-    if (enrollmentFetchFailed) {
-      studentAccessIssue = createStudentAccessIssue(
-        "enrollment_query_failed",
-        "Course access could not be verified from Supabase. Refresh the page; if it stays blocked, contact an admin.",
-        profileTermDetails,
-      );
-    } else if (rawEnrollmentCount > 0 && activeEnrollmentCount === 0) {
-      studentAccessIssue = createStudentAccessIssue(
-        "inactive_enrollment",
-        "Your enrollment points to inactive or unavailable courses. Ask an admin to check your semester assignment.",
-        { ...profileTermDetails, rawEnrollmentCount, activeEnrollmentCount },
-      );
-    } else if (profileApproved === true && canUseProfileEnrollmentTerm && !hasActiveEnrollmentRows) {
-      studentAccessIssue = createStudentAccessIssue(
-        "missing_enrollment",
-        "Your account is approved, but no active course enrollment is linked in the database. Ask an admin to save your year and semester again.",
-        { ...profileTermDetails, rawEnrollmentCount, activeEnrollmentCount },
-      );
-    }
+    studentAccessIssue = resolveStudentEnrollmentAccessIssue({
+      enrollmentReadFailed: enrollmentFetchFailed,
+      hasUsableCourseFallback: resolvedAssignedCourses.length > 0,
+      rawEnrollmentCount,
+      activeEnrollmentCount,
+      hasActiveEnrollmentRows,
+      shouldCheckMissingEnrollment: profileApproved === true && canUseProfileEnrollmentTerm,
+      previousIssue: localUser?.studentAccessIssue,
+      details: profileTermDetails,
+    });
   }
   const autoApprovalFallback = shouldAutoApproveStudentAccess({
     role,
@@ -4757,6 +4777,9 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
     )
     || (
       shouldFetchEnrollmentRows
+      // Never "repair" enrollment from a read that failed -- we do not know
+      // whether the rows are missing or simply unread.
+      && !enrollmentFetchFailed
       && relationalAssignedCourses.length === 0
       && sanitizeCourseAssignments(updatedUser?.assignedCourses || []).length > 0
     )
@@ -4998,6 +5021,71 @@ function createStudentAccessIssue(code, message, details = {}) {
     details: details && typeof details === "object" && !Array.isArray(details) ? details : {},
     checkedAt: nowISO(),
   };
+}
+
+// Access issues that describe the *enrollment index* rather than a decision an
+// admin made. They must never outlive the read that produced them: a timed-out
+// or 5xx `user_course_enrollments` read used to be recorded as "this student has
+// no enrollment", get persisted onto the local user, and then block every MCQ
+// route until a fully successful refresh happened to land.
+const ENROLLMENT_DERIVED_ACCESS_ISSUE_CODES = new Set([
+  "enrollment_query_failed",
+  "missing_enrollment",
+  "inactive_enrollment",
+]);
+
+function isEnrollmentDerivedAccessIssueCode(code) {
+  return ENROLLMENT_DERIVED_ACCESS_ISSUE_CODES.has(String(code || "").trim());
+}
+
+// Single decision point for both the current-user refresh and the profile
+// hydration. `enrollmentReadFailed` means we learned nothing about enrollment,
+// which is NOT the same as learning the student has none.
+function resolveStudentEnrollmentAccessIssue({
+  enrollmentReadFailed = false,
+  hasUsableCourseFallback = false,
+  rawEnrollmentCount = 0,
+  activeEnrollmentCount = 0,
+  hasActiveEnrollmentRows = false,
+  shouldCheckMissingEnrollment = true,
+  previousIssue = null,
+  details = {},
+} = {}) {
+  if (enrollmentReadFailed) {
+    // The student still has a usable course set (curriculum courses resolved
+    // from their approved year/semester, or a cached enrollment). Serving the
+    // cached view beats locking them out over a failed read.
+    if (hasUsableCourseFallback) {
+      const carried = normalizeStudentAccessIssue(previousIssue);
+      return carried && !isEnrollmentDerivedAccessIssueCode(carried.code) ? carried : null;
+    }
+    return createStudentAccessIssue(
+      "enrollment_query_failed",
+      "Course access could not be verified from Supabase. Refresh the page; if it stays blocked, contact an admin.",
+      details,
+    );
+  }
+  if (Number(rawEnrollmentCount) > 0 && Number(activeEnrollmentCount) === 0) {
+    return createStudentAccessIssue(
+      "inactive_enrollment",
+      "Your enrollment points to inactive or unavailable courses. Ask an admin to check your semester assignment.",
+      { ...details, rawEnrollmentCount, activeEnrollmentCount },
+    );
+  }
+  if (shouldCheckMissingEnrollment && !hasActiveEnrollmentRows) {
+    // The read succeeded and genuinely returned no rows. If the approved
+    // year/semester still resolves to curriculum courses, keep the student
+    // working and let the existing enrollment-repair path fix the index.
+    if (hasUsableCourseFallback) {
+      return null;
+    }
+    return createStudentAccessIssue(
+      "missing_enrollment",
+      "Your account is approved, but no active course enrollment is linked in the database. Ask an admin to save your year and semester again.",
+      { ...details, rawEnrollmentCount, activeEnrollmentCount },
+    );
+  }
+  return null;
 }
 
 function normalizeStudentAccessIssue(issue) {
@@ -5352,16 +5440,22 @@ function getStudentAccessIssue(user, context = {}) {
       "Your account is approved, but no valid academic year and semester are linked to it.",
     );
   }
+  const availableCourses = Array.isArray(context?.availableCourses)
+    ? context.availableCourses
+    : getAvailableCoursesForUser(user);
   const storedIssue = normalizeStudentAccessIssue(user.studentAccessIssue);
   if (storedIssue) {
     if (storedIssue.code === "not_approved" && user.isApproved !== false) {
       return null;
     }
+    // Enrollment-derived issues describe a past read, not an admin decision.
+    // If this student currently resolves to real courses, the stored issue is
+    // stale -- do not keep blocking them on it.
+    if (isEnrollmentDerivedAccessIssueCode(storedIssue.code) && availableCourses.length) {
+      return null;
+    }
     return storedIssue;
   }
-  const availableCourses = Array.isArray(context?.availableCourses)
-    ? context.availableCourses
-    : getAvailableCoursesForUser(user);
   if (!availableCourses.length) {
     return createStudentAccessIssue(
       "missing_enrollment",
@@ -6288,6 +6382,11 @@ function upsertLocalUserFromAuth(authUser, profileOverrides = {}, options = {}) 
 
   const nextUser = {
     id: authUser.id,
+    // profiles.public_user_id is NOT NULL server-side, so a missing value here
+    // only ever means "not carried through the local merge yet". Dropping it
+    // made the profile page show a permanent "Loading..." MedBank ID, because
+    // every auth event rebuilt the local user without it.
+    publicUserId: Number(profileOverrides.publicUserId) || Number(previous?.publicUserId) || null,
     name: nextName || fallbackName,
     email,
     password: previous?.password || "",
@@ -9279,7 +9378,7 @@ async function fetchEnrollmentCourseMapForUsers(userIds) {
     const idBatches = splitIntoBatches(ids, ENROLLMENT_USER_FETCH_BATCH_SIZE);
     for (const batchGroup of splitIntoBatches(idBatches, ENROLLMENT_USER_FETCH_CONCURRENCY)) {
       const batchResults = await Promise.all(batchGroup.map((idBatch) => (
-        runSupabaseQueryWithAbortTimeout(
+        runSupabaseQueryWithTransientRetry(
           () => client
             .from("user_course_enrollments")
             .select("user_id,course_id,assigned_at")
@@ -9499,12 +9598,15 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
   let enrollmentCourseMap = {};
   let enrollmentTermMap = {};
   let enrollmentDiagnosticsMap = {};
+  // An unread enrollment index must not be reported downstream as an empty one.
+  let enrollmentReadFailed = false;
   try {
     const enrollmentSnapshot = await fetchEnrollmentCourseMapForUsers(profileRows.map((profile) => profile.id));
     enrollmentCourseMap = enrollmentSnapshot?.coursesByUser || {};
     enrollmentTermMap = enrollmentSnapshot?.termByUser || {};
     enrollmentDiagnosticsMap = enrollmentSnapshot?.diagnosticsByUser || {};
   } catch (enrollmentError) {
+    enrollmentReadFailed = !isMissingRelationError(enrollmentError);
     console.warn("Could not hydrate enrollment course mappings.", enrollmentError?.message || enrollmentError);
   }
 
@@ -9562,9 +9664,14 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
       ? (normalizedExistingPhone || normalizedProfilePhone)
       : (normalizedProfilePhone || normalizedExistingPhone);
     const existingCourses = sanitizeCourseAssignments(existing?.assignedCourses || []);
-    const enrolledCourses = role === "student"
+    const readEnrolledCourses = role === "student"
       ? sanitizeCourseAssignments(enrollmentCourseMap[profile.id] || [])
       : [];
+    // When the enrollment read failed, fall back to the cached set rather than
+    // overwriting it with an empty list.
+    const enrolledCourses = role === "student" && enrollmentReadFailed && !readEnrolledCourses.length
+      ? sanitizeCourseAssignments(existing?.enrolledCourses || [])
+      : readEnrolledCourses;
     const enrollmentDiagnostics = enrollmentDiagnosticsMap[profile.id] || {};
     const rawEnrollmentCount = Number(enrollmentDiagnostics.rawEnrollmentCount || 0);
     const activeEnrollmentCount = Number(enrollmentDiagnostics.activeEnrollmentCount || 0);
@@ -9646,18 +9753,16 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
           "This approved student is missing phone, year, or semester details in the database.",
           { profileId: profile.id, year, semester },
         );
-      } else if (rawEnrollmentCount > 0 && activeEnrollmentCount === 0) {
-        studentAccessIssue = createStudentAccessIssue(
-          "inactive_enrollment",
-          "This approved student's enrollment points to inactive or unavailable courses.",
-          { profileId: profile.id, rawEnrollmentCount, activeEnrollmentCount },
-        );
-      } else if (!hasActiveEnrollmentRows) {
-        studentAccessIssue = createStudentAccessIssue(
-          "missing_enrollment",
-          "This approved student has no active database enrollment rows.",
-          { profileId: profile.id, year, semester, rawEnrollmentCount, activeEnrollmentCount },
-        );
+      } else {
+        studentAccessIssue = resolveStudentEnrollmentAccessIssue({
+          enrollmentReadFailed,
+          hasUsableCourseFallback: assignedCourses.length > 0,
+          rawEnrollmentCount,
+          activeEnrollmentCount,
+          hasActiveEnrollmentRows,
+          previousIssue: existing?.studentAccessIssue,
+          details: { profileId: profile.id, year, semester },
+        });
       }
     }
     const resolvedName = preferLocalOverDb
