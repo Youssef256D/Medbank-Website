@@ -189,6 +189,88 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-09 — Coupon foreign keys no longer block Video Course deletion
+`adminDeletePlatformCourse()` correctly issued a direct `platform_courses`
+delete, but migration `20260804205400` made both
+`platform_course_coupons.course_id` and
+`platform_course_coupon_redemptions.course_id` restrictive. Any course with a
+coupon therefore failed before the existing module/lesson/enrollment cascades
+could run.
+
+Hosted migration `20260809114410_fix_platform_course_coupon_delete_cascade.sql`
+changes the two direct course edges to `ON DELETE CASCADE`. Coupon provenance
+edges from redemptions, enrollments, and module entitlements are now `NO ACTION
+DEFERRABLE INITIALLY DEFERRED`: direct coupon deletion is still rejected, but a
+course deletion can remove both sides of those relationships before the check
+runs at transaction end. Partial indexes on the two previously unindexed
+`source_coupon_id` columns keep FK checks and cascades fast. The admin warning
+now names coupons and redemption records explicitly.
+
+Verified on the hosted project with rollback-only synthetic data covering a
+redeemed coupon, full-course enrollment, and module entitlement. Course delete
+cascaded the full graph, direct coupon deletion remained protected, and zero
+test rows remained. Static cache bust: `2026-08-09.02`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`,
+`supabase/migrations/20260809114410_fix_platform_course_coupon_delete_cascade.sql`,
+and its matching rollback.
+
+### 2026-08-09 — Apple sign-in hidden; stale no-contact test users removed
+`supabase.config.js -> appleOAuthEnabled` is now `false`, which removes the
+Apple buttons from login/signup while leaving the configured hosted provider
+and `startAppleOAuthSignIn()` path intact. Restore the website UI later by
+flipping only this flag. Static cache bust: `2026-08-09.01`.
+
+The hosted audit contained 1,308 Auth users before cleanup. No profile lacked
+both its saved name and phone. Two unapproved `codex_prevtests_*@example.com`
+accounts had neither user-supplied name metadata nor a phone; their visible
+names were only the signup trigger's email-local-part fallback. Both had zero
+enrollments, tests, course data, push tokens, coupon references, and Storage
+objects and were deleted from Auth. `medbank.study2026@gmail.com` also lacked
+source name/phone metadata but has a saved profile name and was deliberately
+preserved.
+
+**Files touched:** `supabase.config.js`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`. Hosted data: two stale test Auth users removed.
+
+### 2026-08-07 — Google sign-in latency on both sides of the redirect
+Two unrelated stalls, both fixed. Read this before re-adding an `await` to
+either path.
+
+1. **Pre-redirect: don't bootstrap auth to build a URL.**
+   `getSupabaseAuthClientForInteractiveSignIn()` used to `await
+   initSupabaseAuth()` — the full callback/getSession/profile/warmup bootstrap,
+   whose `getSession()` alone has a 30 s timeout — before the button could
+   redirect. It now uses `getSupabaseAuthClient() ||
+   getOrCreateSupabaseBrowserClient()` and fires `initSupabaseAuth()` in the
+   background. `startGoogleOAuthSignIn` / `startAppleOAuthSignIn` also no longer
+   go through `queueSupabaseAuthRequest`: with `skipBrowserRedirect: true`,
+   `signInWithOAuth` only constructs the provider URL and writes the PKCE
+   verifier, so queuing it behind an in-flight `getSession`/refresh bought
+   nothing. **Do not re-queue these two calls** — the queue exists for calls
+   that share the storage lock *and* hit the network.
+2. **Post-redirect: the student warmup is blocking only when it must be.**
+   New `runStudentPostAuthRefresh(user, reason)` (next to
+   `schedulePostAuthDataWarmup`) replaces four direct
+   `await ensureFreshStudentDataAfterAuth(...)` sites: the OAuth/session
+   bootstrap in `initSupabaseAuthNow`, the `onAuthStateChange` SIGNED_IN path,
+   the session-recovery path, and the password-login handler. It awaits the
+   warmup only when `hasUsableLocalStudentContent(user)` is false; otherwise it
+   defers to `schedulePostAuthDataWarmup()`. The 2026-06-22 invariant is
+   preserved — a student with no cached catalog still waits, so create-test and
+   analytics cannot render a false "no questions" empty state — and
+   `getStudentContentReadiness()` already reports the background pass through
+   `isPostAuthDataWarmupActive()` / `state.studentDataRefreshing`.
+3. **Verified** in the preview: client acquisition 0 ms and authorize-URL
+   construction 1 ms against the real hosted project (previously gated on the
+   bootstrap), and both branches of `runStudentPostAuthRefresh` exercised with
+   stubs — no cached content takes the blocking path, cached content returns
+   immediately and schedules the background warmup. `node --check` and
+   `npm run lint` clean.
+4. **Static cache bust:** `2026-08-07.03`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-07 — Sign-in survives a stalled first connection (ISP routing fault)
 **Read this before debugging "Supabase is temporarily unavailable" again — the
 cause was not Supabase and not the app.**

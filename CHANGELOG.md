@@ -9,6 +9,62 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-09 — Video Courses with coupons can be deleted
+Deleting a Video Course failed once the course had generated or redeemed
+coupons because the coupon and redemption foreign keys used `ON DELETE
+RESTRICT`, while the rest of the course tree used `ON DELETE CASCADE`.
+
+Hosted migration `20260809114410_fix_platform_course_coupon_delete_cascade.sql`
+now treats the course as the aggregate deletion boundary: course-owned coupons
+and redemptions cascade with the course. Coupon provenance references from
+enrollments, module entitlements, and redemption records remain protected from
+direct coupon deletion, but are deferred until transaction end so the course's
+existing cascades can finish first. Two missing provenance indexes keep those
+checks bounded to coupon-sourced rows. The admin confirmation now explicitly
+mentions coupons and coupon redemption records.
+
+Verified against the hosted project with a rollback-only synthetic course that
+contained a redeemed coupon, coupon enrollment, and module entitlement: course
+deletion removed the entire graph, direct coupon deletion stayed blocked, and
+no verification rows remained. Static cache bust: `2026-08-09.02`.
+
+### 2026-08-09 — Apple sign-in hidden and stale test users removed
+The website's Apple sign-in and sign-up buttons are temporarily hidden by the
+existing `appleOAuthEnabled` UI flag. The hosted Apple provider configuration
+and OAuth implementation remain intact so the buttons can be restored later by
+flipping the flag back on.
+
+The hosted user audit found no account whose saved profile lacked both a name
+and phone. A source-metadata audit found two clearly stale, unapproved
+`codex_prevtests_*@example.com` accounts with synthesized email-local-part names
+and no phone. Both had zero enrollments, tests, course data, push tokens,
+coupon references, or Storage objects and were removed from Auth. The
+legitimate-looking `medbank.study2026@gmail.com` profile was preserved.
+
+Static cache bust: `2026-08-09.01`.
+
+### 2026-08-07 — Google sign-in is no longer slow on both sides of the redirect
+Two independent stalls were making "Continue with Google" feel slow.
+
+**Before the redirect.** The button awaited the full `initSupabaseAuth()`
+bootstrap and then pushed `signInWithOAuth` through the serialized auth queue,
+so the click could sit behind a `getSession()` with a 30 s timeout. With
+`skipBrowserRedirect: true` that call builds the provider URL locally and needs
+no network at all. It now takes a client instance directly and runs unqueued;
+the bootstrap continues in the background. Measured: ~0 ms to get the client,
+1 ms to produce the Supabase authorize URL.
+
+**After the redirect.** Returning students blocked on a full content warmup
+(course catalog prime + courses/enrollment/question-catalog pass, up to ~25 s of
+timeouts) before anything rendered, with the Google spinner still up. That wait
+only exists to stop a first-time student seeing a false empty state, so it is
+now conditional: students with no usable cached content still wait, everyone
+else renders immediately and the refresh runs in the background — the same
+treatment admins already got. Applies to the OAuth callback, `onAuthStateChange`
+sign-in, session recovery, and password login.
+
+Static cache bust: `2026-08-07.03`.
+
 ### 2026-08-07 — Sign-in survives a stalled first connection
 "Supabase is temporarily unavailable" on sign-in was traced to a **network
 routing fault, not to Supabase and not to the app.** DNS for
