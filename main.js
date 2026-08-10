@@ -3774,12 +3774,10 @@ async function handleSupabaseAuthStateChange(event, session) {
       return;
     }
     if (localUser?.role === "student") {
-      await ensureFreshStudentDataAfterAuth(localUser, {
-        reason: event === "SIGNED_IN" ? "sign-in" : "auth state change",
-      }).catch((warmupError) => {
-        console.warn("Student auth refresh failed.", warmupError?.message || warmupError);
-      });
-      localUser = getCurrentUser() || localUser;
+      localUser = await runStudentPostAuthRefresh(
+        localUser,
+        event === "SIGNED_IN" ? "sign-in" : "auth state change",
+      );
     } else {
       schedulePostAuthDataWarmup(localUser).catch((warmupError) => {
         console.warn("Deferred post-auth warmup failed.", warmupError?.message || warmupError);
@@ -3863,12 +3861,7 @@ async function handleSupabaseAuthStateChange(event, session) {
       const recoveredProfileSync = await refreshLocalUserFromRelationalProfile(recoveredSessionUser, recoveredLocalUser);
       recoveredLocalUser = recoveredProfileSync.user;
       if (recoveredLocalUser?.role === "student") {
-        await ensureFreshStudentDataAfterAuth(recoveredLocalUser, {
-          reason: "session recovery",
-        }).catch((warmupError) => {
-          console.warn("Student recovery refresh failed.", warmupError?.message || warmupError);
-        });
-        recoveredLocalUser = getCurrentUser() || recoveredLocalUser;
+        recoveredLocalUser = await runStudentPostAuthRefresh(recoveredLocalUser, "session recovery");
       }
       if (recoveredLocalUser?.id) {
         saveLocalOnly(STORAGE_KEYS.currentUserId, recoveredLocalUser.id);
@@ -4069,12 +4062,7 @@ async function initSupabaseAuthNow() {
           return;
         }
         if (localUser.role === "student") {
-          await ensureFreshStudentDataAfterAuth(localUser, {
-            reason: "session bootstrap",
-          }).catch((warmupError) => {
-            console.warn("Student bootstrap refresh failed.", warmupError?.message || warmupError);
-          });
-          localUser = getCurrentUser() || localUser;
+          localUser = await runStudentPostAuthRefresh(localUser, "session bootstrap");
         } else {
           schedulePostAuthDataWarmup(localUser).catch((warmupError) => {
             console.warn("Deferred post-auth warmup failed.", warmupError?.message || warmupError);
@@ -7395,6 +7383,32 @@ async function ensureFreshStudentDataAfterAuth(user, options = {}) {
   }
 
   return !primeResult?.error && primeResult?.data !== false && warmupResult?.data !== false;
+}
+
+// Post-auth content refresh for a student, blocking only when it has to be.
+//
+// A student with no usable cached content must wait for the first refresh --
+// otherwise create-test/analytics would render a false "you have no questions"
+// empty state (see AGENTS.md 2026-06-22). A returning student already has a
+// usable local catalog, so blocking sign-in on a full courses + enrollment +
+// question-catalog pass (up to ~25s of timeouts) only delays the first paint.
+// In that case the refresh runs in the background and the existing
+// isPostAuthDataWarmupActive()/studentDataRefreshing indicators report it.
+async function runStudentPostAuthRefresh(user, reason) {
+  const currentUser = user || getCurrentUser();
+  if (!currentUser || currentUser.role !== "student") {
+    return currentUser;
+  }
+  if (!hasUsableLocalStudentContent(currentUser)) {
+    await ensureFreshStudentDataAfterAuth(currentUser, { reason }).catch((warmupError) => {
+      console.warn("Student auth refresh failed.", warmupError?.message || warmupError);
+    });
+    return getCurrentUser() || currentUser;
+  }
+  schedulePostAuthDataWarmup(currentUser).catch((warmupError) => {
+    console.warn("Deferred student post-auth warmup failed.", warmupError?.message || warmupError);
+  });
+  return currentUser;
 }
 
 function schedulePostAuthDataWarmup(user) {
@@ -22499,13 +22513,23 @@ async function getSupabaseAuthClientForInteractiveSignIn() {
     }
   }
 
-  await initSupabaseAuth();
-  const client = getSupabaseAuthClient();
+  // Do NOT await initSupabaseAuth() here. Starting an OAuth redirect only needs
+  // a client instance -- signInWithOAuth({ skipBrowserRedirect: true }) builds
+  // the provider URL locally. The full auth bootstrap can spend up to
+  // SUPABASE_SESSION_TIMEOUT_MS inside getSession()/refreshSession() on a slow
+  // network, which used to sit between the user's click and Google's account
+  // picker for no benefit. Kick the bootstrap off in the background instead.
+  const client = getSupabaseAuthClient() || getOrCreateSupabaseBrowserClient();
   if (!client) {
     return {
       client: null,
       message: "Could not start Google sign-in. Check your connection and try again.",
     };
+  }
+  if (!supabaseAuth.initialized && !supabaseAuth.initializing) {
+    initSupabaseAuth().catch((initError) => {
+      console.warn("Background Supabase auth bootstrap failed.", initError?.message || initError);
+    });
   }
   return { client, message: "" };
 }
@@ -22523,9 +22547,12 @@ async function startGoogleOAuthSignIn(authClient) {
     };
   }
 
-  const { data, error } = await queueSupabaseAuthRequest(
-    authClient,
-    () => authClient.auth.signInWithOAuth({
+  // Deliberately NOT run through queueSupabaseAuthRequest: with
+  // skipBrowserRedirect this only builds the provider URL (and writes the PKCE
+  // verifier), so it needs no network. Queuing it parked the redirect behind
+  // whatever getSession/refresh was already in flight.
+  const { data, error } = await runWithTimeoutResult(
+    Promise.resolve().then(() => authClient.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
@@ -22534,11 +22561,9 @@ async function startGoogleOAuthSignIn(authClient) {
           prompt: "select_account",
         },
       },
-    }),
-    {
-      timeoutMs: GOOGLE_OAUTH_START_TIMEOUT_MS,
-      timeoutMessage: "Google sign-in redirect timed out. Please try again.",
-    },
+    })),
+    GOOGLE_OAUTH_START_TIMEOUT_MS,
+    "Google sign-in redirect timed out. Please try again.",
   );
 
   if (error) {
@@ -22572,20 +22597,18 @@ async function startAppleOAuthSignIn(authClient) {
     };
   }
 
-  const { data, error } = await queueSupabaseAuthRequest(
-    authClient,
-    () => authClient.auth.signInWithOAuth({
+  // Same reasoning as the Google path: URL construction only, no queue.
+  const { data, error } = await runWithTimeoutResult(
+    Promise.resolve().then(() => authClient.auth.signInWithOAuth({
       provider: "apple",
       options: {
         redirectTo,
         skipBrowserRedirect: true,
         scopes: "name email",
       },
-    }),
-    {
-      timeoutMs: GOOGLE_OAUTH_START_TIMEOUT_MS,
-      timeoutMessage: "Apple sign-in redirect timed out. Please try again.",
-    },
+    })),
+    GOOGLE_OAUTH_START_TIMEOUT_MS,
+    "Apple sign-in redirect timed out. Please try again.",
   );
 
   if (error) {
@@ -22995,12 +23018,7 @@ function wireAuth(mode) {
               }
             }
             if (user.role === "student") {
-              await ensureFreshStudentDataAfterAuth(user, {
-                reason: "password sign-in",
-              }).catch((warmupError) => {
-                console.warn("Student password login refresh failed.", warmupError?.message || warmupError);
-              });
-              user = getCurrentUser() || user;
+              user = await runStudentPostAuthRefresh(user, "password sign-in");
             }
             if (routeUserToProfileCompletion(user)) {
               return;
@@ -52105,7 +52123,7 @@ function wireAdminCoursesPlatformBuilder() {
     } else if (action === "admin-delete-platform-course") {
       const courseId = button.getAttribute("data-course-id") || "";
       const courseLabel = getAdminCourseBuilderCourseLabel(courseId);
-      if (!window.confirm(`Delete ${courseLabel}? This permanently removes the course and all related modules, lessons, enrollments, and requests.`)) return;
+      if (!window.confirm(`Delete ${courseLabel}? This permanently removes the course and all related modules, lessons, enrollments, requests, coupons, and coupon redemption records.`)) return;
       runAdminCourseAction("Course deleted.", async () => {
         await adminDeletePlatformCourse(courseId);
         state.adminCourseBuilderCourseId = "";
