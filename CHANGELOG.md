@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-11 — Bulk approve no longer aborts on one incomplete student
+Approving a multi-user selection stopped at the first account whose row could
+not be saved (missing/invalid phone, year, semester, or an already-approved
+account with incomplete details) and showed only a validation toast, so nobody
+was approved. The pre-save pass now skips unsaveable rows instead of aborting,
+suppresses the per-row validation toasts during bulk actions, and the
+confirm dialog plus result toast report how many accounts were skipped and
+what they are missing. Same fix applied to **Approve all pending**.
+
 ### 2026-08-09 — Video Courses with coupons can be deleted
 Deleting a Video Course failed once the course had generated or redeemed
 coupons because the coupon and redemption foreign keys used `ON DELETE

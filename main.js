@@ -33077,8 +33077,11 @@ function wireAdmin() {
       const pendingUserIds = pendingUsers
         .map((entry) => String(entry.id || "").trim())
         .filter(Boolean);
-      const syncedPendingRows = await syncEnrollmentRowsForUserIds(pendingUserIds, { batchFlush: true });
-      if (!syncedPendingRows) {
+      const syncedPendingRows = await syncEnrollmentRowsForUserIds(pendingUserIds, {
+        batchFlush: true,
+        tolerateRowFailures: true,
+      });
+      if (!syncedPendingRows.ok) {
         return;
       }
 
@@ -33090,8 +33093,9 @@ function wireAdmin() {
       const eligiblePendingUserIdSet = new Set(eligiblePendingUsers.map((entry) => String(entry.id || "").trim()).filter(Boolean));
       const pendingProfileIds = eligiblePendingUsers.map((entry) => getUserProfileId(entry)).filter((id) => isUuidValue(id));
 
+      const incompletePendingCount = pendingUsers.length - eligiblePendingUsers.length;
       if (!eligiblePendingUsers.length) {
-        toast("Pending users must complete phone number, year, semester, and course selection before approval.");
+        toast(`${incompletePendingCount} pending user(s) must complete phone number, year, semester, and course selection before approval.`);
         return;
       }
 
@@ -33151,9 +33155,11 @@ function wireAdmin() {
         user: current,
       });
       toast(
-        (skippedCount
-          ? `${approvedCount} pending account(s) approved. ${skippedCount} skipped.`
-          : `${approvedCount} pending account(s) approved.`)
+        `${approvedCount} pending account(s) approved.`
+          + (skippedCount ? ` ${skippedCount} skipped.` : "")
+          + (incompletePendingCount
+            ? ` ${incompletePendingCount} still need a phone number, year, semester, and course selection.`
+            : "")
           + describeAuthAccessSyncOutcome(authAccessSyncResult),
       );
     } finally {
@@ -33328,8 +33334,11 @@ function wireAdmin() {
       const optimisticTargetProfileIds = new Set();
       const confirmedApprovedProfileIds = new Set();
       try {
-        const syncedSelectedRows = await syncEnrollmentRowsForUserIds(selectedIds, { batchFlush: true });
-        if (!syncedSelectedRows) {
+        const syncedSelectedRows = await syncEnrollmentRowsForUserIds(selectedIds, {
+          batchFlush: true,
+          tolerateRowFailures: true,
+        });
+        if (!syncedSelectedRows.ok) {
           return;
         }
 
@@ -33348,8 +33357,10 @@ function wireAdmin() {
         }
 
         const eligibleUsers = unapprovedUsers.filter((entry) => entry.role === "admin" || hasCompleteStudentApprovalProfile(entry));
+        const incompleteUsers = unapprovedUsers.filter((entry) => !eligibleUsers.includes(entry));
+        const incompleteCount = incompleteUsers.length;
         if (!eligibleUsers.length) {
-          toast("Selected users must complete phone number, year, semester, and course selection before approval.");
+          toast(`${incompleteCount} selected user(s) must complete phone number, year, semester, and course selection before approval.`);
           return;
         }
 
@@ -33374,7 +33385,10 @@ function wireAdmin() {
         const invalidProfileNote = invalidProfileUsers.length
           ? ` ${invalidProfileUsers.length} account(s) are missing Supabase profile links and will be reported as failed.`
           : "";
-        if (!window.confirm(`Approve ${targetProfileIds.length} selected account(s)?${invalidProfileNote}`)) {
+        const incompleteNote = incompleteCount
+          ? ` ${incompleteCount} account(s) will be skipped: they still need a valid phone number, year, semester, and course selection.`
+          : "";
+        if (!window.confirm(`Approve ${targetProfileIds.length} selected account(s)?${incompleteNote}${invalidProfileNote}`)) {
           return;
         }
 
@@ -33479,15 +33493,21 @@ function wireAdmin() {
         if (!approvedCount) {
           const failedLabel = formatAdminUserActionLabelList(failedUsers);
           const failureReason = dbResult.message ? ` ${dbResult.message}` : "";
+          const incompleteReason = incompleteCount
+            ? ` ${incompleteCount} skipped (missing phone number, year, semester, or course selection).`
+            : "";
           toast(
             failedLabel
-              ? `No selected users were approved. Failed: ${failedLabel}.${failureReason}`
-              : `No selected users were approved.${failureReason}`,
+              ? `No selected users were approved. Failed: ${failedLabel}.${incompleteReason}${failureReason}`
+              : `No selected users were approved.${incompleteReason}${failureReason}`,
           );
           return;
         }
 
         let successMessage = `${approvedCount} account(s) approved.`;
+        if (incompleteCount) {
+          successMessage += ` ${incompleteCount} skipped (missing phone number, year, semester, or course selection): ${formatAdminUserActionLabelList(incompleteUsers)}.`;
+        }
         const failedLabel = formatAdminUserActionLabelList(failedUsers);
         if (failedLabel) {
           successMessage += ` Failed: ${failedLabel}.`;
@@ -33672,6 +33692,9 @@ function wireAdmin() {
     const syncNow = Boolean(options?.syncNow);
     const deferSyncFlush = Boolean(options?.deferSyncFlush);
     const suppressSuccessToast = Boolean(options?.suppressSuccessToast);
+    // Bulk actions save every selected row first; a single incomplete row must not
+    // spam the admin with per-row validation toasts (the bulk summary reports it).
+    const suppressValidationToast = Boolean(options?.suppressValidationToast);
     const userId = row?.getAttribute("data-user-id");
     if (!row || !userId) {
       return false;
@@ -33716,7 +33739,9 @@ function wireAdmin() {
       const nameInput = row.querySelector("input[data-field='name']");
       const fullName = String(nameInput?.value || "").trim();
       if (!fullName) {
-        toast("Full name is required.");
+        if (!suppressValidationToast) {
+          toast("Full name is required.");
+        }
         return false;
       }
       users[idx].name = fullName;
@@ -33726,7 +33751,9 @@ function wireAdmin() {
       if (rawPhone) {
         const phoneValidation = validateAndNormalizePhoneNumber(rawPhone);
         if (!phoneValidation.ok) {
-          toast(phoneValidation.message || "Phone number is invalid.");
+          if (!suppressValidationToast) {
+            toast(phoneValidation.message || "Phone number is invalid.");
+          }
           return false;
         }
         normalizedPhone = phoneValidation.number;
@@ -33741,7 +33768,7 @@ function wireAdmin() {
         const year = normalizeAcademicYearOrNull(yearSelect?.value);
         const semester = normalizeAcademicSemesterOrNull(semesterSelect?.value);
         if (year === null || semester === null) {
-          if (mode === "manual" || syncNow) {
+          if (!suppressValidationToast && (mode === "manual" || syncNow)) {
             toast("Select both year and semester before saving.");
           }
           return false;
@@ -33754,7 +33781,9 @@ function wireAdmin() {
         didEnrollmentTermChange = previousYear !== year || previousSemester !== semester;
         const hasCompleteApprovalProfile = hasCompleteStudentApprovalProfile(users[idx]);
         if (!hasCompleteApprovalProfile && previousApproved) {
-          toast("Approved students need a valid phone number, year, semester, and course selection before saving. Add the missing details or suspend the account first.");
+          if (!suppressValidationToast) {
+            toast("Approved students need a valid phone number, year, semester, and course selection before saving. Add the missing details or suspend the account first.");
+          }
           return false;
         }
         if (!hasCompleteApprovalProfile) {
@@ -33889,27 +33918,37 @@ function wireAdmin() {
     return row.dataset.enrollmentSaving !== "1";
   };
 
+  // Returns { ok, failedUserIds }. With tolerateRowFailures, a row that cannot be
+  // saved (incomplete/invalid details) is recorded and skipped instead of aborting
+  // the whole batch, so one bad account can't block approving everyone else.
   const syncEnrollmentRowsForUserIds = async (userIds = [], options = {}) => {
     const batchFlush = Boolean(options?.batchFlush);
+    const tolerateRowFailures = Boolean(options?.tolerateRowFailures);
+    const failedUserIds = [];
     const targetIds = new Set(
       (Array.isArray(userIds) ? userIds : [])
         .map((id) => String(id || "").trim())
         .filter(Boolean),
     );
     if (!targetIds.size) {
-      return true;
+      return { ok: true, failedUserIds };
     }
 
     const targetRows = Array.from(appEl.querySelectorAll("tr[data-user-id]"))
       .filter((row) => targetIds.has(String(row?.getAttribute("data-user-id") || "").trim()));
 
     for (const row of targetRows) {
+      const rowUserId = String(row?.getAttribute("data-user-id") || "").trim();
       clearEnrollmentAutoSaveTimer(row);
       if (row.dataset.enrollmentSaving === "1") {
         const settled = await waitForEnrollmentRowSaveToSettle(row);
         if (!settled) {
-          toast("Please wait for enrollment changes to finish saving.");
-          return false;
+          if (!tolerateRowFailures) {
+            toast("Please wait for enrollment changes to finish saving.");
+            return { ok: false, failedUserIds };
+          }
+          failedUserIds.push(rowUserId);
+          continue;
         }
       }
       const saved = await saveUserEnrollmentFromRow(row, {
@@ -33917,9 +33956,13 @@ function wireAdmin() {
         syncNow: !batchFlush,
         deferSyncFlush: batchFlush,
         suppressSuccessToast: true,
+        suppressValidationToast: tolerateRowFailures,
       });
       if (!saved) {
-        return false;
+        if (!tolerateRowFailures) {
+          return { ok: false, failedUserIds };
+        }
+        failedUserIds.push(rowUserId);
       }
     }
 
@@ -33928,11 +33971,11 @@ function wireAdmin() {
         await flushAdminUserAccountSyncNow();
       } catch (error) {
         toast(`Could not save user details: ${getErrorMessage(error, "Save failed.")}`);
-        return false;
+        return { ok: false, failedUserIds };
       }
     }
 
-    return true;
+    return { ok: true, failedUserIds };
   };
 
   appEl.querySelectorAll("tr[data-user-id]").forEach((row) => {

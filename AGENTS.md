@@ -189,6 +189,24 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-11 — Bulk approve tolerates incomplete accounts
+`syncEnrollmentRowsForUserIds()` saves every selected admin Users row before a
+bulk approve. It previously returned `false` on the first row that failed to
+save — including the "Approved students need a valid phone number, year,
+semester, and course selection" case — which aborted the whole batch, so a
+single incomplete account blocked approving everyone else.
+
+It now returns `{ ok, failedUserIds }` and takes `tolerateRowFailures`. Both
+bulk-approve call sites pass it: unsaveable rows are recorded and skipped, the
+flush still fails the whole action (`ok: false`). `saveUserEnrollmentFromRow()`
+gained `suppressValidationToast` so the batch does not emit one toast per bad
+row. The confirm dialog and the result toast now state how many accounts were
+skipped and what is missing. Eligibility itself is unchanged —
+`hasCompleteStudentApprovalProfile()` is still the gate, so no incomplete
+student is approved. Static cache bust: `2026-08-11.01`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-09 — Coupon foreign keys no longer block Video Course deletion
 `adminDeletePlatformCourse()` correctly issued a direct `platform_courses`
 delete, but migration `20260804205400` made both
