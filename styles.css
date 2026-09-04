@@ -20111,3 +20111,72 @@ body select.admin-role-select:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* Released Android app: the Google Play store card is a real link, while the
+   unreleased App Store / AppGallery cards stay as non-clickable rows. */
+.landing-simple a.lp-store-card {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.landing-simple .lp-store-card.is-live {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--line));
+  background: color-mix(in srgb, var(--brand-soft) 45%, var(--surface));
+}
+
+.landing-simple .lp-store-card.is-live .lp-store-icon {
+  background: var(--brand-strong);
+  color: #fff;
+}
+
+.landing-simple .lp-store-card.is-live .lp-store-platform {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.landing-simple .lp-store-live-dot {
+  flex: none;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: var(--good);
+}
+
+.landing-simple a.lp-store-card.is-live:hover {
+  border-color: var(--brand-strong);
+  background: color-mix(in srgb, var(--brand-soft) 75%, var(--surface));
+  transform: translateY(-2px);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--brand-strong) 18%, transparent);
+}
+
+.landing-simple a.lp-store-card.is-live:focus-visible {
+  outline: 2px solid var(--brand-strong);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-simple a.lp-store-card {
+    transition: none;
+  }
+
+  .landing-simple a.lp-store-card.is-live:hover {
+    transform: none;
+  }
+}
+
+/* `--text` is aliased to `--ink` once on :root (styles.css ~L41), so it computes
+   against the light-theme ink and never follows the per-theme override — which
+   left the store names dark navy on the dark theme's black card. Use `--ink`
+   directly here so all three store cards stay readable in every theme. */
+.landing-simple .lp-store-copy strong {
+  color: var(--ink);
+}

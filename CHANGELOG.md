@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-05 — Android app is live on Google Play
+The homepage mobile app section (and the standalone `#mobile-app` page) now
+advertise the released Android build instead of a coming-soon placeholder. The
+Google Play card is a real link to the public listing that opens in a new tab,
+with a highlighted "Available now" state; the App Store and Huawei AppGallery
+cards are unchanged and stay non-clickable until those builds ship.
+
 ### 2026-08-11 — Signup phone and year/semester stop disappearing
 Details students entered at signup were being dropped when read back, not when
 written. A `profiles.phone` that the website's phone validator rejects — the

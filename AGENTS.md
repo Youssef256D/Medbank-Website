@@ -189,6 +189,37 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-05 — Android app released; Google Play card is now a real link
+The mobile app section was built with all three store cards deliberately
+non-clickable (2026-08-03) because no listing URL existed. The Android build is
+now published, so the Google Play card is an `<a>` to
+`https://play.google.com/store/apps/details?id=medbank.com`
+(`GOOGLE_PLAY_APP_URL`, defined just above `landingMobileAppsSectionHtml()`),
+opening in a new tab with `rel="noopener noreferrer"`.
+
+1. **One shared source, two copies.** `landingMobileAppsSectionHtml()` feeds
+   both the homepage `#landing-mobile-app` section and the standalone
+   `renderMobileAppPage()` route, so the SPA needed one edit — but the static
+   `index.html` first-paint fallback mirrors the same markup and had to be
+   edited to match, or the released badge would flicker back to "coming soon"
+   on every load. Keep those two in sync.
+2. **The other two cards are untouched.** App Store and Huawei AppGallery stay
+   `<div role="listitem">` with coming-soon copy. Only the Google Play card
+   carries `is-live`.
+3. **Copy changes.** Status pill "Mobile apps · Coming soon" → "Android app ·
+   Out now on Google Play"; card "Coming soon on / Google Play" → "Get it on /
+   Google Play" with an "Available now" dot replacing the "Android" platform
+   label; access note "Free to download" → "Free on Google Play". The section
+   `aria-label` dropped "coming soon".
+4. **CSS is appended at the end of `styles.css`**, token-based so all three
+   themes work: `a.lp-store-card` resets link color/decoration, `.is-live`
+   gives the brand-tinted surface and filled icon, and hover/`:focus-visible`
+   states are gated behind `prefers-reduced-motion`.
+5. **Static cache bust:** `2026-09-05.01`.
+
+**Files touched:** `main.js`, `index.html`, `styles.css`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-08-11 — Stored phone/term details are no longer discarded on read
 Signup details "not being recorded" was a **read** bug, not a write bug, plus a
 cross-client validator mismatch. Do not re-introduce either drop.
