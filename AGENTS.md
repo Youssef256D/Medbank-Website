@@ -189,6 +189,44 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-05 — Admin Users list filters by approval status
+Adds an **Approval** select to the admin Users filter form, following the
+existing year/semester pattern exactly (`state.adminUserFilterApproval` →
+`matchesAdminUserFilters` → render).
+
+1. **One predicate, three consumers.** `matchesAdminUserApprovalFilter()` (next
+   to `matchesAdminUserFilters`) is built on `isUserAccessApproved`, the same
+   function behind the pending count and **Approve all pending**, so the filter
+   can never disagree with those. Do not "simplify" it to read `isApproved`
+   directly: `isUserAccessApproved` also reports a student with an incomplete
+   profile as not approved even when `isApproved` is true, and those accounts
+   are exactly the ones an admin needs to find.
+2. **Buckets.** `pending` = `!isUserAccessApproved`; `approved` = its
+   complement (the two partition the list); `incomplete` = pending **and**
+   `!hasCompleteStudentApprovalProfile`, a strict subset of pending that
+   isolates the accounts bulk approve skips (see 2026-08-11). Admins and
+   creators are approved by construction unless explicitly unapproved, and
+   non-students are never "incomplete".
+3. **Unknown values are ignored, not empty.** `normalizeAdminUserApprovalFilter`
+   whitelists to `ADMIN_USER_APPROVAL_FILTERS`, so a stale or hand-edited value
+   falls back to "all accounts" rather than filtering everything out.
+4. **Filtering happens before `ADMIN_USER_RENDER_LIMIT`**, so this is what makes
+   pending accounts reachable in a long user list rather than a cosmetic filter.
+5. **Selection is not cleared on filter change** — the render path already
+   prunes `adminSelectedUserIds` to visible rows via `normalizeAdminUserIdList`,
+   so clearing would only lose still-valid selections.
+6. **No new CSS.** The field reuses the form's existing `.form-row` grid and
+   stacks full-width on mobile.
+7. **Verified** by lifting the real predicates into a Node harness (7 account
+   shapes; partition, subset, and unknown-value invariants) and by driving the
+   live admin Users page: All 6 → Not approved 1 → Approved 5 → back to 6, with
+   the reset button enabling and disabling correctly. The `incomplete` bucket
+   was exercised against synthetic objects through the shipped in-page
+   functions, because the only hosted accounts available are real student rows.
+8. **Static cache bust:** `2026-09-05.02`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-05 — Android app released; Google Play card is now a real link
 The mobile app section was built with all three store cards deliberately
 non-clickable (2026-08-03) because no listing URL existed. The Android build is

@@ -9,6 +9,18 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-05 — Filter the admin Users list by approval status
+The admin Users page has an **Approval** filter beside Year and Semester:
+*All accounts*, *Not approved*, *Not approved · missing details*, and
+*Approved*, each showing a live count. It composes with the existing search,
+year, and semester filters, and because it narrows the list before the render
+cap, pending accounts that were previously pushed off the end of a long user
+list are now reachable. "Not approved" uses the same rule as the pending count
+and **Approve all pending**, so the three always agree — which means a student
+flagged approved in the database but still missing a phone, year, semester, or
+course selection correctly appears as not approved. The extra "missing details"
+option isolates exactly those accounts, since bulk approve skips them.
+
 ### 2026-09-05 — Android app is live on Google Play
 The homepage mobile app section (and the standalone `#mobile-app` page) now
 advertise the released Android build instead of a coming-soon placeholder. The

@@ -411,6 +411,7 @@ const state = {
   adminUserSearch: "",
   adminUserFilterYear: "",
   adminUserFilterSemester: "",
+  adminUserFilterApproval: "",
   adminAddUserPanelOpen: false,
   adminAddUserDraft: createDefaultAdminAddUserDraft(),
   adminAddUserDraftDirty: false,
@@ -5666,6 +5667,35 @@ function restoreUserApprovalState(user, snapshot) {
   return true;
 }
 
+// Approval buckets for the admin Users filter. "pending" deliberately reuses
+// `isUserAccessApproved`, the same predicate behind the pending count and
+// "Approve all pending", so the filter and those actions always agree. Note it
+// reports a student with an incomplete profile as not approved even when
+// `isApproved` is true — those accounts need admin attention, and bulk approve
+// skips them, so "incomplete" splits them out as their own bucket.
+const ADMIN_USER_APPROVAL_FILTERS = ["pending", "approved", "incomplete"];
+
+function normalizeAdminUserApprovalFilter(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ADMIN_USER_APPROVAL_FILTERS.includes(normalized) ? normalized : "";
+}
+
+function matchesAdminUserApprovalFilter(account, approvalFilter) {
+  const filter = normalizeAdminUserApprovalFilter(approvalFilter);
+  if (!filter) {
+    return true;
+  }
+  const approved = isUserAccessApproved(account);
+  if (filter === "approved") {
+    return approved;
+  }
+  if (filter === "pending") {
+    return !approved;
+  }
+  // "incomplete": still waiting on details that block approval entirely.
+  return !approved && !hasCompleteStudentApprovalProfile(account);
+}
+
 function matchesAdminUserFilters(account, filters = {}) {
   if (!account) {
     return false;
@@ -5681,6 +5711,9 @@ function matchesAdminUserFilters(account, filters = {}) {
     return false;
   }
   if (targetSemester !== null && semester !== targetSemester) {
+    return false;
+  }
+  if (!matchesAdminUserApprovalFilter(account, filters?.approval)) {
     return false;
   }
   if (!searchTerms.length) {
@@ -29605,10 +29638,12 @@ function renderAdmin() {
     const userSearchQuery = String(state.adminUserSearch || "");
     const userFilterYear = normalizeAcademicYearOrNull(state.adminUserFilterYear);
     const userFilterSemester = normalizeAcademicSemesterOrNull(state.adminUserFilterSemester);
+    const userFilterApproval = normalizeAdminUserApprovalFilter(state.adminUserFilterApproval);
     const filteredUsers = users.filter((account) => matchesAdminUserFilters(account, {
       search: userSearchQuery,
       year: userFilterYear,
       semester: userFilterSemester,
+      approval: userFilterApproval,
     }));
     const renderedUsers = filteredUsers.slice(0, ADMIN_USER_RENDER_LIMIT);
     const hiddenFilteredUserCount = Math.max(0, filteredUsers.length - renderedUsers.length);
@@ -29629,9 +29664,23 @@ function renderAdmin() {
     const allVisibleSelected = Boolean(visibleSelectableUserIds.length) && selectedUserCount === visibleSelectableUserIds.length;
     const partiallyVisibleSelected = selectedUserCount > 0 && !allVisibleSelected;
     const bulkDeactivateRunning = Boolean(state.adminUserBulkActionRunning);
-    const resetUserFiltersDisabled = !String(userSearchQuery || "").trim() && userFilterYear === null && userFilterSemester === null;
+    const resetUserFiltersDisabled = !String(userSearchQuery || "").trim()
+      && userFilterYear === null
+      && userFilterSemester === null
+      && !userFilterApproval;
     const addUserDraft = normalizeAdminAddUserDraft(state.adminAddUserDraft);
     const pendingCount = users.filter((entry) => entry.role === "student" && !isUserAccessApproved(entry)).length;
+    const approvalFilterCounts = users.reduce((acc, entry) => {
+      if (matchesAdminUserApprovalFilter(entry, "approved")) {
+        acc.approved += 1;
+      } else {
+        acc.pending += 1;
+        if (matchesAdminUserApprovalFilter(entry, "incomplete")) {
+          acc.incomplete += 1;
+        }
+      }
+      return acc;
+    }, { pending: 0, approved: 0, incomplete: 0 });
     const approveAllPendingRunning = Boolean(state.adminApproveAllPendingRunning);
     const accountRows = renderedUsers
       .map((account) => {
@@ -29869,6 +29918,14 @@ function renderAdmin() {
                 <option value="" ${userFilterSemester === null ? "selected" : ""}>All semesters</option>
                 <option value="1" ${userFilterSemester === 1 ? "selected" : ""}>Semester 1</option>
                 <option value="2" ${userFilterSemester === 2 ? "selected" : ""}>Semester 2</option>
+              </select>
+            </label>
+            <label>Approval
+              <select id="admin-user-filter-approval" name="approvalStatus">
+                <option value="" ${!userFilterApproval ? "selected" : ""}>All accounts</option>
+                <option value="pending" ${userFilterApproval === "pending" ? "selected" : ""}>Not approved (${approvalFilterCounts.pending})</option>
+                <option value="incomplete" ${userFilterApproval === "incomplete" ? "selected" : ""}>Not approved · missing details (${approvalFilterCounts.incomplete})</option>
+                <option value="approved" ${userFilterApproval === "approved" ? "selected" : ""}>Approved (${approvalFilterCounts.approved})</option>
               </select>
             </label>
           </div>
@@ -33230,6 +33287,7 @@ function wireAdmin() {
   const adminUserSearchInput = document.getElementById("admin-user-search");
   const adminUserFilterYear = document.getElementById("admin-user-filter-year");
   const adminUserFilterSemester = document.getElementById("admin-user-filter-semester");
+  const adminUserFilterApproval = document.getElementById("admin-user-filter-approval");
   const selectAllUsersInput = appEl.querySelector("[data-action='admin-select-all-users']");
   if (selectAllUsersInput instanceof HTMLInputElement) {
     selectAllUsersInput.indeterminate = selectAllUsersInput.dataset.indeterminate === "true";
@@ -33269,11 +33327,13 @@ function wireAdmin() {
   const syncAdminUserFilters = () => {
     state.adminUserFilterYear = String(adminUserFilterYear?.value || "");
     state.adminUserFilterSemester = String(adminUserFilterSemester?.value || "");
+    state.adminUserFilterApproval = normalizeAdminUserApprovalFilter(adminUserFilterApproval?.value);
     state.skipNextRouteAnimation = true;
     render();
   };
   adminUserFilterYear?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterSemester?.addEventListener("change", syncAdminUserFilters);
+  adminUserFilterApproval?.addEventListener("change", syncAdminUserFilters);
 
   adminUserSearchInput?.addEventListener("input", () => {
     const nextValue = String(adminUserSearchInput.value || "");
@@ -33298,6 +33358,7 @@ function wireAdmin() {
     state.adminUserSearch = "";
     state.adminUserFilterYear = "";
     state.adminUserFilterSemester = "";
+    state.adminUserFilterApproval = "";
     state.adminSelectedUserIds = [];
     if (adminUserSearchDebounce) {
       window.clearTimeout(adminUserSearchDebounce);
