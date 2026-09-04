@@ -189,6 +189,43 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-08-11 — Stored phone/term details are no longer discarded on read
+Signup details "not being recorded" was a **read** bug, not a write bug, plus a
+cross-client validator mismatch. Do not re-introduce either drop.
+
+1. **A stored phone this app cannot validate was thrown away.** Both
+   `refreshCurrentUserFromRelationalProfile` (~L4647) and
+   `hydrateRelationalProfiles` (~L9749) did
+   `validation.ok ? validation.number : ""`, so any `profiles.phone` the website
+   validator rejects resolved to empty. The admin row then rendered an empty
+   phone input, and the next row save wrote `phone: null` back to Supabase —
+   the student's number was erased. The Flutter app
+   (`Medbank-App/lib/features/auth/models/student_profile_details.dart`)
+   accepts *any* value with 8+ digits and ≤20 characters, so mobile signups
+   store formats like `1004532728` or a landline that
+   `validateAndNormalizePhoneNumber` rejects. That is the "some users" cohort.
+   New `resolveStoredPhoneValue()` keeps the raw stored text when it cannot be
+   normalized; a valid number still wins over a raw one from either source.
+   Approval gating is unchanged — `hasCompleteStudentProfile()` still requires a
+   valid number — so the admin now *sees* the bad number and can fix it instead
+   of being told the student never entered one.
+2. **A half-filled term resolved to no term at all.** Year and semester were
+   gated on `hasProfileEnrollmentTerm` (both non-null) before either was used,
+   so a profile with a year but no semester showed neither. New
+   `resolveEnrollmentTermPair(primary, fallback)` prefers a complete pair from
+   either source and only then falls back to whichever single values exist. Both
+   hydration paths use it.
+3. **Not fixed here:** the two clients still disagree on what a valid phone is.
+   The durable fix is to align the Flutter validator with
+   `validateAndNormalizePhoneNumber`, or to relax this one. Until then the
+   website preserves and displays what the app stored.
+4. **Verified** with a Node harness that lifts the real helpers out of `main.js`
+   (12 cases: valid/normalizing formats, mobile-app formats this validator
+   rejects, empty input, and all six term-pairing combinations). `node --check`
+   and `npm run lint` clean. Static cache bust: `2026-08-11.02`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-08-11 — Bulk approve tolerates incomplete accounts
 `syncEnrollmentRowsForUserIds()` saves every selected admin Users row before a
 bulk approve. It previously returned `false` on the first row that failed to

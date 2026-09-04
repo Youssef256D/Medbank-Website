@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-08-11 — Signup phone and year/semester stop disappearing
+Details students entered at signup were being dropped when read back, not when
+written. A `profiles.phone` that the website's phone validator rejects — the
+mobile app accepts looser formats — resolved to an empty string, so the admin
+row showed a blank phone and the next save wrote that blank back to Supabase,
+erasing the number. Stored values are now kept and shown as-is when they cannot
+be normalized, with valid numbers still preferred. Separately, a profile that
+had a year but no semester (or the reverse) resolved to neither; a complete
+year+semester pair from either the profile or the enrollment rows now wins, and
+single values survive when no complete pair exists.
+
 ### 2026-08-11 — Bulk approve no longer aborts on one incomplete student
 Approving a multi-user selection stopped at the first account whose row could
 not be saved (missing/invalid phone, year, semester, or an already-approved

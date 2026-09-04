@@ -4654,27 +4654,32 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
     || "",
   ).trim());
   const normalizedMetadataPhone = metadataPhoneValidation.ok ? metadataPhoneValidation.number : "";
-  const resolvedPhone = normalizedProfilePhone || normalizedFallbackPhone || normalizedMetadataPhone;
+  // A valid number always wins; a stored value this validator rejects is kept
+  // as-is rather than discarded, so it stays visible and fixable.
+  const resolvedPhone = normalizedProfilePhone
+    || normalizedFallbackPhone
+    || normalizedMetadataPhone
+    || resolveStoredPhoneValue(profile.phone)
+    || resolveStoredPhoneValue(localUser?.phone)
+    || resolveStoredPhoneValue(authUser?.user_metadata?.phone || authUser?.user_metadata?.phone_number);
   const relationalEnrollmentYear = normalizeAcademicYearOrNull(relationalEnrollmentTerm?.year);
   const relationalEnrollmentSemester = normalizeAcademicSemesterOrNull(relationalEnrollmentTerm?.semester);
   const hasActiveEnrollmentRows = role === "student" && relationalAssignedCourses.length > 0;
   const canUseProfileEnrollmentTerm = role === "student" && profileYear !== null && profileSemester !== null;
-  let year = role === "student"
-    ? (
-      relationalEnrollmentYear
-        ?? (canUseProfileEnrollmentTerm ? profileYear : null)
-        ?? fallbackEnrollmentYear
-        ?? metadataEnrollmentYear
+  const resolvedEnrollmentTerm = role === "student"
+    ? resolveEnrollmentTermPair(
+      { year: relationalEnrollmentYear, semester: relationalEnrollmentSemester },
+      resolveEnrollmentTermPair(
+        { year: profileYear, semester: profileSemester },
+        resolveEnrollmentTermPair(
+          { year: fallbackEnrollmentYear, semester: fallbackEnrollmentSemester },
+          { year: metadataEnrollmentYear, semester: metadataEnrollmentSemester },
+        ),
+      ),
     )
-    : null;
-  let semester = role === "student"
-    ? (
-      relationalEnrollmentSemester
-        ?? (canUseProfileEnrollmentTerm ? profileSemester : null)
-        ?? fallbackEnrollmentSemester
-        ?? metadataEnrollmentSemester
-    )
-    : null;
+    : { year: null, semester: null };
+  let year = resolvedEnrollmentTerm.year;
+  let semester = resolvedEnrollmentTerm.semester;
   const serverTermCourses = role === "student" && year !== null && semester !== null
     ? getCurriculumCourses(year, semester)
     : [];
@@ -5030,6 +5035,44 @@ function validateAndNormalizePhoneNumber(rawPhone) {
     message: "",
     number: `+${digits}`,
     country: countryRule?.country || "International",
+  };
+}
+
+// A phone number written by another client can fail this app's stricter
+// validator: the Flutter app accepts anything with 8+ digits and 20 or fewer
+// characters, so `1004532728` or a landline reaches `profiles.phone` and is
+// rejected here. Dropping such a value to "" made the number invisible in the
+// admin dashboard, and the next row save then wrote the empty value back to
+// Supabase, erasing what the student had entered. Keep the stored text visible
+// instead; approval still requires a valid number, so an admin can see and fix
+// it rather than being told the student "never filled it in".
+function resolveStoredPhoneValue(rawPhone) {
+  const trimmed = String(rawPhone || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const validation = validateAndNormalizePhoneNumber(trimmed);
+  return validation.ok ? validation.number : trimmed;
+}
+
+// Year and semester are only meaningful as a pair, but a profile that carries
+// just one of them used to resolve to neither, which reads as "the student never
+// picked a term". Prefer a complete pair from either source, then fall back to
+// whichever single values exist.
+function resolveEnrollmentTermPair(primary, fallback) {
+  const primaryYear = normalizeAcademicYearOrNull(primary?.year);
+  const primarySemester = normalizeAcademicSemesterOrNull(primary?.semester);
+  if (primaryYear !== null && primarySemester !== null) {
+    return { year: primaryYear, semester: primarySemester };
+  }
+  const fallbackYear = normalizeAcademicYearOrNull(fallback?.year);
+  const fallbackSemester = normalizeAcademicSemesterOrNull(fallback?.semester);
+  if (fallbackYear !== null && fallbackSemester !== null) {
+    return { year: fallbackYear, semester: fallbackSemester };
+  }
+  return {
+    year: primaryYear ?? fallbackYear,
+    semester: primarySemester ?? fallbackSemester,
   };
 }
 
@@ -9707,9 +9750,13 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
     const normalizedProfilePhone = profilePhoneValidation.ok ? profilePhoneValidation.number : "";
     const existingPhoneValidation = validateAndNormalizePhoneNumber(existingPhone);
     const normalizedExistingPhone = existingPhoneValidation.ok ? existingPhoneValidation.number : "";
+    // A valid number always wins. A stored value this validator rejects (the
+    // mobile app allows looser formats) is surfaced as-is instead of being
+    // discarded, so the admin row shows the real number rather than an empty
+    // field that the next save would write back over it.
     const resolvedPhone = preferLocalOverDb
-      ? (normalizedExistingPhone || normalizedProfilePhone)
-      : (normalizedProfilePhone || normalizedExistingPhone);
+      ? (normalizedExistingPhone || normalizedProfilePhone || existingPhone || profilePhone)
+      : (normalizedProfilePhone || normalizedExistingPhone || profilePhone || existingPhone);
     const existingCourses = sanitizeCourseAssignments(existing?.assignedCourses || []);
     const readEnrolledCourses = role === "student"
       ? sanitizeCourseAssignments(enrollmentCourseMap[profile.id] || [])
@@ -9724,22 +9771,25 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
     const activeEnrollmentCount = Number(enrollmentDiagnostics.activeEnrollmentCount || 0);
     const hasActiveEnrollmentRows = role !== "student" || enrolledCourses.length > 0;
     // Profile year/semester remains the admin-managed source of truth, while
-    // enrollment rows are the database access index used by RLS.
-    const hasProfileEnrollmentTerm = profileYear !== null && profileSemester !== null;
-    let year = role === "student"
+    // enrollment rows are the database access index used by RLS. A complete pair
+    // wins over a half-filled one; a profile carrying only a year (or only a
+    // semester) used to resolve to neither, which showed as "no term picked".
+    const serverEnrollmentTerm = resolveEnrollmentTermPair(
+      { year: profileYear, semester: profileSemester },
+      { year: enrolledYear, semester: enrolledSemester },
+    );
+    const resolvedTerm = role === "student"
       ? (
           preferLocalOverDb
-            ? (existingYear ?? (hasProfileEnrollmentTerm ? profileYear : enrolledYear))
-            : (hasProfileEnrollmentTerm ? profileYear : enrolledYear)
+            ? resolveEnrollmentTermPair(
+              { year: existingYear, semester: existingSemester },
+              serverEnrollmentTerm,
+            )
+            : serverEnrollmentTerm
         )
-      : null;
-    let semester = role === "student"
-      ? (
-          preferLocalOverDb
-            ? (existingSemester ?? (hasProfileEnrollmentTerm ? profileSemester : enrolledSemester))
-            : (hasProfileEnrollmentTerm ? profileSemester : enrolledSemester)
-        )
-      : null;
+      : { year: null, semester: null };
+    let year = resolvedTerm.year;
+    let semester = resolvedTerm.semester;
     const serverTermCourses = role === "student" && year !== null && semester !== null
       ? getCurriculumCourses(year, semester)
       : [];
