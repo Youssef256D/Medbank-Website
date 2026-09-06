@@ -189,6 +189,30 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-06 — Google sign-in hidden on the website
+`supabase.config.js -> googleOAuthEnabled` is now `false`, mirroring the
+`appleOAuthEnabled` pattern from 2026-08-09. This is **UI visibility only** —
+the hosted Google provider, `startGoogleOAuthSignIn()`, the OAuth callback in
+`bootstrap.js`, and the `complete-profile` onboarding route are all untouched,
+so existing Google accounts still sign in and the mobile app is unaffected.
+Restore the website buttons by flipping only this flag.
+
+1. **The empty OAuth row is removed, not just the button.** Both the login and
+   signup forms wrap the whole `.auth-oauth-row` (plus login's `or` divider and
+   signup's `or sign up with email` divider) in a
+   `googleOAuthEnabled || appleOAuthEnabled` guard. With both providers off the
+   markup would otherwise render an empty flex row and a stray divider.
+2. **Wiring needed no change.** `wireAuth()` already reads both buttons with
+   `document.getElementById(...)` and attaches via `googleButton?.
+   addEventListener`, so an absent button is a no-op.
+3. **Signup copy follows the flag.** "Use Google or sign up with email." becomes
+   "Sign up with email." when Google is hidden; the phone-format examples are
+   unchanged.
+4. **Static cache bust:** `2026-09-06.01`.
+
+**Files touched:** `main.js`, `supabase.config.js`, `index.html`,
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-05 — Admin Users list filters by approval status
 Adds an **Approval** select to the admin Users filter form, following the
 existing year/semester pattern exactly (`state.adminUserFilterApproval` →

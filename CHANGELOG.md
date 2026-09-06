@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-06 — Hide Google login and signup buttons
+Disabled the website Google buttons with `supabase.config.js -> googleOAuthEnabled`.
+Login and signup omit the empty OAuth row and divider when both providers are
+hidden, and signup copy now directs students to email. Hosted Google auth and
+callback handling remain available. Static cache bust: `2026-09-06.01`.
+
 ### 2026-09-05 — Filter the admin Users list by approval status
 The admin Users page has an **Approval** filter beside Year and Semester:
 *All accounts*, *Not approved*, *Not approved · missing details*, and

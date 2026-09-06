@@ -19,6 +19,8 @@ window.__SUPABASE_CONFIG = {
   // Set true in the native wrapper before main.js loads if the mobile app is
   // served from the web URL but should still use the native callback scheme.
   forceMobileAuthRedirect: false,
+  // Website UI visibility only. Set true to restore Google login/signup buttons.
+  googleOAuthEnabled: false,
   // Website UI visibility only. The hosted Apple provider remains configured
   // for the web Services ID and native bundle ID so it can be restored later.
   appleOAuthEnabled: false,

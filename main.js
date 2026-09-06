@@ -878,6 +878,7 @@ const SUPABASE_CONFIG = {
   authRedirectUrl: window.__SUPABASE_CONFIG?.authRedirectUrl || "",
   mobileAuthRedirectUrl: window.__SUPABASE_CONFIG?.mobileAuthRedirectUrl || "",
   forceMobileAuthRedirect: window.__SUPABASE_CONFIG?.forceMobileAuthRedirect === true,
+  googleOAuthEnabled: window.__SUPABASE_CONFIG?.googleOAuthEnabled === true,
   appleOAuthEnabled: window.__SUPABASE_CONFIG?.appleOAuthEnabled === true,
   questionImageBucket: window.__SUPABASE_CONFIG?.questionImageBucket || "question-images",
   courseVideoBucket: window.__SUPABASE_CONFIG?.courseVideoBucket || "course-videos",
@@ -22753,11 +22754,13 @@ function renderAuth(mode) {
               <button class="btn auth-submit-btn" type="submit">Log in</button>
               <button class="btn ghost" type="button" data-nav="forgot">Forgot password</button>
             </div>
+            ${SUPABASE_CONFIG.googleOAuthEnabled || SUPABASE_CONFIG.appleOAuthEnabled ? `
             <div class="auth-divider"><span>or</span></div>
             <div class="auth-oauth-row">
-              <button class="btn ghost auth-google-btn" id="login-google-btn" type="button" aria-label="Continue with Google" title="Continue with Google"><span class="auth-oauth-label">Continue with Google</span></button>
+              ${SUPABASE_CONFIG.googleOAuthEnabled ? '<button class="btn ghost auth-google-btn" id="login-google-btn" type="button" aria-label="Continue with Google" title="Continue with Google"><span class="auth-oauth-label">Continue with Google</span></button>' : ""}
               ${SUPABASE_CONFIG.appleOAuthEnabled ? '<button class="btn ghost auth-apple-btn" id="login-apple-btn" type="button" aria-label="Continue with Apple" title="Continue with Apple"><span class="auth-oauth-label">Continue with Apple</span></button>' : ""}
             </div>
+            ` : ""}
           </form>
           <div class="auth-inline auth-public-switch">
             <span class="text">Need an account?</span>
@@ -22883,13 +22886,15 @@ function renderAuth(mode) {
         </div>
         <div class="auth-public-card auth-signup-card">
           <h3>Create account</h3>
-          <p class="subtle">Use Google or sign up with email. Phone examples: 01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode.</p>
+          <p class="subtle">${SUPABASE_CONFIG.googleOAuthEnabled ? "Use Google or sign up with email." : "Sign up with email."} Phone examples: 01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode.</p>
           <form id="signup-form" class="auth-form auth-public-form" method="post" autocomplete="on">
+            ${SUPABASE_CONFIG.googleOAuthEnabled || SUPABASE_CONFIG.appleOAuthEnabled ? `
             <div class="auth-oauth-row">
-              <button class="btn ghost auth-google-btn" id="signup-google-btn" type="button" aria-label="Continue with Google" title="Continue with Google"><span class="auth-oauth-label">Continue with Google</span></button>
+              ${SUPABASE_CONFIG.googleOAuthEnabled ? '<button class="btn ghost auth-google-btn" id="signup-google-btn" type="button" aria-label="Continue with Google" title="Continue with Google"><span class="auth-oauth-label">Continue with Google</span></button>' : ""}
               ${SUPABASE_CONFIG.appleOAuthEnabled ? '<button class="btn ghost auth-apple-btn" id="signup-apple-btn" type="button" aria-label="Continue with Apple" title="Continue with Apple"><span class="auth-oauth-label">Continue with Apple</span></button>' : ""}
             </div>
             <div class="auth-divider"><span>or sign up with email</span></div>
+            ` : ""}
             <div class="form-row">
               <label>Full name <input name="name" autocomplete="name" required /></label>
               <label>Email <input type="email" name="email" autocomplete="username email" inputmode="email" autocapitalize="none" spellcheck="false" required aria-required="true" /></label>
