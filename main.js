@@ -17160,6 +17160,13 @@ function bindGlobalEvents() {
   globalEventsBound = true;
 
   document.body.addEventListener("click", async (event) => {
+    if (event.target.closest("#public-menu-toggle")) {
+      setPublicMenuOpen(!topbarEl.classList.contains("public-menu-open"));
+      return;
+    }
+    if (event.target.closest("[data-nav]") || !event.target.closest(".topbar")) {
+      setPublicMenuOpen(false);
+    }
     const clickedInsideUserMenu = Boolean(event.target.closest(".user-menu"));
     const clickedInsideNotificationMenu = Boolean(event.target.closest(".notification-menu"));
     const actionTarget = event.target.closest("[data-action]");
@@ -17443,6 +17450,10 @@ function bindGlobalEvents() {
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && topbarEl?.classList.contains("public-menu-open")) {
+      setPublicMenuOpen(false);
+      document.getElementById("public-menu-toggle")?.focus();
+    }
     handleProtectedCoursesKeydown(event);
     if (event.defaultPrevented) {
       return;
@@ -20697,6 +20708,8 @@ function restoreFocusState() {
 }
 
 function render() {
+  landingSectionObserver?.disconnect();
+  landingSectionObserver = null;
   persistActiveLessonVideoPlaybackState({ source: "render", allowAutoplayRestore: true });
   preserveActiveLessonVideoContainerForRender();
   saveFocusState();
@@ -21038,6 +21051,7 @@ function render() {
   if (isPublicMarketingRoute && appEl.querySelector(".marketing-page")) {
     appEl.insertAdjacentHTML("beforeend", marketingFooterHtml());
   }
+  wireStudyPreviews();
   discardUnrestoredLessonVideoContainer();
 
   const isAdminQuestionModalOpen = state.route === "admin" && state.adminPage === "questions" && state.adminQuestionModalOpen;
@@ -21246,6 +21260,13 @@ function renderTopbarNotificationMenu(user, unreadNotificationCount, unreadNotif
 }
 
 
+function setPublicMenuOpen(open) {
+  topbarEl?.classList.toggle("public-menu-open", open);
+  const toggle = document.getElementById("public-menu-toggle");
+  toggle?.setAttribute("aria-expanded", String(open));
+  if (toggle) toggle.textContent = open ? "Close ×" : "Menu ☰";
+}
+
 function syncTopbar() {
   const nativeApp = syncNativeAppBodyClass();
   const user = getCurrentUser();
@@ -21298,6 +21319,9 @@ function syncTopbar() {
   authActionsEl.classList.toggle("hidden", false);
 
   publicNavEl.classList.toggle("hidden", Boolean(user) || maintenanceRestricted);
+  const menuUnavailable = Boolean(user) || maintenanceRestricted || authRestorePending || nativeApp;
+  document.getElementById("public-menu-toggle")?.classList.toggle("hidden", menuUnavailable);
+  if (menuUnavailable) setPublicMenuOpen(false);
   if (!user && !maintenanceRestricted) {
     publicNavEl.querySelectorAll("[data-nav]").forEach((button) => {
       button.classList.toggle("is-active", button.getAttribute("data-nav") === state.route);
@@ -21498,7 +21522,11 @@ function registerGsapMotionPlugins(gsap = getGsapMotionApi()) {
   }
 }
 
+let landingMotionMedia = null;
+
 function cleanupGsapPageMotion() {
+  landingMotionMedia?.revert();
+  landingMotionMedia = null;
   if (routeTransitionAnimation) {
     routeTransitionAnimation.kill();
     routeTransitionAnimation = null;
@@ -21542,6 +21570,8 @@ function getGsapRouteOffset() {
 }
 
 function getGsapRouteRevealTargets() {
+  // The refreshed marketing pages own their reveal lifecycle in one context.
+  if (appEl?.querySelector(".lp-refresh")) return [];
   if (!appEl || !PUBLIC_MARKETING_ROUTE_SET.has(String(state.route || ""))) {
     return [];
   }
@@ -21659,7 +21689,53 @@ function runGsapRouteEnhancements(options = {}) {
   }
 }
 
+// Progressive enhancement: no content depends on an animation completing.
+// matchMedia reverts inline styles on resize, reduced-motion changes, and routing.
+function setupLandingEditorialMotion(gsap = getGsapMotionApi()) {
+  const page = appEl.querySelector(".lp-refresh");
+  if (!page || !gsap?.matchMedia || landingMotionMedia) return;
+  registerGsapMotionPlugins(gsap);
+  landingMotionMedia = gsap.matchMedia();
+  landingMotionMedia.add({
+    desktop: "(min-width: 1001px)",
+    mobile: "(max-width: 1000px)",
+    reduce: "(prefers-reduced-motion: reduce)",
+  }, (context) => {
+    if (context.conditions.reduce) return;
+    const visible = (node) => node.getBoundingClientRect().top < window.innerHeight;
+    const hero = Array.from(page.querySelectorAll(".lp-hero > *, .study-preview" )).filter(visible);
+    if (hero.length) {
+      gsap.fromTo(hero, { y: 20, opacity: 0.25 }, {
+        y: 0, opacity: 1, duration: 0.7, stagger: 0.06, ease: "power3.out",
+        clearProps: "transform,opacity",
+      });
+    }
+    if (!window.ScrollTrigger) return;
+    page.querySelectorAll(".lp-feature-layout, .lp-course-feature, .lp-app-release, .lp-section-heading, .lp-start-steps, .lp-faq-layout, .lp-final-cta, .lp-contact").forEach((section) => {
+      if (visible(section)) return;
+      gsap.fromTo(section, { y: 24, opacity: 0.65 }, {
+        y: 0, opacity: 1, duration: 0.7, ease: "power3.out", clearProps: "transform,opacity",
+        scrollTrigger: { id: "mcq-editorial-reveal", trigger: section, start: "top 94%", once: true },
+      });
+    });
+    if (context.conditions.desktop) {
+      const art = page.querySelector(".lp-anatomy-orbit");
+      const course = page.querySelector(".lp-course-visual");
+      if (art && course) {
+        gsap.fromTo(art, { rotation: 25 }, {
+          rotation: 65, ease: "none",
+          scrollTrigger: { id: "mcq-editorial-course", trigger: course, start: "top bottom", end: "bottom top", scrub: 0.6 },
+        });
+      }
+    }
+  }, page);
+}
+
 function setupGsapMarketingPageMotion(gsap = getGsapMotionApi()) {
+  if (appEl?.querySelector(".lp-refresh")) {
+    setupLandingEditorialMotion(gsap);
+    return;
+  }
   if (!gsap || isReducedMotionEnabled()) {
     return;
   }
@@ -22024,31 +22100,86 @@ function applyStaggerIndices() {
   });
 }
 
+function landingStudyPreviewHtml() {
+  return `
+    <div class="study-preview" data-study-preview>
+      <div class="study-preview-bar"><span class="study-preview-brand">MedBank <span>/ Practice</span></span><span class="study-mode">Tutor mode</span></div>
+      <div class="study-preview-body">
+        <div class="study-preview-meta"><span>Anatomy · Anatomical planes</span><span>Sample question</span></div>
+        <h2>Which anatomical plane divides the body into equal left and right halves?</h2>
+        <p class="study-preview-hint">Try it. Choose an answer below.</p>
+        <div class="study-choices" role="group" aria-label="Sample question answers">
+          <button type="button" data-preview-choice="A" aria-pressed="false"><span>A</span>Coronal (frontal) plane</button>
+          <button type="button" data-preview-choice="B" aria-pressed="false"><span>B</span>Transverse (axial) plane</button>
+          <button type="button" data-preview-choice="C" aria-pressed="false"><span>C</span>Midsagittal plane</button>
+          <button type="button" data-preview-choice="D" aria-pressed="false"><span>D</span>Oblique plane</button>
+        </div>
+        <div class="study-feedback" role="status" aria-live="polite" aria-atomic="true"></div>
+        <div class="study-preview-foot"><span>Learn the reasoning, not just the answer.</span><button type="button" class="study-reset" hidden>Try again</button></div>
+      </div>
+      <div class="study-preview-caption"><span aria-hidden="true">↗</span> A little practice. A clearer understanding.</div>
+    </div>
+  `;
+}
+
+function wireStudyPreviews() {
+  appEl.querySelectorAll("[data-study-preview]").forEach((preview) => {
+    const choices = Array.from(preview.querySelectorAll("[data-preview-choice]"));
+    const feedback = preview.querySelector(".study-feedback");
+    const reset = preview.querySelector(".study-reset");
+    const hint = preview.querySelector(".study-preview-hint");
+    const showAnswer = (button) => {
+      state.landingPreviewChoice = button.dataset.previewChoice;
+      const correct = button.dataset.previewChoice === "C";
+      choices.forEach((choice) => {
+        choice.setAttribute("aria-pressed", String(choice === button));
+        choice.classList.toggle("is-correct", choice.dataset.previewChoice === "C");
+        choice.classList.toggle("is-incorrect", choice === button && !correct);
+      });
+      hint.textContent = correct ? "Correct — now explore why." : "Good practice starts with understanding why.";
+      feedback.replaceChildren();
+      const heading = document.createElement("strong");
+      heading.textContent = correct ? "Correct. C — Midsagittal plane" : "The correct answer is C — Midsagittal plane";
+      const explanation = document.createElement("p");
+      explanation.textContent = "The midsagittal (median) plane runs vertically through the midline, dividing the body into equal left and right halves.";
+      feedback.append(heading, explanation);
+      preview.classList.add("is-answered");
+      reset.hidden = false;
+      window.ScrollTrigger?.refresh?.();
+    };
+    choices.forEach((button) => button.addEventListener("click", () => showAnswer(button)));
+    const previousChoice = choices.find((button) => button.dataset.previewChoice === state.landingPreviewChoice);
+    if (previousChoice) showAnswer(previousChoice);
+    reset.addEventListener("click", () => {
+      state.landingPreviewChoice = "";
+      choices.forEach((choice) => {
+        choice.setAttribute("aria-pressed", "false");
+        choice.classList.remove("is-correct", "is-incorrect");
+      });
+      feedback.replaceChildren();
+      preview.classList.remove("is-answered");
+      hint.textContent = "Try it. Choose an answer below.";
+      reset.hidden = true;
+      choices[0]?.focus();
+      window.ScrollTrigger?.refresh?.();
+    });
+  });
+}
+
 function landingMcqBankSectionHtml() {
   return `
-    <div class="lp-product">
+    <div class="lp-product lp-feature-layout">
       <div class="lp-product-head">
-        <p class="lp-kicker">MCQ Bank</p>
-        <h2 class="lp-product-title">A medical MCQ bank made for real exam practice.</h2>
-        <p class="lp-product-lede">Build focused blocks by course and topic, answer in tutor or timed mode, and read a clear explanation after every question.</p>
+        <p class="lp-kicker">The MCQ bank</p>
+        <h2 class="lp-product-title">Turn “I think I know”<br>into “I understand.”</h2>
+        <p class="lp-product-lede">Practice that follows your courses. Build a focused test, understand each answer, and know what to revisit next.</p>
+        <div class="lp-product-actions"><button class="btn" data-nav="signup">Start practising <span aria-hidden="true">↗</span></button></div>
       </div>
       <ul class="lp-points">
-        <li>
-          <h3>Course-aligned questions</h3>
-          <p>Every question maps to a course and topic, so you practise exactly what you're studying.</p>
-        </li>
-        <li>
-          <h3>Exam-style sessions</h3>
-          <p>Tutor mode to learn, timed mode for pressure. Flag, eliminate, and review as you go.</p>
-        </li>
-        <li>
-          <h3>Progress you can see</h3>
-          <p>Track accuracy and timing by topic to find the weak areas worth another pass.</p>
-        </li>
+        <li><span class="lp-feature-symbol" aria-hidden="true">◎</span><div><h3>Your course. Your focus.</h3><p>Choose subjects and topics from your assigned question bank.</p></div></li>
+        <li><span class="lp-feature-symbol" aria-hidden="true">◷</span><div><h3>Learn at your pace. Test under pressure.</h3><p>Use tutor mode for explanations as you go, or timed mode for exam practice.</p></div></li>
+        <li><span class="lp-feature-symbol" aria-hidden="true">↗</span><div><h3>Make your next session count.</h3><p>Review mistakes, flag questions, and track accuracy by topic.</p></div></li>
       </ul>
-      <div class="lp-product-actions">
-        <button class="btn" data-nav="signup">Create account</button>
-      </div>
     </div>
   `;
 }
@@ -22067,15 +22198,8 @@ function landingMobileAppsSectionHtml() {
             <p class="lp-launch-status"><span aria-hidden="true"></span> Android app · Out now on Google Play</p>
           </div>
         </div>
-        <h2 class="lp-mobile-title">Your complete medical study loop, now built for mobile.</h2>
-        <p class="lp-mobile-lede">Use the same approved MedBank account to practise assigned MCQs, review explanations, continue video courses, and keep progress synced across phone, tablet, and web.</p>
-
-        <ul class="lp-app-feature-list" aria-label="MedBank mobile app features">
-          <li><strong>Focused tests</strong><span>Choose subjects and topics, then study in tutor or timed mode.</span></li>
-          <li><strong>Detailed review</strong><span>See explanations, revisit mistakes, and keep private question notes.</span></li>
-          <li><strong>Video learning</strong><span>Open enrolled courses, modules, materials, and lesson progress.</span></li>
-          <li><strong>Made for every screen</strong><span>English and Arabic, light and dark themes, phone and tablet layouts.</span></li>
-        </ul>
+        <h2 class="lp-mobile-title">A study break.<br>Without breaking your flow.</h2>
+        <p class="lp-mobile-lede">Your MCQs, video courses, and progress — ready when you are. Continue with the same MedBank account on Android.</p>
 
         <div class="lp-store-list" role="group" aria-label="MedBank mobile app release platforms">
           <a class="lp-store-card is-live" href="${GOOGLE_PLAY_APP_URL}" target="_blank" rel="noopener noreferrer" aria-label="Download MedBank on Google Play for Android. Opens Google Play in a new tab.">
@@ -22086,28 +22210,14 @@ function landingMobileAppsSectionHtml() {
             <span class="lp-store-platform"><span class="lp-store-live-dot" aria-hidden="true"></span>Available now</span>
           </a>
 
-          <div class="lp-store-card" aria-label="Coming soon on the App Store for iPhone and iPad">
-            <span class="lp-store-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="2.8" width="14" height="18.4" rx="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M9.2 16.2 12 7.8l2.8 8.4M10.1 13.4h3.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </span>
-            <span class="lp-store-copy"><small>Coming soon on the</small><strong>App Store</strong></span>
-            <span class="lp-store-platform">iPhone · iPad</span>
-          </div>
-
-          <div class="lp-store-card" aria-label="Coming soon on Huawei AppGallery">
-            <span class="lp-store-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 11.2c-2.9-1.5-4.4-3.4-4.4-5.8 2.7.2 4.4 2.1 4.4 5.8Zm0 0c2.9-1.5 4.4-3.4 4.4-5.8-2.7.2-4.4 2.1-4.4 5.8ZM10.9 12c-3.1-.5-5.3.2-6.7 2.1 2.3 1.4 4.8.7 6.7-2.1Zm2.2 0c3.1-.5 5.3.2 6.7 2.1-2.3 1.4-4.8.7-6.7-2.1ZM12 13.1c-2.1 2.2-2.7 4.5-1.6 6.5 2.3-1.2 2.9-3.6 1.6-6.5Zm0 0c2.1 2.2 2.7 4.5 1.6 6.5-2.3-1.2-2.9-3.6-1.6-6.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
-            </span>
-            <span class="lp-store-copy"><small>Coming soon on Huawei</small><strong>AppGallery</strong></span>
-            <span class="lp-store-platform">Huawei devices</span>
-          </div>
         </div>
-        <p class="lp-app-access-note">Free on Google Play · No ads or in-app purchases · Student access requires administrator approval.</p>
+        <p class="lp-app-access-note">Free to download · English &amp; Arabic · Phone &amp; tablet</p>
+        <p class="lp-upcoming-stores">iOS and Huawei apps are coming soon.</p>
       </div>
 
       <div class="lp-app-showcase">
         <div class="lp-screen-intro">
-          <div><span>Inside the app</span><strong>Real screens. One connected workspace.</strong></div>
+          <div><span>Inside the app</span><strong>Your MedBank, on the move.</strong></div>
           <span aria-hidden="true">Swipe to explore →</span>
         </div>
         <div class="lp-screen-reel" tabindex="0" aria-label="MedBank mobile app screenshots. Scroll horizontally to explore all six screens.">
@@ -22143,28 +22253,20 @@ function landingMobileAppsSectionHtml() {
 
 function landingCoursesSectionHtml() {
   return `
-    <div class="lp-product">
-      <div class="lp-product-head">
-        <p class="lp-kicker">Video Courses</p>
-        <h2 class="lp-product-title">Secure course video, on any device.</h2>
-        <p class="lp-product-lede">Watch lectures through a protected streaming pipeline, with access controlled by your course admin.</p>
+    <div class="lp-product lp-course-feature">
+      <div class="lp-course-visual" aria-label="Illustration of the course learning workflow">
+        <div class="lp-course-visual-top"><span>YOUR LEARNING SPACE</span><span aria-hidden="true">↗</span></div>
+        <div class="lp-lesson-art" aria-hidden="true"><div class="lp-anatomy-orbit"></div><span class="lp-play-symbol">▶</span><span class="lp-lesson-art-caption">Watch. Pause. Understand.</span></div>
+        <div class="lp-lesson-row"><span class="lp-lesson-icon" aria-hidden="true">▷</span><div><strong>Pick up where you left off</strong><span>Lessons and progress, together</span></div></div>
+        <div class="lp-lesson-row"><span class="lp-lesson-icon" aria-hidden="true">☷</span><div><strong>Keep your materials close</strong><span>Course modules, resources, and notes</span></div></div>
+        <p class="lp-illustration-note">Course workspace illustration</p>
       </div>
-      <ul class="lp-points">
-        <li>
-          <h3>Protected streaming</h3>
-          <p>Lectures play inside the platform through a token-protected pipeline, tied to each enrolled student.</p>
-        </li>
-        <li>
-          <h3>Study anywhere</h3>
-          <p>Pick up courses on desktop or mobile with your progress saved automatically.</p>
-        </li>
-        <li>
-          <h3>Admin-approved access</h3>
-          <p>New students join once a course admin approves them — no open sign-ups.</p>
-        </li>
-      </ul>
-      <div class="lp-product-actions">
-        <button class="btn" data-nav="contact">Contact us about courses</button>
+      <div class="lp-product-head">
+        <p class="lp-kicker">Video courses</p>
+        <h2 class="lp-product-title">Your next lesson.<br>Right where you left it.</h2>
+        <p class="lp-product-lede">Keep lectures, course materials, and lesson progress in one place. Continue your enrolled courses on desktop or mobile.</p>
+        <ul class="lp-course-benefits"><li>Organised modules and lesson resources</li><li>Progress saved as you learn</li><li>Secure access to your enrolled courses</li></ul>
+        <div class="lp-product-actions"><button class="btn" data-nav="signup">Create account <span aria-hidden="true">↗</span></button><button class="btn ghost" data-nav="contact">Ask about course access</button></div>
       </div>
     </div>
   `;
@@ -22202,7 +22304,10 @@ function marketingFooterHtml() {
           <strong>MedBank</strong>
           <span>Medical learning, kept focused.</span>
         </div>
-        <nav class="marketing-footer-links" aria-label="Legal links">
+        <nav class="marketing-footer-links" aria-label="Footer navigation">
+          <button data-nav="mcqs">MCQ Bank</button>
+          <button data-nav="courses-platform">Video courses</button>
+          <button data-nav="contact">Contact</button>
           <a href="privacy.html">Privacy policy</a>
           <a href="deletion.html">Account deletion</a>
         </nav>
@@ -22219,46 +22324,61 @@ function landingContactSectionHtml() {
   `;
 }
 
+function landingGettingStartedHtml() {
+  return `
+    <div class="lp-getting-started">
+      <div class="lp-section-heading"><p class="lp-kicker">Getting started</p><h2 class="lp-product-title">A clear path to your first session.</h2><p class="lp-product-lede">Create your account, get access, and make time for a little progress.</p></div>
+      <ol class="lp-start-steps">
+        <li><span aria-hidden="true">01</span><h3>Make it yours</h3><p>Create an account and complete your contact details, year, semester, and course selection.</p></li>
+        <li><span aria-hidden="true">02</span><h3>Get your access approved</h3><p>Your course admin reviews your details. Video course access depends on your enrollment or activation code.</p></li>
+        <li><span aria-hidden="true">03</span><h3>Build your study rhythm</h3><p>Practise assigned MCQs, continue enrolled lessons, and return to the topics that need another look.</p></li>
+      </ol>
+      <div class="lp-faq-layout">
+        <div><p class="lp-kicker">A few useful answers</p><h2 class="lp-product-title">Before you begin.</h2><p class="lp-product-lede">Still need a hand?</p><button class="btn ghost" data-nav="contact">Contact MedBank <span aria-hidden="true">↗</span></button></div>
+        <div class="lp-faq">
+          <details><summary>Can I start studying as soon as I sign up?</summary><p>You can create your account right away. Access to assigned MCQs requires a complete profile and administrator approval. Your video courses appear according to your course enrollment.</p></details>
+          <details><summary>How do I get access to a video course?</summary><p>Ask your course admin about enrollment. If you have a course activation code, you can redeem it from the Video Courses area after signing in.</p></details>
+          <details><summary>Is MedBank free?</summary><p>The Android app is free to download. Course access and pricing are arranged separately with the course admin. Contact MedBank for the details that apply to your courses.</p></details>
+          <details><summary>Can I use my account on my phone?</summary><p>Yes. Use the website on your phone or download MedBank for Android. Sign in with the same account to continue your study progress. iOS and Huawei apps are coming soon.</p></details>
+        </div>
+      </div>
+      <div class="lp-final-cta"><div><p class="lp-kicker">Your next step</p><h2>Make room for a little progress.</h2></div><button class="btn" data-nav="signup">Create your account <span aria-hidden="true">↗</span></button></div>
+    </div>
+  `;
+}
+
+function landingHeroHtml() {
+  return `
+    <div class="lp-hero-grid">
+      <div class="lp-hero">
+        <p class="lp-eyebrow"><span aria-hidden="true"></span> Built around the way you study</p>
+        <h1 class="lp-hero-title">Understand<br>your courses.<br><em>Trust your practice.</em></h1>
+        <p class="lp-hero-lede">Your medical courses and MCQ practice, together. Learn from every answer and go into your next exam better prepared.</p>
+        <div class="lp-hero-actions"><button class="btn" data-nav="signup">Create account <span aria-hidden="true">↗</span></button><button class="btn ghost" data-scroll-to="landing-mcqs">Explore the MCQ bank <span aria-hidden="true">↓</span></button></div>
+        <p class="lp-hero-note">Already studying with us? <button data-nav="login">Log in <span aria-hidden="true">→</span></button></p>
+      </div>
+      ${landingStudyPreviewHtml()}
+    </div>
+    <div class="lp-study-path" aria-label="The MedBank study workflow"><span><b>Learn</b> with your courses</span><span aria-hidden="true">→</span><span><b>Practise</b> with purpose</span><span aria-hidden="true">→</span><span><b>Review</b> what matters</span></div>
+  `;
+}
+
 function renderLanding() {
   return `
-    <div class="panel marketing-page landing-page landing-page-scroll landing-simple">
-
-      <section id="landing-home" class="landing-scroll-section lp-home">
-        <div class="lp-hero">
-          <p class="lp-eyebrow">MedBank</p>
-          <h1 class="lp-hero-title">Protected courses <span class="lp-plus" aria-hidden="true">+</span> a medical MCQ bank.</h1>
-          <p class="lp-hero-lede">Stream lectures securely and practise course-aligned MCQs with instant explanations. One simple platform.</p>
-          <div class="lp-hero-actions">
-            <button class="btn" data-nav="login">Log in</button>
-            <button class="btn ghost" data-nav="signup">Sign up</button>
-          </div>
-          <p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>
-        </div>
-      </section>
-
-      <section id="landing-mobile-app" class="landing-scroll-section lp-section lp-mobile-launch" aria-label="MedBank mobile apps">
-        ${landingMobileAppsSectionHtml()}
-      </section>
-
-      <section id="landing-mcqs" class="landing-scroll-section lp-section">
-        ${landingMcqBankSectionHtml()}
-      </section>
-
-      <section id="landing-courses-platform" class="landing-scroll-section lp-section">
-        ${landingCoursesSectionHtml()}
-      </section>
-
-      <section id="landing-contact" class="landing-scroll-section lp-section">
-        ${landingContactSectionHtml()}
-      </section>
-
+    <div class="panel marketing-page landing-page landing-page-scroll landing-simple lp-refresh">
+      <section id="landing-home" class="landing-scroll-section lp-home">${landingHeroHtml()}</section>
+      <section id="landing-mcqs" class="landing-scroll-section lp-section">${landingMcqBankSectionHtml()}</section>
+      <section id="landing-courses-platform" class="landing-scroll-section lp-section">${landingCoursesSectionHtml()}</section>
+      <section id="landing-mobile-app" class="landing-scroll-section lp-section lp-mobile-launch" aria-label="MedBank mobile apps">${landingMobileAppsSectionHtml()}</section>
+      <section id="landing-start" class="landing-scroll-section lp-section">${landingGettingStartedHtml()}</section>
+      <section id="landing-contact" class="landing-scroll-section lp-section">${landingContactSectionHtml()}</section>
     </div>
   `;
 }
 
 function renderMcqBankPage() {
   return `
-    <section class="panel marketing-page landing-page landing-simple lp-standalone">
+    <section class="panel marketing-page landing-page landing-simple lp-refresh lp-standalone">
       ${landingMcqBankSectionHtml()}
     </section>
   `;
@@ -22266,7 +22386,7 @@ function renderMcqBankPage() {
 
 function renderMobileAppPage() {
   return `
-    <section class="panel marketing-page landing-page landing-simple lp-standalone lp-mobile-app-page">
+    <section class="panel marketing-page landing-page landing-simple lp-refresh lp-standalone lp-mobile-app-page">
       ${landingMobileAppsSectionHtml()}
     </section>
   `;
@@ -22274,7 +22394,7 @@ function renderMobileAppPage() {
 
 function renderCoursesPlatformPage() {
   return `
-    <section class="panel marketing-page landing-page landing-simple lp-standalone">
+    <section class="panel marketing-page landing-page landing-simple lp-refresh lp-standalone">
       ${landingCoursesSectionHtml()}
     </section>
   `;
@@ -22471,7 +22591,7 @@ function renderAbout() {
 
 function renderContact() {
   return `
-    <section class="panel marketing-page landing-page landing-simple lp-standalone">
+    <section class="panel marketing-page landing-page landing-simple lp-refresh lp-standalone">
       <div class="lp-contact">
         ${landingContactBodyHtml()}
       </div>
@@ -22492,19 +22612,25 @@ function wireContact() {
   });
 }
 
+let landingSectionObserver = null;
+
 function wireLanding() {
   wireContact();
+  appEl.querySelectorAll(".lp-faq details").forEach((details) => {
+    details.addEventListener("toggle", () => window.ScrollTrigger?.refresh?.());
+  });
 
   const sections = Array.from(document.querySelectorAll(".landing-scroll-section[id]"));
   if (!sections.length) return;
 
   const navBtns = Array.from(document.querySelectorAll("#public-nav [data-nav]"));
 
-  const observer = new IntersectionObserver(
+  landingSectionObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) return;
         const sectionId = entry.target.id;
+        if (sectionId === "landing-start") return;
         const routePart = sectionId === "landing-home" ? "landing" : sectionId.replace("landing-", "");
         navBtns.forEach((btn) => {
           btn.classList.toggle("is-active", btn.getAttribute("data-nav") === routePart);
@@ -22514,7 +22640,7 @@ function wireLanding() {
     { rootMargin: "0px 0px -55% 0px", threshold: 0 },
   );
 
-  sections.forEach((section) => observer.observe(section));
+  sections.forEach((section) => landingSectionObserver.observe(section));
 
   document.querySelectorAll("[data-scroll-to]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -52461,7 +52587,7 @@ function renderAppLauncher() {
         <div class="launcher-header">
           <p class="kicker">Welcome back</p>
           <h2 class="title">Dr. ${escapeHtml(user?.name || "")}</h2>
-          <p class="subtle">Select a portal to begin your learning session</p>
+          <p class="subtle">Where would you like to pick up today?</p>
         </div>
         
         <div class="app-launcher-grid">
@@ -52475,7 +52601,7 @@ function renderAppLauncher() {
             </div>
             <h3>MCQ Bank</h3>
             <p>${canOpenMcqBank ? "Practice questions, customize mock tests, and track your performance trends." : "MCQ Bank is disabled for this account. Video Courses access is managed separately."}</p>
-            <span class="app-launcher-badge">${canOpenMcqBank ? 'Practice Portal <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>' : "No MCQ access"}</span>
+            <span class="app-launcher-badge">${canOpenMcqBank ? 'Open MCQ Bank <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>' : "No MCQ access"}</span>
           </button>
           
           <button class="card app-launcher-card ${coursesBlocked ? "is-disabled" : ""}" ${coursesBlocked ? 'data-action="courses-coming-soon-notice" aria-disabled="true"' : 'data-action="courses-home-tab" data-tab="dashboard"'} type="button">
@@ -52488,7 +52614,7 @@ function renderAppLauncher() {
             </div>
             <h3>Video Courses</h3>
             <p>${coursesBlocked ? (coursesBlockedByAccess ? "Video Courses access is disabled for this account. Contact the admin if you need this portal enabled." : "The Video Courses portal is being prepared. MCQ Bank remains available.") : "Browse interactive syllabus modules, access lessons, and view learning resources."}</p>
-            <span class="app-launcher-badge">${coursesBlocked ? (coursesBlockedByAccess ? "No Video Courses access" : "Coming soon") : "Learning Portal"} ${coursesBlocked ? "" : '<svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>'}</span>
+            <span class="app-launcher-badge">${coursesBlocked ? (coursesBlockedByAccess ? "No Video Courses access" : "Coming soon") : "Open Video Courses"} ${coursesBlocked ? "" : '<svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>'}</span>
           </button>
         </div>
       </section>

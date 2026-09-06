@@ -662,6 +662,17 @@
     if (!("serviceWorker" in navigator)) {
       return;
     }
+    // Local previews must show edited source on refresh. A production cache-first
+    // worker otherwise keeps serving an older main.js with the same release tag.
+    if (["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)) {
+      const previewScope = new URL("./", window.location.href).href;
+      navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+        const matching = registrations.filter((registration) => registration.scope === previewScope);
+        await Promise.all(matching.map((registration) => registration.unregister()));
+        if (matching.length && navigator.serviceWorker.controller) window.location.reload();
+      }).catch((error) => console.warn("Could not clear local preview service worker.", error));
+      return;
+    }
     let reloadedForControllerChange = false;
     window.addEventListener("load", () => {
       const currentSwUrl = new URL(`./sw.js${versionSuffix}`, window.location.href).href;

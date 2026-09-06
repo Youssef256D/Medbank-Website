@@ -189,6 +189,35 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-06 — Frontend preview refresh
+Homepage now leads with a working sample MCQ, followed by course benefits,
+video learning, the Android release, onboarding steps, and native FAQ disclosures.
+Shared web navigation, auth forms, launcher surfaces, and theme aliases were refined.
+
+1. **Static first paint stays in sync.** After editing the pure landing renderers,
+   run `npm run sync:landing` and commit the resulting `index.html`. This dev-only
+   script extracts an explicit list of renderers; it is not a runtime build step.
+   `npm test` checks shell parity, anchors/assets, and inline-script CSP hashes;
+   CI now runs these alongside the existing course utility tests.
+2. **One animation owner.** `.lp-refresh` uses the existing GSAP/ScrollTrigger
+   loader. `landingMotionMedia` owns responsive motion and reverts on route changes.
+   Reduced-motion users receive static content. No new library was added. Keep
+   content visible if animation loading fails. The section observer is disconnected
+   before each render, and FAQ/sample-answer layout changes refresh scroll triggers.
+3. **Sample state is ephemeral.** The homepage sample stores only its choice in
+   `state.landingPreviewChoice`; it does not write student answers or progress.
+4. **Mobile public menu** closes on navigation, outside click, and Escape; Escape
+   restores toggle focus. Keep its ARIA state and auth/native visibility in sync.
+5. **Localhost previews bypass the service worker.** Bootstrap unregisters only
+   workers matching the current local app scope; hosted production caching is
+   unchanged. Serve previews with no-cache headers when editing an existing version.
+6. **Verified:** desktop 1440px and phone 320/390px, light/dark/comfort themes,
+   homepage answer/reset, FAQ, public menu, signup course selection, local demo
+   student launcher/test/tutor feedback/review/analytics/profile. Live auth and
+   protected course playback were not exercised in this visual pass.
+7. **Static cache bust:** `2026-09-06.03`.
+
+
 ### 2026-09-05 — Admin Users list filters by approval status
 Adds an **Approval** select to the admin Users filter form, following the
 existing year/semester pattern exactly (`state.adminUserFilterApproval` →

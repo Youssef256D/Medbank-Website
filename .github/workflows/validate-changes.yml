@@ -56,5 +56,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test UI contracts and course utilities
+        run: npm test
+
       - name: Build optional assets
         run: npm run build

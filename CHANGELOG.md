@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-06 — Homepage and shared frontend refresh
+- New homepage hierarchy, interactive sample MCQ with explanations, focused course
+  sections, Android screenshots, getting-started steps, and accessible FAQ.
+- Responsive public navigation and clearer buttons, forms, keyboard focus,
+  light/dark/comfort colors, and student launcher surfaces.
+- Restrained GSAP entrances and scroll motion with reduced-motion support, using
+  the existing animation library. No runtime build requirement was introduced.
+- Static homepage synchronization and CSP/asset checks now run in the test suite.
+  Local previews bypass service-worker caching so source edits appear on refresh.
+
+
 ### 2026-09-05 — Filter the admin Users list by approval status
 The admin Users page has an **Approval** filter beside Year and Semester:
 *All accounts*, *Not approved*, *Not approved · missing details*, and
