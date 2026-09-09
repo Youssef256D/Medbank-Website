@@ -16,7 +16,7 @@
     default-src 'self';
     base-uri 'self';
     object-src 'none';
-    script-src 'strict-dynamic' 'sha256-y5Ap2v7PdafPQ76mV7WtW2yUKDNNCyodHZMI1Fjtp+Y=' 'sha256-1S+8EQulXPWc991JVLmfT997fTdj2EFjgB0KF1IRTo4=' 'sha256-q8VYAUvV/EfqOXxdiZl1PY3W8Ki7BFJ4INnlmUtXzFw=' 'sha256-FPD7QAdFxGDXHyrsfXpNPWKJb6s+uB9Skt7nkPJAqdk=' 'sha256-pl46CMm/wxCBYEek38R074U/HYIr+XxseX52QCiS6n4=' https://cdn.jsdelivr.net https://unpkg.com 'self' 'unsafe-inline';
+    script-src 'strict-dynamic' 'sha256-pl46CMm/wxCBYEek38R074U/HYIr+XxseX52QCiS6n4=' 'sha256-7o/gGNdeHUs0c+deEGnktwWdA+TYzFR6YmXsfP4JRfc=' 'sha256-1S+8EQulXPWc991JVLmfT997fTdj2EFjgB0KF1IRTo4=' 'sha256-q8VYAUvV/EfqOXxdiZl1PY3W8Ki7BFJ4INnlmUtXzFw=' 'sha256-FPD7QAdFxGDXHyrsfXpNPWKJb6s+uB9Skt7nkPJAqdk=' https://cdn.jsdelivr.net https://unpkg.com 'self' 'unsafe-inline';
     style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
     font-src 'self' https://fonts.gstatic.com data:;
     img-src 'self' data: blob: https:;
@@ -33,7 +33,7 @@
   <meta name="robots" content="index, follow, max-image-preview:large" />
   <meta name="googlebot" content="index, follow, max-image-preview:large" />
   <meta name="application-name" content="MedBank" />
-  <meta name="app-version" content="2026-09-06.01" />
+  <meta name="app-version" content="2026-09-10.02" />
   <title>MedBank | Medical MCQ Bank &amp; Video Courses</title>
   <link rel="canonical" href="https://youssef256d.github.io/Medbank-Website/" />
   <link rel="sitemap" type="application/xml" href="https://youssef256d.github.io/Medbank-Website/sitemap.xml" />
@@ -124,7 +124,12 @@
         theme = raw;
       }
       const normalized = String(theme || "").trim().toLowerCase();
-      if (normalized === "dark") {
+      // Dark mode is temporarily withdrawn - keep this in sync with
+      // THEME_DARK_ENABLED in main.js. Without the guard here, a browser with a
+      // stored "dark" preference would flash a dark first paint before main.js
+      // resolved it back to light.
+      const darkThemeEnabled = false;
+      if (normalized === "dark" && darkThemeEnabled) {
         document.documentElement.classList.add("theme-dark");
       } else if (normalized === "comfort") {
         document.documentElement.classList.add("theme-comfort");
@@ -208,6 +213,16 @@
             <button class="btn" data-nav="login">Log in</button>
             <button class="btn ghost" data-nav="signup">Sign up</button>
           </div>
+          <div class="lp-hero-explore">
+            <span class="lp-hero-explore-label">Explore:</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mobile-app">Mobile App</button>
+            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mcqs">MCQ Bank</button>
+            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-courses-platform">Video Courses</button>
+            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-contact">Contact</button>
+          </div>
           <p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>
         </div>
       </section>
@@ -260,12 +275,88 @@
           </div>
         </div>
       </section>
+      <section id="landing-mcqs" class="landing-scroll-section lp-section">
+        <div class="lp-product">
+          <div class="lp-product-head">
+            <p class="lp-kicker">MCQ Bank</p>
+            <h2 class="lp-product-title">A medical MCQ bank made for real exam practice.</h2>
+            <p class="lp-product-lede">Build focused blocks by course and topic, answer in tutor or timed mode, and read a clear explanation after every question.</p>
+          </div>
+          <ul class="lp-points">
+            <li>
+              <h3>Course-aligned questions</h3>
+              <p>Every question maps to a course and topic, so you practise exactly what you're studying.</p>
+            </li>
+            <li>
+              <h3>Exam-style sessions</h3>
+              <p>Tutor mode to learn, timed mode for pressure. Flag, eliminate, and review as you go.</p>
+            </li>
+            <li>
+              <h3>Progress you can see</h3>
+              <p>Track accuracy and timing by topic to find the weak areas worth another pass.</p>
+            </li>
+          </ul>
+          <div class="lp-product-actions">
+            <button class="btn" data-nav="signup">Create account</button>
+          </div>
+        </div>
+      </section>
+      <section id="landing-courses-platform" class="landing-scroll-section lp-section">
+        <div class="lp-product">
+          <div class="lp-product-head">
+            <p class="lp-kicker">Video Courses</p>
+            <h2 class="lp-product-title">Secure course video, on any device.</h2>
+            <p class="lp-product-lede">Watch lectures through a protected streaming pipeline, with access controlled by your course admin.</p>
+          </div>
+          <ul class="lp-points">
+            <li>
+              <h3>Protected streaming</h3>
+              <p>Lectures play inside the platform through a token-protected pipeline, tied to each enrolled student.</p>
+            </li>
+            <li>
+              <h3>Study anywhere</h3>
+              <p>Pick up courses on desktop or mobile with your progress saved automatically.</p>
+            </li>
+            <li>
+              <h3>Admin-approved access</h3>
+              <p>New students join once a course admin approves them — no open sign-ups.</p>
+            </li>
+          </ul>
+          <div class="lp-product-actions">
+            <button class="btn" data-nav="contact">Contact us about courses</button>
+          </div>
+        </div>
+      </section>
+      <section id="landing-contact" class="landing-scroll-section lp-section">
+        <div class="lp-contact">
+          <div class="lp-product-head">
+            <p class="lp-kicker">Contact</p>
+            <h2 class="lp-product-title">Get in touch.</h2>
+            <p class="lp-product-lede">To bring your courses to MedBank, or for access and pricing details, reach the platform owner directly.</p>
+          </div>
+          <div class="lp-contact-card">
+            <p class="lp-contact-name">Youssef Ayoub <span>· MedBank owner</span></p>
+            <div class="lp-contact-lines">
+              <a class="lp-contact-line" href="tel:+201004532728">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                <span>+20 100 453 2728</span>
+              </a>
+              <a class="lp-contact-line" href="mailto:Code.Youssefaayoub@gmail.com">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                <span>Code.Youssefaayoub@gmail.com</span>
+              </a>
+            </div>
+            <p class="lp-contact-hint">Message or call for contact and pricing details.</p>
+          </div>
+        </div>
+      </section>
     </div>
     <footer class="marketing-footer">
       <div class="marketing-footer-inner">
         <div class="marketing-footer-brand">
           <strong>MedBank</strong>
           <span>Medical learning, kept focused.</span>
+          <small class="marketing-footer-copy">© 2026 MedBank. All rights reserved.</small>
         </div>
         <nav class="marketing-footer-links" aria-label="Legal links">
           <a href="privacy.html">Privacy policy</a>

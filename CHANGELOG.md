@@ -9,6 +9,72 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-10 — Login notice, signup cleanup, dark mode paused
+Four changes to the signed-out screens, shipped together as `2026-09-10.02`.
+
+**A one-time notice on the login page.** Anyone opening Log in sees a short
+panel explaining that Google sign-in is gone and that they should sign up again
+with the same email address. It has a *Create account* button and a *Got it*
+dismiss, and once dismissed it never comes back on that browser. This is the
+only in-app way to reach the people whose accounts were removed on 2026-09-10 —
+they have no account and no device token, so a notification cannot find them.
+
+**Invite code removed from signup.** The optional *Invite code* field is gone.
+It only ever checked two demo codes held in browser storage, had no admin
+screen behind it, and was never stored on the account.
+
+**Phone examples moved into the field.** The accepted phone formats were spelled
+out in the paragraph under *Create account* and are now the phone input's
+placeholder, so the hint sits where it applies and disappears as soon as the
+student types.
+
+**Dark mode is temporarily switched off.** The theme button now alternates light
+and comfort. Anyone already in dark mode is moved to light on their next load.
+Nothing was deleted — the dark theme and all its styling are intact behind a
+single flag.
+
+### 2026-09-10 — Google-registered accounts removed so their emails are free
+779 accounts that could sign in with Google were archived and deleted from
+Supabase Auth: all 777 Google students (both the 661 who had no password and the
+116 who also had one) plus 2 Google admin accounts. `code.youssefaayoub@gmail.com`
+was deliberately kept, so admin access is intact.
+
+Every email address is now released — those people register again at the normal
+signup form with email and password. They get a **new MedBank ID** and start
+unapproved, and their previous tests, progress, and enrollments are gone. Old
+MedBank IDs are not reused, so admins searching by an old number will not find
+anyone; the exported roster is how you map old IDs to new ones.
+
+Before the delete, each account was snapshotted into a new `archive` schema
+(`archive.deleted_accounts`) — profile, enrollments, test history, test blocks
+and items, notifications, device tokens, and presence — as an audit record. The
+archive schema is not exposed to the API. No RLS policy, gating column, or
+frontend file changed; this was a data operation only.
+
+Runbook and full verification: `docs/delete-google-users-runbook.md`.
+
+### 2026-09-09 — Auto-approve pending students from the admin Users page
+The Users page has an **Auto-approve** switch beside *Approve all pending*.
+While it is on, every admin dashboard refresh approves the pending students who
+already pass the eligibility rule that *Approve all pending* uses — a valid
+phone number, year, semester, and course selection — so complete accounts no
+longer wait for someone to click. Accounts still missing details are left alone
+for a human, exactly as before.
+
+The switch is site-wide (`app_feature_flags` -> `student_auto_approval`) and is
+readable and writable only by admins, so it survives a reload and is shared
+across admins. It is admin-session-driven by design: with no admin dashboard
+open, nothing is approved. Approval itself still goes through the normal admin
+path and Supabase RLS remains the real access gate — no policy, gating column,
+or approval rule changed. Static cache bust: `2026-09-09.03-local`.
+
+### 2026-09-06 — Home page improvements and layout alignment
+On branch `homepage-improvements`:
+1. **Pre-rendered all landing sections in `index.html`**: Added static fallback markup for MCQ Bank, Video Courses, and Contact sections to eliminate layout shift (CLS) on initial paint and ensure topbar anchor links resolve prior to script execution.
+2. **Sticky topbar scroll alignment**: Added `scroll-margin-top: 5.5rem` to `.landing-scroll-section` so headings across all sections are not obscured behind the sticky header when scrolled into view.
+3. **Hero state awareness and explore links**: When signed in, the hero CTA dynamically offers "Open MedBank" and "My profile" rather than login/signup. Added quick jump anchors to smoothly scroll to key platform sections.
+4. **Footer copyright**: Added copyright notice in `.marketing-footer` in both static shell and dynamic template. Static cache bust: `2026-09-06.02`.
+
 ### 2026-09-06 — Hide Google login and signup buttons
 Disabled the website Google buttons with `supabase.config.js -> googleOAuthEnabled`.
 Login and signup omit the empty OAuth row and divider when both providers are

@@ -189,6 +189,177 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-10 — Login notice, signup cleanup, dark mode paused
+Frontend batch shipped as `2026-09-10.02`. No auth, access, RLS, or sync
+behaviour changed.
+
+1. **`googleMigrationNoticeHtml()` + `hasDismissedGoogleMigrationNotice()`**
+   (defined just above `renderAuth`) render a one-time panel at the top of the
+   login card, dismissed via `medbank_google_migration_notice_v1` in
+   `localStorage`. **Browser-scoped and dismissal-based on purpose:** the reader
+   is signed out so there is no user row to record against, and a notice that
+   burned itself on first render would fail exactly the person who opened the
+   page and left without reading. Both storage calls are wrapped in try/catch —
+   a private window that throws re-shows the notice rather than hiding it.
+2. **`.auth-notice` CSS is deliberately not token-based.** It lives inside
+   `.auth-public-card`, which stays `rgba(255,255,255,0.9)` in all three themes,
+   while `--ink`, `--muted`, `--brand` and `--brand-soft` all flip to light
+   values under `body.theme-dark` — that combination rendered near-white text on
+   a white card. The card itself dodges this by using `var(--text)`, which
+   resolves once at `:root` and is therefore **frozen to the light palette**
+   (note: the 2026-07-05 entry claims these aliases follow the active theme;
+   they do not, and `--text` reading `#102a43` while `--ink` reads `#f5f5f5`
+   under `theme-dark` is the proof). The notice uses fixed light-surface colours
+   instead. Its button selectors are prefixed with `body` because
+   `body.theme-dark .btn.ghost` is (0,3,1) and outranks `.auth-notice .btn.x`
+   at (0,3,0).
+3. **Invite code deleted from signup** — the field, the `data.get("inviteCode")`
+   read, and the `STORAGE_KEYS.invites` check. It validated against two seeded
+   demo codes in browser storage, had no admin UI, and never reached the
+   profile. `STORAGE_KEYS.invites` and its seed are left in place: they are
+   inert once nothing reads them, and the key appears in two sync-key lists that
+   are not worth disturbing for a dead field.
+4. **Phone examples moved from the signup subtitle to the input placeholder**
+   in both signup variants (normal and the Google-onboarding flow). The full
+   list clips on narrow phones, showing the first two formats — accepted
+   trade-off for putting the hint where it applies.
+5. **`THEME_DARK_ENABLED = false`** (next to `THEME_COMFORT`) pauses dark mode
+   in four places: `getStoredThemePreference` resolves a stored `dark` to light,
+   the `toggle-theme` cycle skips it, both button-label paths, and `applyTheme`
+   as a last-resort guard. **The `index.html` first-paint bootstrap has its own
+   copy of this guard and must stay in sync** — without it a browser holding a
+   `dark` preference flashes a dark first paint before `main.js` corrects it.
+   Restore dark by flipping both flags; nothing was deleted.
+6. **The CSP inline-script hashes were recomputed** because the theme bootstrap
+   changed. When you do this, mask HTML comments first: the CSP maintenance note
+   at the top of `index.html` contains a literal `<script>` that a naive regex
+   matches, which swallows the JSON-LD block and silently drops its hash.
+   Verified afterwards that every inline script's hash is present in the
+   directive and that only the edited script's hash moved.
+7. **Verified** in the browser at desktop and 375px: notice renders, dismiss
+   persists across reload, *Create account* navigates and counts as
+   acknowledged; legible in light, dark and comfort (dark checked before it was
+   paused); signup has no invite field and the placeholder carries the formats;
+   a stored `dark` preference resolves to light with no dark first paint; the
+   toggle alternates light/comfort and never reaches dark. `node --check` and
+   `npm run lint` clean.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`, `docs/announcements/2026-09-10-google-account-migration.md`.
+
+### 2026-09-10 — 779 Google-registered accounts archived and deleted
+Every account that could sign in with Google was removed from Supabase Auth so
+its email address is released for email+password re-registration: 777 students
+(661 google-only, 116 google+password) and 2 admins. `code.youssefaayoub@gmail.com`
+was excluded by name and still has admin access; `testadmin@medbank.com` was
+never in scope. **This was data, not schema or policy** — no RLS, gating column,
+or served file changed.
+
+1. **`auth.identities` is the ground truth for "is this a Google account",
+   not `profiles.auth_provider`.** That column comes from a one-time backfill
+   (`20260218054626`) and is best-effort thereafter, so it can be stale or null.
+   Every query here joined `auth.identities`.
+2. **The delete targets `auth.users`, nothing else.** `profiles.id` is
+   `REFERENCES auth.users(id) ON DELETE CASCADE` and eight tables cascade from
+   `profiles`, so one delete removes the graph. Deleting the `profiles` row
+   alone would *not* release the email — the `auth.users` row still holds it and
+   signup keeps failing with "already registered".
+3. **`archive.deleted_accounts` (migration `20260909224007`) is the record.**
+   Each account was snapshotted as JSONB immediately before deletion: auth user
+   + identities, full profile, enrollments, test history, blocks and items,
+   platform enrollments and lesson progress, notifications and reads, device
+   tokens, presence, `app_state` keys, and an activity-session summary. The
+   `archive` schema is **not** in the PostgREST exposed schemas and the table has
+   RLS on with no policies, so anon/authenticated cannot reach it. It is an audit
+   record, not an undo button — restoring would mean new auth ids and remapping
+   every `user_id`.
+4. **`app_state` has no FK to `auth.users`.** 1,740 user-scoped rows (18 MB,
+   keys `u:<uid>:*`) would have been left orphaned behind the deleted accounts,
+   so they were deleted in the same transaction. Their keys are in the archive.
+   Any future account-deletion path must do this too, or it leaks rows.
+5. **Two FK groups can block a delete like this** and were checked first:
+   `platform_course_coupon_redemptions.user_id` and the three
+   `platform_course_coupons` provenance columns are RESTRICT against `profiles`.
+   Zero targets held any, so the delete ran clean. Check them again next time —
+   a coupon redemption will abort the whole statement.
+6. **The delete ran inside a `DO` block that raises on a row-count mismatch**,
+   so a wrong target set rolls back rather than committing. Verified after:
+   0 targets remain, 0 of the 779 emails still taken, 0 orphan identities,
+   profiles, enrollments, test-history, or `app_state` rows; `auth.users` and
+   `profiles` both 587.
+7. **Not done, and it matters:** the hosted **Google provider is still enabled**.
+   The website hides the buttons (`googleOAuthEnabled: false`, 2026-09-06) but
+   the Android app can still sign in with Google, which would recreate a
+   google-only account and undo this. Disabling the hosted provider is an auth
+   change under rule §1 and needs explicit confirmation.
+
+**Files touched:** `supabase/migrations/20260909224007_add_account_archive.sql`,
+its rollback, `docs/delete-google-users-runbook.md`, `CHANGELOG.md`, `AGENTS.md`.
+Hosted data: 779 Auth users archived and deleted, 1,740 `app_state` rows removed.
+
+### 2026-09-09 — Auto-approval switch on the admin Users page
+Adds an **Auto-approve** switch beside *Approve all pending*. While it is on,
+each admin dashboard poll approves the pending students who already qualify.
+
+1. **One eligibility rule, one write path.** `approveEligiblePendingStudents()`
+   (next to the approval predicates) is now the whole body of both the
+   *Approve all pending* click handler and the automatic sweep. Do not
+   reimplement either side: the button and the sweep must never be able to
+   disagree about who qualifies (`hasCompleteStudentApprovalProfile`, per
+   2026-09-05) or about how approval is written (relational profile update,
+   then `syncAdminAccessChangeNow`). The handler keeps only what is genuinely
+   its own — the confirm dialog, the busy flag, and the toast.
+2. **`syncEnrollmentRows` is a parameter, not a dependency.** That row save is
+   DOM-driven and lives inside `wireAdmin`, so only the button can pass it. The
+   sweep passes nothing and instead refuses to run while any row draft is
+   unsaved, so it only ever acts on stored profile data — it can never approve
+   an account out from under an admin who is mid-edit.
+3. **The sweep is deliberately admin-session-driven.** It runs from
+   `ensureAdminDashboardPolling()`; with no admin dashboard open, nothing is
+   approved. Approving without an admin present would mean writing to the
+   approval gate from the database itself (a trigger or cron on
+   `profiles.approved`), which is a separate decision under rule §1 and was
+   explicitly not taken here.
+4. **`canRunStudentAutoApprovalSweep()` is the safety gate**, and every clause
+   in it is load-bearing: flag on, current user is an admin, no manual bulk
+   action or force refresh running, no sweep already in flight, no unsaved row
+   drafts or settling saves, no active admin user mutation or its cooldown, and
+   a 15s minimum between sweeps. Do not relax these to make it feel snappier —
+   the toggle already fires an immediate sweep on enable.
+5. **The flag is a site setting, not local state.** `app_feature_flags` ->
+   `student_auto_approval`, whose existing RLS already limits select/insert/
+   update to admins, so a non-admin cannot enable auto-approval even by calling
+   the helper (verified: the write is rejected with a row-level security error
+   and the switch stays off). A failed *read* leaves the last known value rather
+   than defaulting to on. A missing row reads as off.
+6. **No schema, policy, or gating change.** Migration
+   `20260909101500_add_student_auto_approval_feature_flag.sql` only seeds the
+   flag row (`on conflict do nothing`); the app upserts it anyway, so applying
+   it is optional and the feature works without it. Rollback provided.
+7. **Verified** by lifting the real predicates into a Node harness (16 account
+   shapes; pending/eligible partition, subset, agreement with the Users
+   approval filter, and each missing field held back) and the real sweep guard
+   into a second harness (16 blocking conditions), and by driving the running
+   admin Users page: switch renders and toggles, an eligible pending student is
+   auto-approved with the same stamps as the manual path, an incomplete one is
+   untouched, the refactored button still refuses incomplete-only batches and
+   still reports skipped counts, and a non-admin write is refused by RLS.
+   `node --check` and `npm run lint` clean.
+8. **Static cache bust:** `2026-09-09.03-local` (drop `-local` before shipping).
+
+**Files touched:** `main.js`, `index.html`,
+`supabase/migrations/20260909101500_add_student_auto_approval_feature_flag.sql`,
+`supabase/rollbacks/20260909101500_add_student_auto_approval_feature_flag.sql`,
+`CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-09-06 — Home page improvements and layout alignment
+Changes on branch `homepage-improvements`:
+1. **First-paint parity in `index.html`**: `index.html` previously omitted `#landing-mcqs`, `#landing-courses-platform`, and `#landing-contact`, causing noticeable layout shift when `renderLanding()` executed and leaving topbar links with missing targets before JS evaluation. All 5 sections are now pre-rendered.
+2. **Sticky header scroll offset**: `.landing-scroll-section` now includes `scroll-margin-top: 5.5rem`, preventing section titles from sliding beneath the sticky `.topbar`.
+3. **Dynamic hero state & explore links**: Authenticated users viewing the landing page see "Open MedBank" and "My profile", while visitors see "Log in" and "Sign up". Quick-jump anchors (`[data-scroll-to]`) allow direct exploration of the key sections.
+4. **Footer copyright**: Added copyright notice to both static shell and `marketingFooterHtml()`.
+5. **Static cache bust**: `2026-09-06.02`.
+
 ### 2026-09-06 — Google sign-in hidden on the website
 `supabase.config.js -> googleOAuthEnabled` is now `false`, mirroring the
 `appleOAuthEnabled` pattern from 2026-08-09. This is **UI visibility only** —

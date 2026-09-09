@@ -342,6 +342,13 @@ const THEME_PREFERENCE_KEY = "mcq_theme_preference";
 const THEME_LIGHT = "light";
 const THEME_DARK = "dark";
 const THEME_COMFORT = "comfort";
+/* Dark mode is temporarily withdrawn (2026-09-10). Flip this back to true to
+   restore it - the theme, its CSS, and the meta colour are all still here, and
+   nothing else needs changing. While it is false, the toggle cycles
+   light -> comfort -> light and a stored "dark" preference resolves to light,
+   so anyone already in dark mode is moved out of it on their next load. The
+   matching guard in the index.html first-paint bootstrap must stay in sync. */
+const THEME_DARK_ENABLED = false;
 const THEME_META_COLOR_LIGHT = "#177e89";
 const THEME_META_COLOR_DARK = "#0f172a";
 const THEME_META_COLOR_COMFORT = "#2b2826";
@@ -352,6 +359,10 @@ const SESSION_FONT_SCALE_DEFAULT = 100;
 const SESSION_HIGHLIGHTER_DEFAULT = "yellow";
 const SESSION_HIGHLIGHTER_COLORS = new Set(["yellow", "red", "green"]);
 const COURSES_COMING_SOON_FEATURE_KEY = "courses_coming_soon";
+const STUDENT_AUTO_APPROVAL_FEATURE_KEY = "student_auto_approval";
+const STUDENT_AUTO_APPROVAL_FEATURE_DESCRIPTION = "When enabled, pending students whose profile is already complete are approved automatically while an admin dashboard is open.";
+const STUDENT_AUTO_APPROVAL_MIGRATION_REQUIRED_MESSAGE = "Auto-approval needs the app_feature_flags table. Apply the pending Supabase migration first.";
+const STUDENT_AUTO_APPROVAL_SWEEP_MIN_INTERVAL_MS = 15000;
 const COURSES_COMING_SOON_MIGRATION_REQUIRED_MESSAGE = "Courses availability is not installed in Supabase yet. Apply the latest database migration, then refresh the admin dashboard.";
 const COURSES_PLATFORM_TRANSIENT_FAILURE_COOLDOWN_MS = 60000;
 const COURSES_PLATFORM_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
@@ -412,6 +423,7 @@ const state = {
   adminUserFilterYear: "",
   adminUserFilterSemester: "",
   adminUserFilterApproval: "",
+  adminUserFilterProvider: "",
   adminAddUserPanelOpen: false,
   adminAddUserDraft: createDefaultAdminAddUserDraft(),
   adminAddUserDraftDirty: false,
@@ -554,6 +566,11 @@ const state = {
   adminDataSyncError: "",
   adminForceRefreshRunning: false,
   adminApproveAllPendingRunning: false,
+  studentAutoApprovalEnabled: false,
+  studentAutoApprovalLoading: false,
+  studentAutoApprovalSaving: false,
+  studentAutoApprovalLoadedAt: 0,
+  studentAutoApprovalError: "",
   adminQuestionCountSnapshot: null,
   adminQuestionCountLoading: false,
   adminQuestionCountError: "",
@@ -5697,6 +5714,424 @@ function matchesAdminUserApprovalFilter(account, approvalFilter) {
   return !approved && !hasCompleteStudentApprovalProfile(account);
 }
 
+// ---------------------------------------------------------------------------
+// Student auto-approval
+//
+// A site-wide switch on the admin Users page (`app_feature_flags` ->
+// `student_auto_approval`). While it is on and an admin has the dashboard open,
+// every admin poll sweeps for pending students and approves the ones that
+// already pass `hasCompleteStudentApprovalProfile` — the exact eligibility rule
+// behind "Approve all pending", so automatic and manual approval can never
+// disagree about who qualifies. Approval still runs through the normal admin
+// path (relational profile update + auth access sync), so no RLS policy, gating
+// column, or approval rule changes here; this only removes the click.
+//
+// The sweep is admin-session-driven by design: with no admin dashboard open,
+// nothing is approved. Approving without an admin present would mean writing to
+// the approval gate from the database itself, which is a separate decision.
+// ---------------------------------------------------------------------------
+
+function isStudentAutoApprovalEnabled() {
+  return Boolean(state.studentAutoApprovalEnabled);
+}
+
+function getPendingStudentAccounts(users = getUsers()) {
+  return (Array.isArray(users) ? users : [])
+    .filter((entry) => entry?.role === "student" && !isUserAccessApproved(entry));
+}
+
+function getAutoApprovableStudentAccounts(users = getUsers()) {
+  return getPendingStudentAccounts(users).filter((entry) => hasCompleteStudentApprovalProfile(entry));
+}
+
+function applyStudentAutoApprovalFlag(enabled) {
+  state.studentAutoApprovalEnabled = Boolean(enabled);
+  state.studentAutoApprovalLoadedAt = Date.now();
+  return state.studentAutoApprovalEnabled;
+}
+
+async function loadStudentAutoApprovalFlag(options = {}) {
+  const force = Boolean(options?.force);
+  if (state.studentAutoApprovalLoading && !force) {
+    return !state.studentAutoApprovalError;
+  }
+  if (!force && state.studentAutoApprovalLoadedAt) {
+    return true;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return false;
+  }
+  state.studentAutoApprovalLoading = true;
+  try {
+    const row = await runRelationalQueryWithTimeout(
+      client
+        .from("app_feature_flags")
+        .select("feature_key,enabled")
+        .eq("feature_key", STUDENT_AUTO_APPROVAL_FEATURE_KEY)
+        .maybeSingle(),
+      "Auto-approval status check timed out.",
+    ).catch((error) => {
+      if (isMissingRelationError(error)) {
+        throw new Error(STUDENT_AUTO_APPROVAL_MIGRATION_REQUIRED_MESSAGE);
+      }
+      throw error;
+    });
+    applyStudentAutoApprovalFlag(Boolean(row?.enabled));
+    state.studentAutoApprovalError = "";
+    return true;
+  } catch (error) {
+    // A failed read must never be read as "auto-approval is on": leave the flag
+    // at its last known value and surface the error instead.
+    state.studentAutoApprovalError = getErrorMessage(error, "Could not check auto-approval status.");
+    return false;
+  } finally {
+    state.studentAutoApprovalLoading = false;
+  }
+}
+
+async function saveStudentAutoApprovalFlag(enabled) {
+  const client = getRelationalClient();
+  const currentUser = getCurrentUser();
+  if (!client || currentUser?.role !== "admin") {
+    throw new Error("Only admins can change auto-approval.");
+  }
+  const profileId = getUserProfileId(currentUser);
+  const payload = {
+    feature_key: STUDENT_AUTO_APPROVAL_FEATURE_KEY,
+    enabled: Boolean(enabled),
+    description: STUDENT_AUTO_APPROVAL_FEATURE_DESCRIPTION,
+    updated_by: isUuidValue(profileId) ? profileId : null,
+  };
+  state.studentAutoApprovalSaving = true;
+  try {
+    await runRelationalQueryWithTimeout(
+      client.from("app_feature_flags").upsert(payload, { onConflict: "feature_key", defaultToNull: false }),
+      "Auto-approval update timed out.",
+    ).catch((error) => {
+      if (isMissingRelationError(error)) {
+        throw new Error(STUDENT_AUTO_APPROVAL_MIGRATION_REQUIRED_MESSAGE);
+      }
+      throw error;
+    });
+    applyStudentAutoApprovalFlag(Boolean(enabled));
+    state.studentAutoApprovalError = "";
+    return true;
+  } finally {
+    state.studentAutoApprovalSaving = false;
+  }
+}
+
+// Shared by the "Approve all pending" button and the auto-approval sweep, so a
+// change to one can never silently give the other a different eligibility rule
+// or a different write path. `syncEnrollmentRows` is the admin table's
+// DOM-driven row save (only the button has a table to read); the sweep passes
+// nothing and instead refuses to run while any row draft is unsaved, so it only
+// ever acts on stored profile data. Caller owns the confirm dialog and the
+// `state.adminApproveAllPendingRunning` busy flag.
+async function approveEligiblePendingStudents(options = {}) {
+  const silent = options?.silent === true;
+  const syncEnrollmentRows = typeof options?.syncEnrollmentRows === "function"
+    ? options.syncEnrollmentRows
+    : null;
+  const result = {
+    ok: false,
+    reason: "",
+    approvedCount: 0,
+    skippedCount: 0,
+    incompletePendingCount: 0,
+    message: "",
+  };
+  const finish = (reason, message) => {
+    result.reason = reason;
+    result.message = message || "";
+    if (!silent && result.message) {
+      toast(result.message);
+    }
+    return result;
+  };
+
+  const current = getCurrentUser();
+  let users = getUsers();
+  let pendingUsers = getPendingStudentAccounts(users);
+  let eligiblePendingUsers = pendingUsers.filter((entry) => hasCompleteStudentApprovalProfile(entry));
+
+  if (!pendingUsers.length) {
+    return finish("no_pending", "No pending requests found.");
+  }
+  if (!eligiblePendingUsers.length) {
+    result.incompletePendingCount = pendingUsers.length;
+    return finish(
+      "none_eligible",
+      "Pending users must complete phone number, year, semester, and course selection before approval.",
+    );
+  }
+
+  if (syncEnrollmentRows) {
+    const pendingUserIds = pendingUsers
+      .map((entry) => String(entry.id || "").trim())
+      .filter(Boolean);
+    const syncedPendingRows = await syncEnrollmentRows(pendingUserIds, {
+      batchFlush: true,
+      tolerateRowFailures: true,
+    });
+    if (!syncedPendingRows.ok) {
+      return finish("row_sync_failed", "");
+    }
+
+    await yieldToBrowser();
+
+    users = getUsers();
+    pendingUsers = getPendingStudentAccounts(users);
+    eligiblePendingUsers = pendingUsers.filter((entry) => hasCompleteStudentApprovalProfile(entry));
+  }
+
+  const eligiblePendingUserIdSet = new Set(
+    eligiblePendingUsers.map((entry) => String(entry.id || "").trim()).filter(Boolean),
+  );
+  const pendingProfileIds = eligiblePendingUsers.map((entry) => getUserProfileId(entry)).filter((id) => isUuidValue(id));
+  const incompletePendingCount = pendingUsers.length - eligiblePendingUsers.length;
+  result.incompletePendingCount = incompletePendingCount;
+
+  if (!eligiblePendingUsers.length) {
+    return finish(
+      "none_eligible",
+      `${incompletePendingCount} pending user(s) must complete phone number, year, semester, and course selection before approval.`,
+    );
+  }
+
+  const dbResult = await updateRelationalProfileApproval(pendingProfileIds, true);
+  if (pendingProfileIds.length && !dbResult.ok) {
+    return finish("db_failed", `Database update failed. ${dbResult.message}`);
+  }
+
+  await yieldToBrowser();
+  const approvedProfileIds = new Set(dbResult.updatedIds || []);
+  const skippedProfileIds = new Set(dbResult.skippedIds || []);
+  let approvedCount = 0;
+  let skippedCount = 0;
+  for (let index = 0; index < users.length; index += 1) {
+    if (index > 0 && index % ADMIN_BULK_UI_YIELD_EVERY === 0) {
+      await yieldToBrowser();
+    }
+    const entry = users[index];
+    const entryId = String(entry.id || "").trim();
+    if (
+      entry.role !== "student"
+      || isUserAccessApproved(entry)
+      || !eligiblePendingUserIdSet.has(entryId)
+    ) {
+      continue;
+    }
+    const authId = getUserProfileId(entry);
+    if (isUuidValue(authId)) {
+      if (!approvedProfileIds.has(authId)) {
+        if (skippedProfileIds.has(authId)) {
+          skippedCount += 1;
+        }
+        continue;
+      }
+    }
+    entry.isApproved = true;
+    entry.approvedAt = nowISO();
+    entry.approvedBy = current?.email || "admin";
+    entry.authAccessKnownActive = false;
+    approvedCount += 1;
+  }
+  result.approvedCount = approvedCount;
+  result.skippedCount = skippedCount;
+  if (!approvedCount) {
+    return finish("no_rows_updated", "Database update failed. No pending users were updated.");
+  }
+
+  save(STORAGE_KEYS.users, users, {
+    userSyncScope: USER_RELATIONAL_SYNC_SCOPE_ADMIN,
+    profileSyncIds: [...approvedProfileIds],
+  });
+  if (!silent || !shouldDeferAdminUsersAutoRender()) {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+  await yieldToBrowser();
+  const authAccessSyncResult = await syncAdminAccessChangeNow([...approvedProfileIds], true, {
+    users,
+    user: current,
+  });
+  result.ok = true;
+  return finish(
+    "approved",
+    `${approvedCount} pending account(s) approved.`
+      + (skippedCount ? ` ${skippedCount} skipped.` : "")
+      + (incompletePendingCount
+        ? ` ${incompletePendingCount} still need a phone number, year, semester, and course selection.`
+        : "")
+      + describeAuthAccessSyncOutcome(authAccessSyncResult),
+  );
+}
+
+// Called from the admin Users render. The render must stay synchronous, so this
+// only kicks the read off and re-renders once it lands.
+function ensureStudentAutoApprovalFlagLoaded() {
+  if (state.studentAutoApprovalLoadedAt || state.studentAutoApprovalLoading) {
+    return;
+  }
+  if (getCurrentUser()?.role !== "admin") {
+    return;
+  }
+  loadStudentAutoApprovalFlag().then((ok) => {
+    if (!ok || state.route !== "admin" || String(state.adminPage || "").trim() !== "users") {
+      return;
+    }
+    if (shouldDeferAdminUsersAutoRender()) {
+      return;
+    }
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+}
+
+let studentAutoApprovalSweepInFlight = false;
+let studentAutoApprovalSweepLastRunAt = 0;
+
+function canRunStudentAutoApprovalSweep() {
+  if (!isStudentAutoApprovalEnabled()) {
+    return false;
+  }
+  if (getCurrentUser()?.role !== "admin") {
+    return false;
+  }
+  if (studentAutoApprovalSweepInFlight) {
+    return false;
+  }
+  if (state.adminApproveAllPendingRunning || state.adminUserBulkActionRunning || state.adminForceRefreshRunning) {
+    return false;
+  }
+  // Never approve out from under an admin who is still editing the table: an
+  // unsaved row draft means the stored profile is not what they are looking at.
+  if (hasAdminUserEnrollmentDrafts() || hasActiveAdminUserEnrollmentSaves()) {
+    return false;
+  }
+  if (adminUserMutationActiveCount > 0 || isAdminUserMutationCoolingDown()) {
+    return false;
+  }
+  if (Date.now() - studentAutoApprovalSweepLastRunAt < STUDENT_AUTO_APPROVAL_SWEEP_MIN_INTERVAL_MS) {
+    return false;
+  }
+  return getAutoApprovableStudentAccounts().length > 0;
+}
+
+async function runStudentAutoApprovalSweep() {
+  if (!canRunStudentAutoApprovalSweep()) {
+    return null;
+  }
+  studentAutoApprovalSweepInFlight = true;
+  studentAutoApprovalSweepLastRunAt = Date.now();
+  state.adminApproveAllPendingRunning = true;
+  try {
+    const result = await approveEligiblePendingStudents({ silent: true });
+    if (result?.approvedCount) {
+      toast(`Auto-approval approved ${result.approvedCount} pending account(s).`);
+    }
+    return result;
+  } catch (error) {
+    console.warn("Auto-approval sweep failed.", error?.message || error);
+    return null;
+  } finally {
+    state.adminApproveAllPendingRunning = false;
+    studentAutoApprovalSweepInFlight = false;
+    studentAutoApprovalSweepLastRunAt = Date.now();
+    if (state.route === "admin" && !shouldDeferAdminUsersAutoRender()) {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  }
+}
+
+// Sign-in method buckets for the admin Users filter. The source of truth is
+// `profiles.auth_provider`, mirrored onto the local user as `authProvider`.
+// Caveat worth knowing before acting on this filter: auth_provider records the
+// provider seen at signup. An account that later gained an email/password login
+// still reads "google" here, and Supabase Auth is the only place that knows for
+// certain. Treat this as a strong hint for finding accounts, not as proof that
+// someone cannot sign in with a password.
+const ADMIN_USER_PROVIDER_FILTERS = ["google", "email"];
+
+function normalizeAdminUserProviderFilter(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ADMIN_USER_PROVIDER_FILTERS.includes(normalized) ? normalized : "";
+}
+
+function matchesAdminUserProviderFilter(account, providerFilter) {
+  const filter = normalizeAdminUserProviderFilter(providerFilter);
+  if (!filter) {
+    return true;
+  }
+  const provider = getAuthProviderFromUser(account);
+  if (filter === "google") {
+    return provider === "google";
+  }
+  // "email": anything not registered through Google, including older rows whose
+  // provider was never recorded.
+  return provider !== "google";
+}
+
+// CSV export of the admin Users list, used before destructive bulk actions so
+// there is a record of who was affected. Values are quoted and internal quotes
+// doubled; a leading =, +, -, or @ is prefixed with an apostrophe so spreadsheet
+// software treats the cell as text rather than a formula.
+function toCsvCell(value) {
+  const raw = value === null || value === undefined ? "" : String(value);
+  const guarded = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
+const ADMIN_USER_CSV_COLUMNS = [
+  ["medbank_id", (account) => account.publicUserId || account.public_user_id || ""],
+  ["name", (account) => account.name || ""],
+  ["email", (account) => account.email || ""],
+  ["phone", (account) => account.phone || ""],
+  ["role", (account) => account.role || ""],
+  ["sign_in_method", (account) => getAuthProviderFromUser(account) || "unknown"],
+  ["approved", (account) => (isUserAccessApproved(account) ? "yes" : "no")],
+  ["academic_year", (account) => account.academicYear ?? ""],
+  ["academic_semester", (account) => account.academicSemester ?? ""],
+  ["enrolled_courses", (account) => (Array.isArray(account.enrolledCourses) ? account.enrolledCourses.join(" | ") : "")],
+  ["mcq_access", (account) => (account.mcqAccessEnabled === false ? "off" : "on")],
+  ["video_courses_access", (account) => (account.coursesAccessEnabled === false ? "off" : "on")],
+  ["supabase_auth_id", (account) => account.supabaseAuthId || ""],
+  ["profile_id", (account) => getUserProfileId(account) || ""],
+  ["created_at", (account) => account.createdAt || ""],
+];
+
+function buildAdminUsersCsv(accounts) {
+  const rows = [ADMIN_USER_CSV_COLUMNS.map(([header]) => toCsvCell(header)).join(",")];
+  (Array.isArray(accounts) ? accounts : []).forEach((account) => {
+    rows.push(ADMIN_USER_CSV_COLUMNS.map(([, read]) => toCsvCell(read(account))).join(","));
+  });
+  return `${rows.join("\r\n")}\r\n`;
+}
+
+function downloadAdminUsersCsv(accounts, fileLabel = "users") {
+  const list = Array.isArray(accounts) ? accounts : [];
+  if (!list.length) {
+    toast("No accounts to export.");
+    return false;
+  }
+  // \ufeff so Excel reads the file as UTF-8 and does not mangle names.
+  const blob = new Blob([`\ufeff${buildAdminUsersCsv(list)}`], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  link.href = url;
+  link.download = `medbank-${fileLabel}-${stamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  // Revoke on the next tick so the download has started.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}
+
 function matchesAdminUserFilters(account, filters = {}) {
   if (!account) {
     return false;
@@ -5715,6 +6150,9 @@ function matchesAdminUserFilters(account, filters = {}) {
     return false;
   }
   if (!matchesAdminUserApprovalFilter(account, filters?.approval)) {
+    return false;
+  }
+  if (!matchesAdminUserProviderFilter(account, filters?.provider)) {
     return false;
   }
   if (!searchTerms.length) {
@@ -16849,7 +17287,10 @@ function seedData() {
 function getStoredThemePreference() {
   const normalizeTheme = (value) => {
     const normalized = String(value || "").trim().toLowerCase();
-    if (normalized === THEME_DARK || normalized === THEME_LIGHT || normalized === THEME_COMFORT) {
+    if (normalized === THEME_DARK) {
+      return THEME_DARK_ENABLED ? THEME_DARK : THEME_LIGHT;
+    }
+    if (normalized === THEME_LIGHT || normalized === THEME_COMFORT) {
       return normalized;
     }
     return "";
@@ -16911,7 +17352,7 @@ function renderThemeToggleIcon() {
 }
 
 function renderThemeToggleButton() {
-  let actionLabel = "Switch to dark mode";
+  let actionLabel = THEME_DARK_ENABLED ? "Switch to dark mode" : "Switch to comfort mode";
   if (activeTheme === THEME_DARK) actionLabel = "Switch to comfort mode";
   else if (activeTheme === THEME_COMFORT) actionLabel = "Switch to light mode";
 
@@ -16933,7 +17374,7 @@ function renderThemeToggleButton() {
 }
 
 function syncThemeToggleButtons() {
-  let actionLabel = "Switch to dark mode";
+  let actionLabel = THEME_DARK_ENABLED ? "Switch to dark mode" : "Switch to comfort mode";
   if (activeTheme === THEME_DARK) actionLabel = "Switch to comfort mode";
   else if (activeTheme === THEME_COMFORT) actionLabel = "Switch to light mode";
 
@@ -16966,6 +17407,11 @@ function updateThemeMetaColor() {
 function applyTheme(theme, options = {}) {
   let nextTheme = String(theme || "").trim().toLowerCase();
   if (nextTheme !== THEME_DARK && nextTheme !== THEME_COMFORT) {
+    nextTheme = THEME_LIGHT;
+  }
+  // Last line of defence while dark mode is withdrawn: any caller that still
+  // asks for it (a restored session, a stale persisted value) lands on light.
+  if (nextTheme === THEME_DARK && !THEME_DARK_ENABLED) {
     nextTheme = THEME_LIGHT;
   }
   activeTheme = nextTheme;
@@ -17228,7 +17674,7 @@ function bindGlobalEvents() {
     if (action === "toggle-theme") {
       state.userMenuOpen = false;
       state.notificationMenuOpen = false;
-      let nextTheme = THEME_DARK;
+      let nextTheme = THEME_DARK_ENABLED ? THEME_DARK : THEME_COMFORT;
       if (activeTheme === THEME_DARK) nextTheme = THEME_COMFORT;
       else if (activeTheme === THEME_COMFORT) nextTheme = THEME_LIGHT;
       applyTheme(nextTheme, { persist: true });
@@ -17801,6 +18247,7 @@ function ensureAdminDashboardPolling() {
         }
         state.skipNextRouteAnimation = true;
         render();
+        runStudentAutoApprovalSweep().catch(() => null);
       })
       .catch((error) => {
         console.warn("Admin dashboard auto-refresh failed.", error?.message || error);
@@ -20426,6 +20873,7 @@ async function refreshAdminDataSnapshot(user, options = {}) {
     hydrateTasks.push(refreshAdminQuestionCountSnapshot({ force }).catch(() => false));
     hydrateTasks.push(hydrateRelationalNotifications(user));
     hydrateTasks.push(loadCoursesComingSoonFlag({ force }).catch(() => false));
+    hydrateTasks.push(loadStudentAutoApprovalFlag({ force }).catch(() => false));
     hydrateTasks.push(hydrateSupabaseSyncKeys([STORAGE_KEYS.siteMaintenance]).catch(() => ({ hadRemoteData: false })));
     await Promise.all(hydrateTasks);
 
@@ -22202,6 +22650,7 @@ function marketingFooterHtml() {
         <div class="marketing-footer-brand">
           <strong>MedBank</strong>
           <span>Medical learning, kept focused.</span>
+          <small class="marketing-footer-copy">© 2026 MedBank. All rights reserved.</small>
         </div>
         <nav class="marketing-footer-links" aria-label="Legal links">
           <a href="privacy.html">Privacy policy</a>
@@ -22221,6 +22670,21 @@ function landingContactSectionHtml() {
 }
 
 function renderLanding() {
+  const user = getCurrentUser();
+  const heroActionsHtml = user
+    ? `
+            <button class="btn" data-nav="${user.role === "admin" || user.role === "creator" ? "admin" : "app-launcher"}">Open MedBank</button>
+            <button class="btn ghost" data-nav="profile">My profile</button>
+      `
+    : `
+            <button class="btn" data-nav="login">Log in</button>
+            <button class="btn ghost" data-nav="signup">Sign up</button>
+      `;
+
+  const heroNoteHtml = user
+    ? `<p class="lp-hero-note">Signed in as <strong>${escapeHtml(user.name || user.email || "MedBank student")}</strong>.</p>`
+    : `<p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>`;
+
   return `
     <div class="panel marketing-page landing-page landing-page-scroll landing-simple">
 
@@ -22230,10 +22694,19 @@ function renderLanding() {
           <h1 class="lp-hero-title">Protected courses <span class="lp-plus" aria-hidden="true">+</span> a medical MCQ bank.</h1>
           <p class="lp-hero-lede">Stream lectures securely and practise course-aligned MCQs with instant explanations. One simple platform.</p>
           <div class="lp-hero-actions">
-            <button class="btn" data-nav="login">Log in</button>
-            <button class="btn ghost" data-nav="signup">Sign up</button>
+            ${heroActionsHtml}
           </div>
-          <p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>
+          <div class="lp-hero-explore">
+            <span class="lp-hero-explore-label">Explore:</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mobile-app">Mobile App</button>
+            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mcqs">MCQ Bank</button>
+            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-courses-platform">Video Courses</button>
+            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-contact">Contact</button>
+          </div>
+          ${heroNoteHtml}
         </div>
       </section>
 
@@ -22717,6 +23190,50 @@ async function startAppleOAuthSignIn(authClient) {
   return { ok: true };
 }
 
+/* One-time login notice for the accounts removed on 2026-09-10 (see
+   docs/delete-google-users-runbook.md). Those people have no account and no
+   device token any more, so an in-app notification or a push cannot reach them
+   - the login page is the only screen they are guaranteed to land on.
+
+   Browser-scoped on purpose: the reader is signed out, so there is no user row
+   to record this against. It is dismissal-based rather than render-based - a
+   notice that burns itself on a glance would fail exactly the person who opened
+   the page, saw a form, and left. Dismiss once and it never returns. */
+const GOOGLE_MIGRATION_NOTICE_STORAGE_KEY = "medbank_google_migration_notice_v1";
+
+function hasDismissedGoogleMigrationNotice() {
+  try {
+    return localStorage.getItem(GOOGLE_MIGRATION_NOTICE_STORAGE_KEY) === "1";
+  } catch {
+    // Private windows and blocked site data throw on access. Showing the notice
+    // to someone who may not have read it beats hiding it.
+    return false;
+  }
+}
+
+function markGoogleMigrationNoticeDismissed() {
+  try {
+    localStorage.setItem(GOOGLE_MIGRATION_NOTICE_STORAGE_KEY, "1");
+  } catch {}
+}
+
+function googleMigrationNoticeHtml() {
+  if (hasDismissedGoogleMigrationNotice()) return "";
+  // Every string here is a static literal, so there is nothing to escapeHtml().
+  return `
+    <div class="auth-notice" id="google-migration-notice" role="status">
+      <div class="auth-notice-body">
+        <p class="auth-notice-title">Used to sign in with Google?</p>
+        <p class="auth-notice-text">Google sign-in has been retired. Create your account again using the <strong>same email address</strong> &mdash; it is free and ready for you. You will choose a password this time, get a new MedBank ID, and start with a fresh question bank.</p>
+      </div>
+      <div class="auth-notice-actions">
+        <button class="btn auth-notice-cta" type="button" data-nav="signup">Create account</button>
+        <button class="btn ghost auth-notice-dismiss" type="button" id="google-migration-notice-dismiss">Got it</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderAuth(mode) {
   if (mode === "login") {
     return `
@@ -22734,6 +23251,7 @@ function renderAuth(mode) {
         <div class="auth-public-card">
           <h3>Log in</h3>
           <p class="subtle">Access your course question bank and saved blocks.</p>
+          ${googleMigrationNoticeHtml()}
           ${isLocalDemoAuthEnabled() ? `
             <div class="demo-panel">
               <h4>Local demo accounts</h4>
@@ -22814,14 +23332,14 @@ function renderAuth(mode) {
           </div>
           <div class="auth-public-card auth-signup-card">
             <h3>Create account</h3>
-            <p class="subtle">Name and email are locked to your Google account. Phone examples: 01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode.</p>
+            <p class="subtle">Name and email are locked to your Google account.</p>
             <form id="signup-form" class="auth-form auth-public-form" method="post" autocomplete="on">
               <div class="form-row">
                 <label>Full name <input name="name" autocomplete="name" value="${escapeHtml(currentUser?.name || "")}" readonly required /></label>
                 <label>Email <input type="email" name="email" autocomplete="email" value="${escapeHtml(currentUser?.email || "")}" readonly required /></label>
               </div>
               <div class="form-row">
-                <label>Phone number <input type="tel" name="phone" value="${escapeHtml(defaultPhone)}" autocomplete="tel" inputmode="tel" placeholder="+20 10 0000 0000" required aria-required="true" minlength="8" maxlength="20" /></label>
+                <label>Phone number <input type="tel" name="phone" value="${escapeHtml(defaultPhone)}" autocomplete="tel" inputmode="tel" placeholder="01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode" required aria-required="true" minlength="8" maxlength="20" /></label>
               </div>
               <div class="form-row">
                 <label>Year
@@ -22886,7 +23404,7 @@ function renderAuth(mode) {
         </div>
         <div class="auth-public-card auth-signup-card">
           <h3>Create account</h3>
-          <p class="subtle">${SUPABASE_CONFIG.googleOAuthEnabled ? "Use Google or sign up with email." : "Sign up with email."} Phone examples: 01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode.</p>
+          <p class="subtle">${SUPABASE_CONFIG.googleOAuthEnabled ? "Use Google or sign up with email." : "Sign up with email."}</p>
           <form id="signup-form" class="auth-form auth-public-form" method="post" autocomplete="on">
             ${SUPABASE_CONFIG.googleOAuthEnabled || SUPABASE_CONFIG.appleOAuthEnabled ? `
             <div class="auth-oauth-row">
@@ -22904,10 +23422,7 @@ function renderAuth(mode) {
               <label>Confirm password <input type="password" name="confirmPassword" minlength="6" autocomplete="new-password" required /></label>
             </div>
             <div class="form-row">
-              <label>Phone number <input type="tel" name="phone" autocomplete="tel" inputmode="tel" placeholder="+20 10 0000 0000" required aria-required="true" minlength="8" maxlength="20" /></label>
-            </div>
-            <div class="form-row">
-              <label>Invite code (optional) <input name="inviteCode" autocomplete="one-time-code" /></label>
+              <label>Phone number <input type="tel" name="phone" autocomplete="tel" inputmode="tel" placeholder="01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode" required aria-required="true" minlength="8" maxlength="20" /></label>
             </div>
             <div class="form-row">
               <label>Year
@@ -22996,6 +23511,18 @@ function wireAuth(mode) {
 
   if (mode === "login") {
     const form = document.getElementById("login-form");
+
+    const migrationNotice = document.getElementById("google-migration-notice");
+    document.getElementById("google-migration-notice-dismiss")?.addEventListener("click", () => {
+      markGoogleMigrationNoticeDismissed();
+      migrationNotice?.remove();
+    });
+    // "Create account" navigates through the existing data-nav delegation, so
+    // only record the dismissal here.
+    migrationNotice?.querySelector('[data-nav="signup"]')?.addEventListener("click", () => {
+      markGoogleMigrationNoticeDismissed();
+    });
+
     const googleButton = document.getElementById("login-google-btn");
     googleButton?.addEventListener("click", async () => {
       if (form?.dataset.submitting === "1" || googleButton.dataset.submitting === "1") {
@@ -23533,7 +24060,6 @@ function wireAuth(mode) {
 
       const password = String(data.get("password") || "");
       const confirmPassword = String(data.get("confirmPassword") || "");
-      const inviteCode = String(data.get("inviteCode") || "").trim();
 
       if (!name || !email || !password || !phone) {
         toast("Name, email, password, and phone number are required.");
@@ -23555,14 +24081,6 @@ function wireAuth(mode) {
       if (users.some((user) => user.email.toLowerCase() === email)) {
         toast("Email already exists.");
         return;
-      }
-
-      if (inviteCode) {
-        const validCodes = load(STORAGE_KEYS.invites, []);
-        if (!validCodes.includes(inviteCode)) {
-          toast("Invalid invite code.");
-          return;
-        }
       }
 
       lockAuthForm(form, true, "Creating account...");
@@ -29644,12 +30162,22 @@ function renderAdmin() {
     const userFilterYear = normalizeAcademicYearOrNull(state.adminUserFilterYear);
     const userFilterSemester = normalizeAcademicSemesterOrNull(state.adminUserFilterSemester);
     const userFilterApproval = normalizeAdminUserApprovalFilter(state.adminUserFilterApproval);
+    const userFilterProvider = normalizeAdminUserProviderFilter(state.adminUserFilterProvider);
     const filteredUsers = users.filter((account) => matchesAdminUserFilters(account, {
       search: userSearchQuery,
       year: userFilterYear,
       semester: userFilterSemester,
       approval: userFilterApproval,
+      provider: userFilterProvider,
     }));
+    const providerFilterCounts = users.reduce((acc, entry) => {
+      if (getAuthProviderFromUser(entry) === "google") {
+        acc.google += 1;
+      } else {
+        acc.email += 1;
+      }
+      return acc;
+    }, { google: 0, email: 0 });
     const renderedUsers = filteredUsers.slice(0, ADMIN_USER_RENDER_LIMIT);
     const hiddenFilteredUserCount = Math.max(0, filteredUsers.length - renderedUsers.length);
     const visibleSelectableUserIds = renderedUsers
@@ -29672,7 +30200,8 @@ function renderAdmin() {
     const resetUserFiltersDisabled = !String(userSearchQuery || "").trim()
       && userFilterYear === null
       && userFilterSemester === null
-      && !userFilterApproval;
+      && !userFilterApproval
+      && !userFilterProvider;
     const addUserDraft = normalizeAdminAddUserDraft(state.adminAddUserDraft);
     const pendingCount = users.filter((entry) => entry.role === "student" && !isUserAccessApproved(entry)).length;
     const approvalFilterCounts = users.reduce((acc, entry) => {
@@ -29687,6 +30216,11 @@ function renderAdmin() {
       return acc;
     }, { pending: 0, approved: 0, incomplete: 0 });
     const approveAllPendingRunning = Boolean(state.adminApproveAllPendingRunning);
+    ensureStudentAutoApprovalFlagLoaded();
+    const autoApprovalEnabled = isStudentAutoApprovalEnabled();
+    const autoApprovalBusy = Boolean(state.studentAutoApprovalSaving)
+      || (Boolean(state.studentAutoApprovalLoading) && !state.studentAutoApprovalLoadedAt);
+    const autoApprovableCount = getAutoApprovableStudentAccounts(users).length;
     const accountRows = renderedUsers
       .map((account) => {
         const enrollmentView = getAdminUserEnrollmentViewModel(account);
@@ -29843,8 +30377,18 @@ function renderAdmin() {
               <button class="btn ${approveAllPendingRunning ? "is-loading" : ""}" type="button" data-action="approve-all-pending" ${pendingCount && !approveAllPendingRunning ? "" : "disabled"}>
                 ${approveAllPendingRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve all pending"}
               </button>
+              <button class="admin-access-switch" type="button" data-action="toggle-student-auto-approval" role="switch" aria-checked="${autoApprovalEnabled ? "true" : "false"}" ${autoApprovalBusy ? "disabled" : ""} title="Approve pending students automatically once their profile is complete">
+                ${renderAdminAccessSwitchContent(autoApprovalBusy ? "Auto-approve..." : "Auto-approve", autoApprovalEnabled)}
+              </button>
             </div>
-            <span class="subtle">New student accounts require admin approval.</span>
+            <span class="subtle" style="text-align: right;">
+              ${autoApprovalEnabled
+                ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. It runs while an admin dashboard is open.`
+                : "New student accounts require admin approval."}
+            </span>
+            ${state.studentAutoApprovalError
+              ? `<span class="subtle" style="text-align: right; color: var(--danger);">${escapeHtml(state.studentAutoApprovalError)}</span>`
+              : ""}
           </div>
         </div>
         <details id="admin-add-user-disclosure" class="admin-user-create-panel" style="margin-top: 0.85rem;" ${state.adminAddUserPanelOpen ? "open" : ""}>
@@ -29933,9 +30477,17 @@ function renderAdmin() {
                 <option value="approved" ${userFilterApproval === "approved" ? "selected" : ""}>Approved (${approvalFilterCounts.approved})</option>
               </select>
             </label>
+            <label>Sign-in method
+              <select id="admin-user-filter-provider" name="authProvider">
+                <option value="" ${!userFilterProvider ? "selected" : ""}>All methods</option>
+                <option value="google" ${userFilterProvider === "google" ? "selected" : ""}>Google (${providerFilterCounts.google})</option>
+                <option value="email" ${userFilterProvider === "email" ? "selected" : ""}>Email &amp; password (${providerFilterCounts.email})</option>
+              </select>
+            </label>
           </div>
           <div class="stack">
             <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-clear-filters" ${resetUserFiltersDisabled ? "disabled" : ""}>Reset filters</button>
+            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-export-csv" ${filteredUsers.length ? "" : "disabled"}>Export CSV (${filteredUsers.length})</button>
           </div>
         </form>
 
@@ -33163,16 +33715,56 @@ function wireAdmin() {
     }
   });
 
+  appEl.querySelector("[data-action='toggle-student-auto-approval']")?.addEventListener("click", async () => {
+    if (state.studentAutoApprovalSaving) {
+      return;
+    }
+    const nextEnabled = !isStudentAutoApprovalEnabled();
+    if (nextEnabled) {
+      const waitingCount = getAutoApprovableStudentAccounts().length;
+      const confirmed = window.confirm(
+        "Turn on auto-approval?\n\n"
+          + "Pending students are approved automatically as soon as their phone number, year, semester, and course "
+          + "selection are complete - the same rule as Approve all pending. It runs while an admin dashboard is open."
+          + (waitingCount ? `\n\n${waitingCount} pending account(s) already qualify and will be approved now.` : ""),
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+    // Show the pending state before the write, not after it lands. Whatever
+    // this handler sets, this handler clears: saveStudentAutoApprovalFlag can
+    // throw before reaching its own try/finally (the non-admin guard does),
+    // which would otherwise leave the switch disabled for good.
+    state.studentAutoApprovalSaving = true;
+    state.skipNextRouteAnimation = true;
+    render();
+    try {
+      await saveStudentAutoApprovalFlag(nextEnabled);
+      toast(nextEnabled ? "Auto-approval is on." : "Auto-approval is off.");
+    } catch (error) {
+      state.studentAutoApprovalError = getErrorMessage(error, "Could not update auto-approval.");
+      toast(state.studentAutoApprovalError);
+    } finally {
+      state.studentAutoApprovalSaving = false;
+    }
+    if (state.route === "admin" && state.adminPage === "users") {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+    if (isStudentAutoApprovalEnabled()) {
+      // Don't make the admin wait for the next 30s poll to see it work.
+      studentAutoApprovalSweepLastRunAt = 0;
+      await runStudentAutoApprovalSweep().catch(() => null);
+    }
+  });
+
   appEl.querySelector("[data-action='approve-all-pending']")?.addEventListener("click", async () => {
     if (state.adminApproveAllPendingRunning) {
       return;
     }
-    const current = getCurrentUser();
-    let users = getUsers();
-    let pendingUsers = users.filter((entry) => entry.role === "student" && !isUserAccessApproved(entry));
-    let eligiblePendingUsers = pendingUsers.filter((entry) => hasCompleteStudentApprovalProfile(entry));
-
-    if (!pendingUsers.length) {
+    const eligiblePendingUsers = getAutoApprovableStudentAccounts();
+    if (!getPendingStudentAccounts().length) {
       toast("No pending requests found.");
       return;
     }
@@ -33190,94 +33782,7 @@ function wireAdmin() {
     await yieldToBrowser();
 
     try {
-      const pendingUserIds = pendingUsers
-        .map((entry) => String(entry.id || "").trim())
-        .filter(Boolean);
-      const syncedPendingRows = await syncEnrollmentRowsForUserIds(pendingUserIds, {
-        batchFlush: true,
-        tolerateRowFailures: true,
-      });
-      if (!syncedPendingRows.ok) {
-        return;
-      }
-
-      await yieldToBrowser();
-
-      users = getUsers();
-      pendingUsers = users.filter((entry) => entry.role === "student" && !isUserAccessApproved(entry));
-      eligiblePendingUsers = pendingUsers.filter((entry) => hasCompleteStudentApprovalProfile(entry));
-      const eligiblePendingUserIdSet = new Set(eligiblePendingUsers.map((entry) => String(entry.id || "").trim()).filter(Boolean));
-      const pendingProfileIds = eligiblePendingUsers.map((entry) => getUserProfileId(entry)).filter((id) => isUuidValue(id));
-
-      const incompletePendingCount = pendingUsers.length - eligiblePendingUsers.length;
-      if (!eligiblePendingUsers.length) {
-        toast(`${incompletePendingCount} pending user(s) must complete phone number, year, semester, and course selection before approval.`);
-        return;
-      }
-
-      const dbResult = await updateRelationalProfileApproval(pendingProfileIds, true);
-      if (pendingProfileIds.length && !dbResult.ok) {
-        toast(`Database update failed. ${dbResult.message}`);
-        return;
-      }
-
-      await yieldToBrowser();
-      const approvedProfileIds = new Set(dbResult.updatedIds || []);
-      const skippedProfileIds = new Set(dbResult.skippedIds || []);
-      let approvedCount = 0;
-      let skippedCount = 0;
-      for (let index = 0; index < users.length; index += 1) {
-        if (index > 0 && index % ADMIN_BULK_UI_YIELD_EVERY === 0) {
-          await yieldToBrowser();
-        }
-        const entry = users[index];
-        const entryId = String(entry.id || "").trim();
-        if (
-          entry.role !== "student"
-          || isUserAccessApproved(entry)
-          || !eligiblePendingUserIdSet.has(entryId)
-        ) {
-          continue;
-        }
-        const authId = getUserProfileId(entry);
-        if (isUuidValue(authId)) {
-          if (!approvedProfileIds.has(authId)) {
-            if (skippedProfileIds.has(authId)) {
-              skippedCount += 1;
-            }
-            continue;
-          }
-        }
-        entry.isApproved = true;
-        entry.approvedAt = nowISO();
-        entry.approvedBy = current?.email || "admin";
-        entry.authAccessKnownActive = false;
-        approvedCount += 1;
-      }
-      if (!approvedCount) {
-        toast("Database update failed. No pending users were updated.");
-        return;
-      }
-
-      save(STORAGE_KEYS.users, users, {
-        userSyncScope: USER_RELATIONAL_SYNC_SCOPE_ADMIN,
-        profileSyncIds: [...approvedProfileIds],
-      });
-      state.skipNextRouteAnimation = true;
-      render();
-      await yieldToBrowser();
-      const authAccessSyncResult = await syncAdminAccessChangeNow([...approvedProfileIds], true, {
-        users,
-        user: current,
-      });
-      toast(
-        `${approvedCount} pending account(s) approved.`
-          + (skippedCount ? ` ${skippedCount} skipped.` : "")
-          + (incompletePendingCount
-            ? ` ${incompletePendingCount} still need a phone number, year, semester, and course selection.`
-            : "")
-          + describeAuthAccessSyncOutcome(authAccessSyncResult),
-      );
+      await approveEligiblePendingStudents({ syncEnrollmentRows: syncEnrollmentRowsForUserIds });
     } finally {
       state.adminApproveAllPendingRunning = false;
       if (state.route === "admin" && state.adminPage === "users") {
@@ -33293,6 +33798,7 @@ function wireAdmin() {
   const adminUserFilterYear = document.getElementById("admin-user-filter-year");
   const adminUserFilterSemester = document.getElementById("admin-user-filter-semester");
   const adminUserFilterApproval = document.getElementById("admin-user-filter-approval");
+  const adminUserFilterProvider = document.getElementById("admin-user-filter-provider");
   const selectAllUsersInput = appEl.querySelector("[data-action='admin-select-all-users']");
   if (selectAllUsersInput instanceof HTMLInputElement) {
     selectAllUsersInput.indeterminate = selectAllUsersInput.dataset.indeterminate === "true";
@@ -33333,12 +33839,14 @@ function wireAdmin() {
     state.adminUserFilterYear = String(adminUserFilterYear?.value || "");
     state.adminUserFilterSemester = String(adminUserFilterSemester?.value || "");
     state.adminUserFilterApproval = normalizeAdminUserApprovalFilter(adminUserFilterApproval?.value);
+    state.adminUserFilterProvider = normalizeAdminUserProviderFilter(adminUserFilterProvider?.value);
     state.skipNextRouteAnimation = true;
     render();
   };
   adminUserFilterYear?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterSemester?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterApproval?.addEventListener("change", syncAdminUserFilters);
+  adminUserFilterProvider?.addEventListener("change", syncAdminUserFilters);
 
   adminUserSearchInput?.addEventListener("input", () => {
     const nextValue = String(adminUserSearchInput.value || "");
@@ -33364,6 +33872,7 @@ function wireAdmin() {
     state.adminUserFilterYear = "";
     state.adminUserFilterSemester = "";
     state.adminUserFilterApproval = "";
+    state.adminUserFilterProvider = "";
     state.adminSelectedUserIds = [];
     if (adminUserSearchDebounce) {
       window.clearTimeout(adminUserSearchDebounce);

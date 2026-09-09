@@ -2616,6 +2616,7 @@ body.is-routing .card {
 
 .landing-scroll-section {
   padding-bottom: clamp(3rem, 6vw, 4.5rem);
+  scroll-margin-top: 5.5rem;
 }
 
 .landing-scroll-section + .landing-scroll-section {
@@ -2690,6 +2691,57 @@ body.is-routing .card {
   margin: 1.1rem 0 0;
   font-size: 0.9rem;
   color: var(--muted);
+}
+
+.landing-simple .lp-hero-explore {
+  margin-top: 1.25rem;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem 0.55rem;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.landing-simple .lp-hero-explore-label {
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.landing-simple .lp-hero-explore-btn {
+  background: none;
+  border: none;
+  padding: 0.2rem 0.45rem;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--brand-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--brand) 30%, transparent);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease, background-color 0.15s ease;
+}
+
+.landing-simple .lp-hero-explore-btn:hover {
+  color: var(--brand);
+  text-decoration-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.landing-simple .lp-hero-explore-btn:focus-visible {
+  outline: 2px solid var(--brand-strong);
+  outline-offset: 2px;
+}
+
+.landing-simple .lp-hero-explore-sep {
+  color: var(--line);
+  user-select: none;
 }
 
 .landing-simple .lp-mobile-launch {
@@ -3017,6 +3069,12 @@ body.is-routing .card {
 .marketing-footer-brand span {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.marketing-footer-copy {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .marketing-footer-links {
@@ -20179,4 +20237,100 @@ body select.admin-role-select:disabled {
    directly here so all three store cards stay readable in every theme. */
 .landing-simple .lp-store-copy strong {
   color: var(--ink);
+}
+
+/* One-time login notice for the retired Google sign-in (2026-09-10).
+
+   Deliberately NOT token-based. This notice lives inside .auth-public-card,
+   which is a white card in all three themes (background: rgba(255,255,255,0.9),
+   no theme override) - while --ink, --muted, --brand and --brand-soft all flip
+   to light values under body.theme-dark. Using them here renders near-white
+   text and a near-invisible tint on a white card. The card itself sidesteps
+   this by pinning its heading to var(--text), which resolves once at :root and
+   is therefore frozen to the light palette. These fixed light-surface colours
+   are the honest version of that trick.
+
+   The button selectors are prefixed with `body` on purpose: body.theme-dark
+   .btn.ghost is (0,3,1) and outranks a plain .auth-notice .btn.x at (0,3,0),
+   which left the dismiss button as near-white text on the white card. */
+.auth-notice {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0 0 1.1rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(16, 42, 67, 0.16);
+  border-left: 3px solid #177e89;
+  border-radius: var(--radius-md);
+  background: rgba(23, 126, 137, 0.08);
+  color: #102a43;
+}
+
+.auth-notice-body {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.auth-notice-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1.3;
+  color: #102a43;
+}
+
+.auth-notice-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #3d5875;
+}
+
+.auth-notice-text strong {
+  color: #102a43;
+  font-weight: 650;
+}
+
+.auth-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+body .auth-notice .btn.auth-notice-cta,
+body .auth-notice .btn.auth-notice-dismiss {
+  min-height: 40px;
+  padding-inline: 0.95rem;
+  font-size: 0.88rem;
+  border-radius: 999px;
+}
+
+body .auth-notice .btn.auth-notice-cta {
+  border: 1px solid #177e89;
+  background: #177e89;
+  background-image: none;
+  color: #ffffff;
+}
+
+body .auth-notice .btn.auth-notice-cta:hover {
+  background: #11555d;
+  border-color: #11555d;
+}
+
+body .auth-notice .btn.auth-notice-dismiss {
+  border: 1px solid rgba(16, 42, 67, 0.22);
+  background: rgba(255, 255, 255, 0.9);
+  background-image: none;
+  color: #2c4359;
+}
+
+body .auth-notice .btn.auth-notice-dismiss:hover {
+  background: #ffffff;
+  border-color: rgba(16, 42, 67, 0.36);
+}
+
+@media (max-width: 480px) {
+  .auth-notice-actions .btn {
+    flex: 1 1 auto;
+  }
 }
