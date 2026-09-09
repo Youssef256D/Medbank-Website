@@ -189,6 +189,50 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-10 — Brand assets regenerated from the current logo files
+Link previews and favicons were still serving the previous MedBank mark. All of
+it is now generated from `Assets/Fav icon.png` (2048x2048, transparent) and
+`Assets/web Logo.png` (2528x1696, transparent) - **those two are the sources of
+truth; regenerate from them rather than hand-editing anything in
+`Assets/branding/`.** Shipped as `2026-09-10.05`.
+
+1. **Both sources carry real alpha and a lot of empty margin.** Their content
+   bounding boxes are 1387x1084 and 1569x474. Everything below is trimmed to the
+   alpha bbox first and then re-padded deliberately - resizing the raw files
+   gives a glyph that is illegible at 32px.
+2. **Generated:** `favicon.png` (512), `favicon-192x192.png`, `favicon-32x32.png`
+   - transparent, glyph at 86% of the canvas; `apple-touch-icon.png` (180)
+   flattened onto white at 76%, because iOS composites transparency onto black
+   and rounds the corners itself; `medbank-logo.png` (1400x423, transparent),
+   which is what the privacy/deletion page `<img>` and the JSON-LD logo point at;
+   and `og-image.png` (1200x630, opaque white), the Open Graph card.
+3. **`og-image.png` is opaque on purpose.** Several preview clients render a
+   transparent PNG on black. It is also the standard 1.91:1 - the old tag pointed
+   at the 1400x939 logo, which is why previews cropped it into a square. `og:image`
+   and `twitter:image` in `index.html` and `privacy.html` now point at it, with
+   explicit `og:image:width`/`height`/`type`.
+4. **The manifest's maskable icons were wrong and are now split.** Every icon was
+   declared `"purpose": "any maskable"` while being transparent with the glyph at
+   full bleed - Android crops a maskable icon to its own shape and fills the rest
+   with black. The transparent icons are now `"any"`, and new `maskable-192.png` /
+   `maskable-512.png` are opaque white with the glyph at 58% so it survives the
+   safe-zone crop. Do not re-merge those purposes.
+5. **`favicon-32x32.png` existed but was never linked** - added to `index.html`,
+   `privacy.html` and `deletion.html`. Browsers prefer it for the tab strip.
+6. **`sw.js` precache** gained the 32px favicon and both maskable icons. The
+   cache name is keyed on the version query, so the cache-bust re-fetches the
+   replaced image files; no separate invalidation is needed.
+7. **Left alone:** `Assets/branding/medbank-logo.svg` (old artwork, referenced by
+   nothing served), `favicon-source.png`, and `web-logo-hero.png`, which is a
+   default course cover in `main.js`, not branding.
+8. **Verified** in the browser: all eight files load at their intended
+   dimensions, `og:image` resolves to the 1200x630 card, the four icon links and
+   the four manifest entries resolve, and the manifest is valid JSON.
+
+**Files touched:** `Assets/branding/*` (regenerated), `index.html`,
+`privacy.html`, `deletion.html`, `manifest.webmanifest`, `sw.js`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-09-10 — Login notice, signup cleanup, dark mode paused
 Frontend batch shipped as `2026-09-10.04`. No auth, access, RLS, or sync
 behaviour changed.

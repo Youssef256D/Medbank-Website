@@ -9,6 +9,21 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-10 — Real logo and favicon across the site
+Link previews and browser tabs were still showing the old MedBank mark. Both now
+come from the current brand files in `Assets/`.
+
+Shared links (WhatsApp, Messenger, Telegram, X, Slack) get a proper 1200x630
+preview card with the MedBank logo on white, instead of the old logo squeezed
+into whatever shape the app chose. Browser tabs, bookmarks, the iOS home-screen
+icon and the Android installed-app icon all use the current icon, trimmed so it
+stays legible at 32 pixels.
+
+Android home-screen icons are also fixed: the manifest previously marked the
+transparent icons as "maskable", which lets Android crop the artwork and fill
+the gaps with black. There are now separate maskable icons with a white
+background and the artwork inside the safe zone.
+
 ### 2026-09-10 — Login notice, signup cleanup, dark mode paused
 Six changes to the signed-out screens, shipped as `2026-09-10.04`.
 

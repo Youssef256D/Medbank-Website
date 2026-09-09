@@ -23,8 +23,11 @@ const PRECACHE_URLS = [
   "./Assets/branding/about-review-flow.svg",
   "./Assets/branding/about-analytics.svg",
   "./Assets/branding/apple-touch-icon.png",
+  "./Assets/branding/favicon-32x32.png",
   "./Assets/branding/favicon-192x192.png",
-  "./Assets/branding/favicon.png"
+  "./Assets/branding/favicon.png",
+  "./Assets/branding/maskable-192.png",
+  "./Assets/branding/maskable-512.png"
 ];
 
 function buildOfflineResponse(body = "Offline", status = 503, contentType = "text/plain;charset=utf-8") {
