@@ -190,7 +190,7 @@ can reactivate them.
 ## 7. Refactor log (most recent first)
 
 ### 2026-09-10 — Login notice, signup cleanup, dark mode paused
-Frontend batch shipped as `2026-09-10.02`. No auth, access, RLS, or sync
+Frontend batch shipped as `2026-09-10.03`. No auth, access, RLS, or sync
 behaviour changed.
 
 1. **`googleMigrationNoticeHtml()` + `hasDismissedGoogleMigrationNotice()`**
@@ -230,19 +230,30 @@ behaviour changed.
    copy of this guard and must stay in sync** — without it a browser holding a
    `dark` preference flashes a dark first paint before `main.js` corrects it.
    Restore dark by flipping both flags; nothing was deleted.
-6. **The CSP inline-script hashes were recomputed** because the theme bootstrap
+6. **`body .panel.auth-public-shell` strips the outer auth frame.** The auth
+   routes render `.auth-public-card` inside a `.panel.auth-public-shell`, so the
+   card sat inside a second painted box on login and signup. The shell keeps its
+   grid (marketing copy beside the card) and drops background, border, radius,
+   shadow, backdrop-filter and padding. The `body` prefix is load-bearing:
+   `body.theme-dark .panel` / `body.theme-comfort .panel` are (0,2,1) and repaint
+   background + box-shadow, so a plain `.panel.auth-public-shell` at (0,2,0) lost
+   to them and the frame survived in those two themes. At (0,3,1) it also beats
+   the `.auth-public-shell` padding/radius inside the <=640px block, since media
+   queries add no specificity.
+7. **The CSP inline-script hashes were recomputed** because the theme bootstrap
    changed. When you do this, mask HTML comments first: the CSP maintenance note
    at the top of `index.html` contains a literal `<script>` that a naive regex
    matches, which swallows the JSON-LD block and silently drops its hash.
    Verified afterwards that every inline script's hash is present in the
    directive and that only the edited script's hash moved.
-7. **Verified** in the browser at desktop and 375px: notice renders, dismiss
+8. **Verified** in the browser at desktop and 375px: notice renders, dismiss
    persists across reload, *Create account* navigates and counts as
    acknowledged; legible in light, dark and comfort (dark checked before it was
    paused); signup has no invite field and the placeholder carries the formats;
    a stored `dark` preference resolves to light with no dark first paint; the
-   toggle alternates light/comfort and never reaches dark. `node --check` and
-   `npm run lint` clean.
+   toggle alternates light/comfort and never reaches dark; the auth shell
+   reports no background, shadow, border or padding on both routes in light and
+   comfort. `node --check` and `npm run lint` clean.
 
 **Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
 `AGENTS.md`, `docs/announcements/2026-09-10-google-account-migration.md`.

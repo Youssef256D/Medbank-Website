@@ -20334,3 +20334,24 @@ body .auth-notice .btn.auth-notice-dismiss:hover {
     flex: 1 1 auto;
   }
 }
+
+/* Auth routes render .auth-public-card inside a .panel.auth-public-shell, so the
+   card sat inside a second, larger box - a visible frame around a frame on login
+   and signup in every theme. The shell keeps its job (the grid that puts the
+   marketing copy beside the card) but drops all panel chrome, so only the card
+   reads as a surface.
+
+   Prefixed with `body` on purpose: body.theme-dark/.theme-comfort .panel are
+   (0,2,1) and repaint background + box-shadow, so a plain .panel.auth-public-shell
+   at (0,2,0) lost to them and the frame survived in those two themes. At (0,3,1)
+   this also outranks the .auth-public-shell padding/radius set inside the <=640px
+   block - media queries add no specificity - so it holds at every width. */
+body .panel.auth-public-shell {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  padding: 0;
+  overflow: visible;
+}

@@ -10,7 +10,7 @@ hosted Supabase is the source of truth.
 ## [Unreleased]
 
 ### 2026-09-10 — Login notice, signup cleanup, dark mode paused
-Four changes to the signed-out screens, shipped together as `2026-09-10.02`.
+Five changes to the signed-out screens, shipped as `2026-09-10.03`.
 
 **A one-time notice on the login page.** Anyone opening Log in sees a short
 panel explaining that Google sign-in is gone and that they should sign up again
@@ -27,6 +27,11 @@ screen behind it, and was never stored on the account.
 out in the paragraph under *Create account* and are now the phone input's
 placeholder, so the hint sits where it applies and disappears as soon as the
 student types.
+
+**The doubled box on login and signup is gone.** Both pages drew the form card
+inside a second, larger panel, so the card appeared framed by another frame.
+The outer panel now carries no background, border, or shadow — only the card
+reads as a surface.
 
 **Dark mode is temporarily switched off.** The theme button now alternates light
 and comfort. Anyone already in dark mode is moved to light on their next load.
