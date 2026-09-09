@@ -190,7 +190,7 @@ can reactivate them.
 ## 7. Refactor log (most recent first)
 
 ### 2026-09-10 — Login notice, signup cleanup, dark mode paused
-Frontend batch shipped as `2026-09-10.03`. No auth, access, RLS, or sync
+Frontend batch shipped as `2026-09-10.04`. No auth, access, RLS, or sync
 behaviour changed.
 
 1. **`googleMigrationNoticeHtml()` + `hasDismissedGoogleMigrationNotice()`**
@@ -240,20 +240,44 @@ behaviour changed.
    to them and the frame survived in those two themes. At (0,3,1) it also beats
    the `.auth-public-shell` padding/radius inside the <=640px block, since media
    queries add no specificity.
-7. **The CSP inline-script hashes were recomputed** because the theme bootstrap
+7. **`offerPasswordToBrowserManager()` (just above `wireAuth`) makes password
+   managers offer to save.** Every auth form calls `preventDefault()` and the
+   route re-render then removes the form from the DOM, so Chrome/Edge saw no
+   submission and never prompted. The helper calls
+   `navigator.credentials.store()` with a `PasswordCredential`. Wired at four
+   sites: password login, the offline/local login fallback (real accounts land
+   there when Supabase is unreachable, not just demo ones), signup (placed
+   before the approved/awaiting-approval branch so it covers both), and the
+   password-reset success path so the stored entry gets updated.
+   - **Callers deliberately do not await it.** The prompt is browser chrome and
+     survives the re-render; blocking sign-in behind it buys nothing. The helper
+     swallows every error and attaches its own `.catch()`, so a dismissed prompt
+     can never fail a login or raise an unhandled rejection.
+   - **Safari and Firefox do not implement `PasswordCredential`** and fall back
+     to their own heuristics. That is why the auth forms must remain real
+     `<form>` elements carrying `autocomplete="username"` /`"current-password"` /
+     `"new-password"` — on those browsers the attributes are the only signal.
+     Do not remove them.
+   - `window.isSecureContext` is required by `store()`; localhost qualifies.
+8. **The CSP inline-script hashes were recomputed** because the theme bootstrap
    changed. When you do this, mask HTML comments first: the CSP maintenance note
    at the top of `index.html` contains a literal `<script>` that a naive regex
    matches, which swallows the JSON-LD block and silently drops its hash.
    Verified afterwards that every inline script's hash is present in the
    directive and that only the edited script's hash moved.
-8. **Verified** in the browser at desktop and 375px: notice renders, dismiss
+9. **Verified** in the browser at desktop and 375px: notice renders, dismiss
    persists across reload, *Create account* navigates and counts as
    acknowledged; legible in light, dark and comfort (dark checked before it was
    paused); signup has no invite field and the placeholder carries the formats;
    a stored `dark` preference resolves to light with no dark first paint; the
    toggle alternates light/comfort and never reaches dark; the auth shell
    reports no background, shadow, border or padding on both routes in light and
-   comfort. `node --check` and `npm run lint` clean.
+   comfort. Credential storage was exercised end to end - a real form submit
+   reaches `navigator.credentials.store()` with the typed email, the password
+   and the account name, and the app still routes to app-launcher - plus every
+   guard: no `PasswordCredential` (Safari-like) returns false, missing
+   email/password returns false, and a rejecting `store()` neither throws nor
+   leaves an unhandled rejection. `node --check` and `npm run lint` clean.
 
 **Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
 `AGENTS.md`, `docs/announcements/2026-09-10-google-account-migration.md`.

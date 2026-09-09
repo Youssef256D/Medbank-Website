@@ -10,7 +10,7 @@ hosted Supabase is the source of truth.
 ## [Unreleased]
 
 ### 2026-09-10 — Login notice, signup cleanup, dark mode paused
-Five changes to the signed-out screens, shipped as `2026-09-10.03`.
+Six changes to the signed-out screens, shipped as `2026-09-10.04`.
 
 **A one-time notice on the login page.** Anyone opening Log in sees a short
 panel explaining that Google sign-in is gone and that they should sign up again
@@ -32,6 +32,14 @@ student types.
 inside a second, larger panel, so the card appeared framed by another frame.
 The outer panel now carries no background, border, or shadow — only the card
 reads as a surface.
+
+**Browsers now offer to save your password.** Chrome, Edge and Android's
+password manager never offered to save MedBank logins, because the app handles
+sign-in without a page navigation and they had nothing to react to. Logging in,
+creating an account, or resetting a password now asks the browser to save the
+credentials, so they land in Google Password Manager and the like. Safari and
+Firefox use their own detection, which the login and signup forms already
+support.
 
 **Dark mode is temporarily switched off.** The theme button now alternates light
 and comfort. Anyone already in dark mode is moved to light on their next load.

@@ -23488,6 +23488,44 @@ function renderAuth(mode) {
   `;
 }
 
+/* Ask the browser's password manager to save the credentials just used.
+
+   Password managers hang their save prompt off a real form submission or a
+   navigation. Every auth form here calls preventDefault() and the route
+   re-render then tears the form out of the DOM, so Chrome and Edge see no
+   submission at all and never offer to save. navigator.credentials.store() is
+   the supported way to ask them explicitly.
+
+   Safari and Firefox do not implement PasswordCredential and fall back to their
+   own heuristics - which is exactly why the auth forms must stay real <form>
+   elements carrying autocomplete="username" / "current-password" /
+   "new-password". Do not drop those attributes; on those browsers they are the
+   only signal there is.
+
+   Deliberately not awaited by callers: the prompt is browser chrome and
+   survives the SPA re-render, so there is no reason to hold up sign-in behind
+   it. This never throws - a refusal must not be able to fail a login. */
+function offerPasswordToBrowserManager({ email, password, name } = {}) {
+  try {
+    if (typeof window.PasswordCredential !== "function") return false;
+    if (!navigator.credentials || typeof navigator.credentials.store !== "function") return false;
+    // store() is restricted to secure contexts; localhost counts, plain http does not.
+    if (!window.isSecureContext) return false;
+    const id = String(email || "").trim();
+    const secret = String(password || "");
+    if (!id || !secret) return false;
+    const credential = new window.PasswordCredential({
+      id,
+      password: secret,
+      name: String(name || "").trim() || id,
+    });
+    Promise.resolve(navigator.credentials.store(credential)).catch(() => {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function wireAuth(mode) {
   const lockAuthForm = (form, submitting, busyLabel = "Please wait...") => {
     if (!form) return;
@@ -23663,6 +23701,7 @@ function wireAuth(mode) {
             if (!(user.role === "student" && hasSupabaseManagedIdentity(user))) {
               resetStudentLoginRefreshState(user);
             }
+            offerPasswordToBrowserManager({ email, password, name: user.name });
             state.studentMcqBankEntered = false;
             navigate(user.role === "admin" ? "admin" : "app-launcher");
             toast(`Welcome back, ${user.name}.`);
@@ -23686,6 +23725,10 @@ function wireAuth(mode) {
               toast("Your account is pending admin approval.");
               return;
             }
+            // Real accounts land here too when Supabase is unreachable
+            // (shouldAllowSupabaseManagedLocalFallback), so the credentials are
+            // worth offering, not just the local demo ones.
+            offerPasswordToBrowserManager({ email, password, name: localDemoUser.name });
             save(STORAGE_KEYS.currentUserId, localDemoUser.id);
             resetStudentLoginRefreshState(localDemoUser);
             if (await shouldForceRefreshForUpdates(localDemoUser)) {
@@ -24180,6 +24223,9 @@ function wireAuth(mode) {
           if (effectiveAuthData.session && !autoApproved) {
             await queueSupabaseAuthRequest(authClient, () => authClient.auth.signOut()).catch(() => { });
           }
+          // Offered before the branch so it covers both outcomes: signed straight
+          // in, and sent back to login to wait for approval.
+          offerPasswordToBrowserManager({ email, password, name });
           if (autoApproved && effectiveAuthData.session) {
             save(STORAGE_KEYS.currentUserId, user.id);
             state.studentMcqBankEntered = false;
@@ -24363,6 +24409,11 @@ function wirePasswordReset() {
         return;
       }
       setPasswordRecoveryPendingState(false);
+      offerPasswordToBrowserManager({
+        email: sessionData.session.user.email,
+        password,
+        name: sessionData.session.user.user_metadata?.full_name,
+      });
       removeStorageKey(STORAGE_KEYS.currentUserId);
       await queueSupabaseAuthRequest(authClient, () => authClient.auth.signOut()).catch(() => { });
       toast("Password updated. Log in with your new password.");
