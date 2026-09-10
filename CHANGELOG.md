@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-10 — Auto-approval now runs without an admin online
+Auto-approval previously ran only inside an admin's browser while the admin
+dashboard was open, so students who signed up when nobody was watching were
+never approved - three were waiting, one for over an hour, untouched since
+signup. Approval now happens in the database: a qualifying student is approved
+the instant their profile is saved, with a once-a-minute backstop.
+
+The eligibility rule is unchanged and is a tested port of the app's own, the
+Auto-approve switch still turns it off, and an admin suspension is never undone.
+The three waiting students were approved. Static cache bust: `2026-09-10.12`.
+
 ### 2026-09-10 — Admin pop-up campaigns for the mobile app
 Added Pop-ups to the existing admin shell: campaigns with computed lifecycle
 states, inactive drafts, editing, activation, confirmed deletion, public artwork

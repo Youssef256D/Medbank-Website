@@ -30836,7 +30836,7 @@ function renderAdmin() {
             </div>
             <span class="subtle" style="text-align: right;">
               ${autoApprovalEnabled
-                ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. It runs while an admin dashboard is open.`
+                ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. This runs in the database, so it keeps working when no admin is signed in.`
                 : "New student accounts require admin approval."}
             </span>
             ${state.studentAutoApprovalError
@@ -34183,7 +34183,8 @@ function wireAdmin() {
       const confirmed = window.confirm(
         "Turn on auto-approval?\n\n"
           + "Pending students are approved automatically as soon as their phone number, year, semester, and course "
-          + "selection are complete - the same rule as Approve all pending. It runs while an admin dashboard is open."
+          + "selection are complete - the same rule as Approve all pending. This runs in the database, so it "
+          + "keeps working when no admin is signed in."
           + (waitingCount ? `\n\n${waitingCount} pending account(s) already qualify and will be approved now.` : ""),
       );
       if (!confirmed) {

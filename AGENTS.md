@@ -189,6 +189,76 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-10 — Auto-approval moved into the database
+"Auto-approval is on but users are still not approved" was correct, and the
+earlier badge work (same date, below) diagnosed only half of it. The sweep lived
+**only** in `ensureAdminDashboardPolling()`, so it ran inside an admin's browser
+while the admin dashboard was open and nowhere else. Proof on the hosted project:
+three students with a valid phone, year 5 / semester 2 and five enrolments each
+sat unapproved with `updated_at` still equal to `created_at` — nothing had ever
+processed them. It looked intermittent because opening the dashboard approved
+everyone in a batch.
+
+Migration `20260910160000_server_side_student_auto_approval.sql` (rollback
+provided) moves the decision into Postgres. **The client sweep is unchanged and
+is now redundant rather than load-bearing** — do not delete it expecting a
+behaviour change, and do not "fix" a perceived duplicate by removing the trigger.
+
+1. **`profiles.auto_approval_blocked_at` is the load-bearing part, and the whole
+   design turns on it.** `profiles.approved` is `NOT NULL DEFAULT false`, so a
+   never-decided account and a deliberately suspended one are *identical* in the
+   schema. A sweep that simply approved every complete-but-unapproved student
+   would therefore re-approve anyone an admin suspended, on the next run —
+   suspension would silently stop working. The trigger stamps this column when
+   `approved` goes true -> false and clears it whenever `approved` is set true;
+   both the trigger and the cron skip a non-null hold. **Never add another
+   approval path that ignores this column.** Because the stamping lives in the
+   trigger rather than in `main.js`, every client — website, Flutter app, admin
+   agent, raw SQL — gets the protection without knowing about it.
+2. **`private.student_phone_is_valid()` is a line-by-line port of
+   `validateAndNormalizePhoneNumber()`**, including `normalizePhoneInput` and all
+   eight `PHONE_COUNTRY_RULES` with the longest-dialling-code-first match order.
+   It was **differential-tested against the real JS validator over 50 cases**
+   (every country rule, both Egypt forms, the `00` prefix, punctuation, length
+   boundaries, junk) with perfect agreement before the trigger was created. If
+   the two ever diverge the admin Users page contradicts itself: the row badge
+   from 2026-09-10 says "needs phone number" on an account the database already
+   approved. Change them together.
+3. **`private.student_profile_is_complete()` ports `hasCompleteStudentProfile` +
+   `hasSelectedStudentCourses`**, including the rule that a valid term whose
+   curriculum offers courses satisfies course selection on its own. It is
+   SECURITY DEFINER because the trigger fires on a *student's own* profile write,
+   and under RLS that student cannot read `public.courses`; a false negative
+   there would silently withhold approval.
+4. **Grant only, and never at the cost of the write.** Nothing here sets
+   `approved` to false. The grant is wrapped in its own exception block so a
+   fault in the eligibility check can never stop a student saving their profile.
+   The trigger is BEFORE, mutating `NEW`, so there is no second UPDATE and no
+   recursion. It is named to sort after `trg_profiles_assign_public_user_id` and
+   before `trg_profiles_updated_at`, so `set_updated_at` still stamps the row and
+   the admin poll's `skipIfUnchanged` change-detection keeps working.
+5. **The `student_auto_approval` flag still governs both paths**, so the admin
+   switch remains the off switch — verified in both directions.
+6. **Cron `student-auto-approval` runs every minute** as a backstop for
+   eligibility that becomes true without a profiles write of its own (an
+   enrolment landing later, the flag being switched on, a course added to a
+   curriculum). Confirmed firing: `succeeded`, 20 ms.
+7. **Verified** with rollback-only transactions against real rows: suspension
+   survives an unrelated later edit *and* a full cron sweep, and re-approving
+   clears the hold; a profile becoming eligible is approved by the write itself
+   with no cron and no admin; with the switch off neither path approves and the
+   sweep returns 0. The three students waiting at the time (1.3 h, 0.2 h and
+   2 minutes old) were approved. Afterwards: 618 approved, 3 pending, 0 eligible
+   still pending. The 3 remaining have no phone at all — two are the Apple
+   accounts that still cannot sign in to add one (see the entry below).
+8. **The admin copy was corrected.** It still read "It runs while an admin
+   dashboard is open", which is now false. Static cache bust: `2026-09-10.12`.
+
+**Files touched:** `main.js`, `index.html`,
+`supabase/migrations/20260910160000_server_side_student_auto_approval.sql`,
+its rollback, `CHANGELOG.md`, `AGENTS.md`. Hosted: migration applied, cron job
+scheduled, 3 students approved.
+
 ### 2026-09-10 — Mobile pop-up campaign admin surface
 Adds **Pop-ups** to the existing admin data shell. Static cache bust:
 `2026-09-10.11`. This website only administers mobile campaigns.
