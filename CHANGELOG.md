@@ -9,6 +9,27 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-10 — "Email already exists" on an address that is actually free
+Students whose old Google account was removed were told their email had already
+been used when they tried to sign up again — while an admin searching for that
+email found nothing. Both were right: the address was free on the server, but
+the refusal came from the student's own browser.
+
+The signup form checked a cached copy of the user list stored in the browser
+before contacting the server at all. Logging out never cleared that cache, so a
+deleted account lingered in it indefinitely and blocked the person it belonged
+to from registering again. Signup now asks Supabase, which is the only thing
+that actually knows. A genuinely taken email is still refused, with a clearer
+message.
+
+The same stale row had a second effect: signing up again would have quietly
+adopted the deleted account's MedBank ID, join date and old test history. A
+reused email address is now treated as a new person, so re-registering gives a
+clean account.
+
+745 of the removed accounts still have their email free and were affected; 34
+people had already got through, on a device or browser without the stale copy.
+
 ### 2026-09-10 — Auto-approval now runs without an admin online
 Auto-approval previously ran only inside an admin's browser while the admin
 dashboard was open, so students who signed up when nobody was watching were

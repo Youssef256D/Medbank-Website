@@ -6848,7 +6848,25 @@ function upsertLocalUserFromAuth(authUser, profileOverrides = {}, options = {}) 
   const indexByLegacyId = users.findIndex((entry) => !entry.supabaseAuthId && entry.id === authUser.id);
   const indexByEmail = users.findIndex((entry) => entry.email.toLowerCase() === email);
   const idx = indexByAuthId >= 0 ? indexByAuthId : (indexByLegacyId >= 0 ? indexByLegacyId : indexByEmail);
-  const previous = idx >= 0 ? users[idx] : null;
+
+  // An email-only match against a row that already carries a DIFFERENT Supabase
+  // auth id is a recycled address, not the same person: the old account was
+  // deleted and someone has signed up again with the same email. Merging into
+  // it would hand the new account the dead one's MedBank ID, creation date,
+  // cached password, approval stamps and access issue - and
+  // migrateLocalUserReferences() below would re-point the old account's local
+  // sessions and test history onto it. Overwrite the stale row instead of
+  // inheriting from it.
+  //
+  // A matched row with NO supabaseAuthId is still merged: that is the
+  // local-only account being upgraded to a real identity (see 2026-06-30), and
+  // it must keep working.
+  const matchedByEmailOnly = indexByAuthId < 0 && indexByLegacyId < 0 && indexByEmail >= 0;
+  const staleMatchAuthId = matchedByEmailOnly
+    ? String(users[indexByEmail]?.supabaseAuthId || "").trim()
+    : "";
+  const isRecycledEmailAddress = Boolean(staleMatchAuthId) && staleMatchAuthId !== authUser.id;
+  const previous = idx >= 0 && !isRecycledEmailAddress ? users[idx] : null;
 
   const fallbackName = email.includes("@") ? email.split("@")[0] : "Student";
   const nextName = String(profileOverrides.name || authUser.user_metadata?.full_name || previous?.name || fallbackName).trim();
@@ -24192,13 +24210,22 @@ function wireAuth(mode) {
         return;
       }
 
-      if (users.some((user) => user.email.toLowerCase() === email)) {
+      // Supabase decides whether an email is taken, not this browser. `users`
+      // is a local cache that outlives the accounts it describes: logout()
+      // clears currentUserId but never STORAGE_KEYS.users, so an account
+      // deleted server-side stays in it forever. Consulting it here refused
+      // signup to people whose old account had been removed - the address was
+      // genuinely free, and an admin searching for it found nothing, but their
+      // own browser still remembered the row and blocked them before any
+      // network call. Only the local-demo path may use it, because there is no
+      // server there to ask. A real duplicate is still rejected, by Supabase.
+      const authClient = getSupabaseAuthClient();
+      if (!authClient && users.some((user) => user.email.toLowerCase() === email)) {
         toast("Email already exists.");
         return;
       }
 
       lockAuthForm(form, true, "Creating account...");
-      const authClient = getSupabaseAuthClient();
       try {
         let autoApproved = shouldAutoApproveStudentAccess({
           role: "student",

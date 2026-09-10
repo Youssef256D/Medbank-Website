@@ -189,6 +189,70 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-10 — Signup refused emails that were actually free
+Reported as "users try their old Google email, the site says it has been used
+before, but as admin I cannot find that email". Both halves were true and the
+cause was entirely client-side. Shipped as `2026-09-10.13`.
+
+**Hosted state at diagnosis** (this is what ruled out every server explanation):
+632 `auth.users` = 632 `profiles`, **0** auth rows without a profile, **0**
+soft-deleted (`deleted_at`), **0** unconfirmed, 1 remaining Google identity.
+Of the 779 archived accounts, 745 emails were still free and 34 had already
+re-registered — the 34 were on a device or browser with no stale cache.
+
+1. **The refusal came from `getUsers()`, before any network call.** The signup
+   handler ran `users.some((user) => user.email.toLowerCase() === email)` and
+   returned "Email already exists." `users` is the local
+   `STORAGE_KEYS.users` cache. **`logout()` removes
+   `STORAGE_KEYS.currentUserId` but never `STORAGE_KEYS.users`**, so a row
+   survives the account it describes — and these accounts were deleted
+   server-side while their owners' browsers kept the row forever. Nothing
+   server-side can clear it, and the owner cannot log in to trigger a refresh,
+   so it is permanent for that browser. The check is now gated on
+   `!authClient`: with Supabase reachable it decides, per hard rule §2. The
+   local-demo path keeps the guard because there is no server to ask.
+2. **Deferring is safe because email confirmation is off** on this project (all
+   41 signups since the cleanup have `email_confirmed_at <= created_at + 2s`).
+   GoTrue therefore returns an explicit `User already registered` for a real
+   duplicate rather than the obfuscated fake user it returns when confirmation
+   is enabled, and the existing `toast(error.message)` surfaces it. **If email
+   confirmation is ever turned on, revisit this** — `signUp` would then resolve
+   with a fake user and no error, and the handler would fall through to a false
+   "Account created" for a duplicate.
+3. **`upsertLocalUserFromAuth()` matched that same stale row by email**, third
+   in its fallback chain after `supabaseAuthId` and legacy `id`. Merging into
+   it gave the new account the dead one's `publicUserId` (so the student would
+   see their **old MedBank ID**, contradicting both the announcement and the
+   server's freshly assigned value), its `createdAt`, cached `password`,
+   approval stamps and `studentAccessIssue` — and `migrateLocalUserReferences()`
+   would re-point the deleted account's local sessions and test history onto the
+   new user. Fixing only the signup gate would have made all 745 of them hit
+   this instead. An email-only match whose row carries a **different non-empty**
+   `supabaseAuthId` is now treated as a recycled address: the stale row is
+   overwritten in place rather than inherited from.
+4. **A matched row with no `supabaseAuthId` is still merged** — that is the
+   local-only account being upgraded to a real identity (2026-06-30). Do not
+   collapse these two cases; the emptiness of `supabaseAuthId` is what
+   distinguishes them.
+5. **Deliberately not done: clearing `STORAGE_KEYS.users` on logout.** It would
+   be the tidier root fix, but `logout()` flushes pending sync with
+   `throwOnRelationalFailure: false`, so a failed flush would then discard an
+   admin's unsynced user edits. The two fixes above make the staleness harmless
+   at the points where it did damage. Revisit only with a deliberate decision
+   about that flush.
+6. **Verified** against the real shipped functions in the browser, with no
+   account created on the hosted project. `upsertLocalUserFromAuth`: a recycled
+   email yields `publicUserId: null`, a fresh `createdAt`, an empty password and
+   no alias linking to the dead id, overwriting the stale row in place
+   (1 row, not 2); a row with no `supabaseAuthId` still merges and keeps its
+   `publicUserId`; the same account re-authenticating still merges. Signup:
+   with a stale cached row for the exact email typed, the form reaches
+   `signUp` and the only toast is Supabase's `User already registered` — it is
+   no longer refused locally — and with the auth client stubbed to null the
+   local guard still fires. `node --check` and `npm run lint` clean.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-10 — Auto-approval moved into the database
 "Auto-approval is on but users are still not approved" was correct, and the
 earlier badge work (same date, below) diagnosed only half of it. The sweep lived
