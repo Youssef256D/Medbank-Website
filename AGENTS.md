@@ -191,7 +191,7 @@ can reactivate them.
 
 ### 2026-09-10 — Mobile pop-up campaign admin surface
 Adds **Pop-ups** to the existing admin data shell. Static cache bust:
-`2026-09-10.11-local`. This website only administers mobile campaigns.
+`2026-09-10.11`. This website only administers mobile campaigns.
 
 1. **The Flutter migration is the contract, and is still unapplied.** Read
    `../Medbank-App/supabase/migrations/20260910120000_app_popups.sql`; no SQL or
