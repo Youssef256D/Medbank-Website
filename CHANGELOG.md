@@ -9,6 +9,18 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-10 — Pending accounts show why they were not auto-approved
+Auto-approval was working; nothing explained its skips. Every message listed all
+four required fields regardless of which were actually missing. Pending rows in
+the admin Users list now read "Not auto-approved - needs phone number", and the
+bulk-approve messages name only the real blockers. Course selection is not
+reported until year and semester are set, since the term supplies the courses.
+
+All 3 currently-pending students (of 613) are missing only a phone number. Two
+of them signed in with Apple, which never provides one, and cannot log in to add
+it because the Apple button is hidden - they need a password set or the Apple
+provider re-enabled. Static cache bust: `2026-09-10.09`.
+
 ### 2026-09-10 — Real logo and favicon across the site
 Link previews and browser tabs were still showing the old MedBank mark. Both now
 come from the current brand files in `Assets/`.

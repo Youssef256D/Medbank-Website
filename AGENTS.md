@@ -189,6 +189,63 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-10 — Why a pending student is not auto-approved is now visible
+Reported as "auto-approval is on but some users still are not approved". It is
+working: on the hosted DB, recent signups are approved 27/27 and 7/7, and the
+only 3 unapproved students of 613 all have `phone IS NULL`, which
+`hasCompleteStudentApprovalProfile` correctly refuses. The defect was that
+nothing said so — every message recited the same "phone number, year, semester,
+and course selection" sentence whether one field was missing or all four.
+
+1. **`describeMissingStudentApprovalFields(user)`** (with the other approval
+   predicates) decomposes the exact checks inside `hasCompleteStudentProfile` /
+   `hasSelectedStudentCourses` and returns `[]` whenever
+   `hasCompleteStudentApprovalProfile` already passes. That early return is the
+   invariant: a row can never name a blocker on an account the sweep would
+   approve, or stay silent on one it would skip. Keep it in step if the approval
+   rule changes.
+2. **Course selection is suppressed until year and semester are both valid.**
+   Below that, `hasSelectedStudentCourses` cannot consult the curriculum and
+   falls through to the usually-empty explicit assignment list, so it would tell
+   an admin to pick courses that setting the term supplies by itself. The badge
+   re-evaluates live as the row is filled in.
+3. **Row badge + specific messages.** Pending rows render "Not auto-approved —
+   needs ..." under the MedBank ID, and the four generic toasts now call
+   `summariseMissingApprovalFields()` over the accounts actually skipped. The
+   admin row already has an inline phone input, so the badge points at the fix.
+4. **`--data-warn` was the wrong token and is a trap.** It is declared once at
+   `:root` and never re-declared per theme, so it is frozen to the light palette
+   exactly like `--text` (see 2026-09-10 login-notice entry). `--danger` is
+   themed but `theme-comfort` sets it to `#ef4444`, a light red for dark
+   surfaces, which measured **3.14:1** on comfort's parchment card. New
+   `--approval-gap-fg` carries a complete palette: `#99201f` at `:root` (comfort
+   inherits it) and `#f87171` under `theme-dark`. Measured 8.14 / 6.79 / 6.54:1
+   in light / comfort / dark.
+5. **Do not add another `font-weight` `!important`.** `html body :where(*, ::before, ::after)`
+   forces `400 !important` app-wide, with opt-in allowlists below it. The badge
+   joins the existing medium-emphasis `:is(...)` list instead of competing.
+6. **Two of the three stuck accounts cannot self-heal, and this is not fixed
+   here.** They are Apple sign-ins: Apple never returns a phone, and
+   `appleOAuthEnabled: false` (2026-08-09) removed the Apple button, so they
+   cannot log in to reach `complete-profile` (which does collect a phone). They
+   have no password identity either. Same lockout shape as the Google cohort.
+   Unblocking needs an owner decision — set a password for them (the row's
+   **Set password** button is only hidden for `google`, so it works on Apple),
+   or re-enable the Apple provider. The third is a legacy `invite_code` email
+   signup that can log in and will be routed to `complete-profile` on its own.
+7. **Verified** by lifting the real predicates into a Node harness (23 checks:
+   the three real account shapes, the never-contradict invariant in both
+   directions, per-field accuracy, term-gated course suppression, non-students,
+   null input, and the aggregate wording) and by driving the admin Users page:
+   badges match the hosted rows exactly, the eligible pending account gets none,
+   a badge narrows as fields are filled and clears on completion, the sweep then
+   approves that account, and bulk approve now reports the real blockers.
+   Contrast measured in all three themes. `node --check` and `npm run lint`
+   clean. Static cache bust: `2026-09-10.09`.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`.
+
 ### 2026-09-10 — Brand assets regenerated from the current logo files
 Link previews and favicons were still serving the previous MedBank mark. All of
 it is now generated from `Assets/Fav icon.png` (2048x2048, transparent) and

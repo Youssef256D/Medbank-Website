@@ -12,6 +12,10 @@
   --brand-soft: rgba(23, 126, 137, 0.12);
   --accent: #f4a259;
   --danger: #c43a3a;
+  /* Approval-gap label. Deliberately NOT --danger: theme-comfort redefines that
+     to #ef4444, a light red meant for dark surfaces, which only reaches 3.1:1 on
+     comfort's parchment card. Comfort inherits this :root value. */
+  --approval-gap-fg: #99201f;
   --good: #2b9348;
   --shadow: 0 18px 36px rgba(9, 25, 39, 0.1);
   --shadow-soft: 0 10px 24px rgba(9, 25, 39, 0.08);
@@ -903,6 +907,7 @@ body.theme-dark {
   --brand-soft: rgba(255, 255, 255, 0.08);
   --accent: #8f8f8f;
   --danger: #ef4444;
+  --approval-gap-fg: #f87171;
   --good: #22c55e;
   --shadow: 0 20px 38px rgba(0, 0, 0, 0.58);
   --shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.44);
@@ -11524,7 +11529,8 @@ html body :is(.btn,
   .metric small,
   .exam-nav-link,
   .exam-nav-item .num,
-  .admin-user-account b) {
+  .admin-user-account b,
+  .admin-account-approval-gap) {
   font-weight: 500 !important;
 }
 
@@ -20354,4 +20360,19 @@ body .panel.auth-public-shell {
   backdrop-filter: none;
   padding: 0;
   overflow: visible;
+}
+
+/* Admin Users: why a pending account is not auto-approved (2026-09-10).
+   Uses --danger, not --data-warn: --data-warn is declared once at :root and
+   never re-declared per theme, so it would stay frozen to the light palette if
+   dark mode is un-paused. --danger is redefined under both theme-dark and
+   theme-comfort. It also clears 4.5:1 on the light card, which the amber does
+   not at this text size. The element selector raises specificity over the
+   sibling `small` rules in this cell, which otherwise reset font-weight. */
+small.admin-account-approval-gap {
+  display: inline-block;
+  margin-top: 0.15rem;
+  color: var(--approval-gap-fg);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }

@@ -5714,6 +5714,62 @@ function matchesAdminUserApprovalFilter(account, approvalFilter) {
   return !approved && !hasCompleteStudentApprovalProfile(account);
 }
 
+// Names the specific fields blocking approval for one pending student.
+//
+// This decomposes the exact checks inside `hasCompleteStudentProfile` and
+// `hasSelectedStudentCourses` rather than re-deriving them, and returns nothing
+// at all when `hasCompleteStudentApprovalProfile` already passes. That guard is
+// the point: a row can never claim something is missing from an account that
+// auto-approval would in fact approve, and the reverse. Keep it in step with
+// those predicates if the approval rule ever changes.
+function describeMissingStudentApprovalFields(user) {
+  if (!user || user.role !== "student" || hasCompleteStudentApprovalProfile(user)) {
+    return [];
+  }
+  const missing = [];
+  if (!validateAndNormalizePhoneNumber(String(user.phone || "")).ok) {
+    missing.push("phone number");
+  }
+  const year = Number(user.academicYear);
+  if (!(year >= 1 && year <= 5)) {
+    missing.push("year");
+  }
+  const semester = Number(user.academicSemester);
+  const semesterOk = semester === 1 || semester === 2;
+  if (!semesterOk) {
+    missing.push("semester");
+  }
+  // Course selection is only reportable once year and semester are both valid:
+  // below that, `hasSelectedStudentCourses` cannot consult the curriculum and
+  // always falls through to the (usually empty) explicit assignment list. Naming
+  // it there would tell an admin to pick courses that setting the term will
+  // supply on its own. The badge re-evaluates as the row is filled in.
+  if ((year >= 1 && year <= 5) && semesterOk && !hasSelectedStudentCourses(user)) {
+    missing.push("course selection");
+  }
+  return missing;
+}
+
+// Aggregates the blockers across a set of skipped accounts so a bulk message can
+// say what is actually missing instead of always reciting all four fields.
+function summariseMissingApprovalFields(users) {
+  const seen = new Set();
+  (Array.isArray(users) ? users : []).forEach((entry) => {
+    describeMissingStudentApprovalFields(entry).forEach((field) => seen.add(field));
+  });
+  // Preserve the canonical field order rather than insertion order.
+  const ordered = ["phone number", "year", "semester", "course selection"].filter((field) => seen.has(field));
+  return formatMissingApprovalFieldList(ordered);
+}
+
+function formatMissingApprovalFieldList(fields) {
+  const list = Array.isArray(fields) ? fields.filter(Boolean) : [];
+  if (list.length <= 1) {
+    return list.join("");
+  }
+  return `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+}
+
 // ---------------------------------------------------------------------------
 // Student auto-approval
 //
@@ -5863,7 +5919,7 @@ async function approveEligiblePendingStudents(options = {}) {
     result.incompletePendingCount = pendingUsers.length;
     return finish(
       "none_eligible",
-      "Pending users must complete phone number, year, semester, and course selection before approval.",
+      `Pending users still need ${summariseMissingApprovalFields(pendingUsers)} before approval.`,
     );
   }
 
@@ -5896,7 +5952,8 @@ async function approveEligiblePendingStudents(options = {}) {
   if (!eligiblePendingUsers.length) {
     return finish(
       "none_eligible",
-      `${incompletePendingCount} pending user(s) must complete phone number, year, semester, and course selection before approval.`,
+      `${incompletePendingCount} pending user(s) still need `
+        + `${summariseMissingApprovalFields(pendingUsers)} before approval.`,
     );
   }
 
@@ -30283,6 +30340,7 @@ function renderAdmin() {
         const mcqAccessEnabled = account.role === "admin" || account.mcqAccessEnabled !== false;
         const coursesAccessEnabled = isUserCoursesAccessEnabled(account);
         const isGoogleAuthUser = getAuthProviderFromUser(account) === "google";
+        const missingApprovalFields = isApproved ? [] : describeMissingStudentApprovalFields(account);
         const resetPasswordAction = isGoogleAuthUser
           ? ""
           : '<button class="btn ghost admin-btn-sm" data-action="reset-user-password">Set password</button>';
@@ -30342,6 +30400,7 @@ function renderAdmin() {
                   ${authProviderIcon}
                 </small><br />
                 <small class="admin-account-public-id">MedBank ID: <b>${escapeHtml(String(account.publicUserId || account.public_user_id || "Pending"))}</b></small><br />
+                ${missingApprovalFields.length ? `<small class="admin-account-approval-gap" title="Auto-approval and Approve all pending both skip this account until these are filled in.">Not auto-approved &mdash; needs ${escapeHtml(formatMissingApprovalFieldList(missingApprovalFields))}</small><br />` : ""}
                 <label class="admin-inline-phone-field">
                   <input
                     class="admin-mini-input admin-inline-phone-input"
@@ -33820,7 +33879,7 @@ function wireAdmin() {
       return;
     }
     if (!eligiblePendingUsers.length) {
-      toast("Pending users must complete phone number, year, semester, and course selection before approval.");
+      toast(`Pending users still need ${summariseMissingApprovalFields(getPendingStudentAccounts())} before approval.`);
       return;
     }
     if (!window.confirm(`Approve ${eligiblePendingUsers.length} complete pending account(s)?`)) {
@@ -34040,7 +34099,7 @@ function wireAdmin() {
         const incompleteUsers = unapprovedUsers.filter((entry) => !eligibleUsers.includes(entry));
         const incompleteCount = incompleteUsers.length;
         if (!eligibleUsers.length) {
-          toast(`${incompleteCount} selected user(s) must complete phone number, year, semester, and course selection before approval.`);
+          toast(`${incompleteCount} selected user(s) still need ${summariseMissingApprovalFields(incompleteUsers)} before approval.`);
           return;
         }
 
