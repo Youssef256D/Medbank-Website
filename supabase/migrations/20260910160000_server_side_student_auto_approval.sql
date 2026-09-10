@@ -40,6 +40,10 @@ create or replace function private.student_phone_is_valid(raw_phone text)
 returns boolean
 language plpgsql
 immutable
+-- Pinned per the repo convention for private functions (see 2026-07-06), and
+-- because the database linter flags an unpinned search_path on a function
+-- reached from SECURITY DEFINER callers.
+set search_path = pg_catalog, public
 as $$
 declare
   compact text;
