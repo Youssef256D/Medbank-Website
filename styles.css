@@ -20376,3 +20376,29 @@ small.admin-account-approval-gap {
   font-size: 0.78rem;
   line-height: 1.35;
 }
+
+/* Mobile pop-up campaign administration; follows the active app palette. */
+.admin-popup-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.admin-popup-notice { padding: 1rem; margin-block: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--brand-soft); color: var(--ink); }
+.admin-popup-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 390px); gap: 2rem; margin-top: 2rem; align-items: start; }
+.admin-popup-editor fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 1rem; }
+.admin-popup-editor fieldset:disabled { opacity: .65; }
+.admin-popup-editor label { display: grid; gap: .4rem; }
+.admin-popup-editor label:has(input[type="checkbox"]) { display: flex; align-items: center; }
+.admin-popup-editor input[type="checkbox"] { width: auto; }
+.admin-popup-editor aside { position: sticky; top: 6rem; min-width: 0; }
+.admin-popup-phone { width: 100%; max-width: 390px; height: 680px; border: 1px solid var(--line); border-radius: 28px; background: var(--brand-soft); display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+.admin-popup-preview-card { position: relative; width: 100%; max-width: 560px; max-height: 578px; overflow: hidden; border-radius: 16px; background: var(--surface-strong); color: var(--ink); overflow-wrap: anywhere; }
+.admin-popup-preview-card img { display: block; width: 100%; max-height: 240px; object-fit: cover; }
+.admin-popup-preview-card.is-advert img { max-height: 578px; object-fit: contain; }
+.admin-popup-copy { padding: 24px 48px 24px 24px; }
+.admin-popup-copy p { white-space: pre-wrap; }
+.admin-popup-close { position: absolute; top: 8px; right: 8px; width: 48px; height: 48px; border-radius: 50%; background: var(--surface-strong); color: var(--ink); display: grid; place-items: center; font-size: 26px; }
+#admin-popups-section .table-wrap { overflow-x: auto; }
+#admin-popups-section [hidden] { display: none; }
+@media (max-width: 900px) {
+  .admin-popup-editor { grid-template-columns: minmax(0, 1fr); }
+  .admin-popup-editor aside { position: static; }
+}
+
+.admin-popup-preview-content { max-height: 578px; overflow: auto; }

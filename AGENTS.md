@@ -189,6 +189,62 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-10 — Mobile pop-up campaign admin surface
+Adds **Pop-ups** to the existing admin data shell. Static cache bust:
+`2026-09-10.10-local`. This website only administers mobile campaigns.
+
+1. **The Flutter migration is the contract, and is still unapplied.** Read
+   `../Medbank-App/supabase/migrations/20260910120000_app_popups.sql`; no SQL or
+   Flutter files changed. Missing relations produce a calm migration panel and
+   disable editing. Missing storage has its own migration explanation. Generic
+   request failures do not expose raw database errors.
+2. **`app-popups-utils.js` follows the video utility UMD pattern.** Browser
+   namespace `MedBankAppPopups`, guarded in the admin renderer, loaded before
+   `main.js`, precached, and included in lint. Its separate seven-route vocabulary
+   includes `notifications`; the notification send path is unchanged. State
+   resolution uses start-inclusive/end-exclusive windows, with inactive taking
+   precedence. Validation rejects incompatible context and invalid CHECK values.
+3. **Drafts start inactive.** Subject and course are optional destinations; a
+   topic requires a subject. Switching routes clears incompatible context. Dates
+   are entered in browser-local time and stored as ISO timestamps. Live edits
+   and campaign deletion require confirmation. Writes explicitly allowlist
+   campaign columns and verify a returned row; views are only ever selected.
+4. **Artwork uploads use unique, non-upsert paths and public URLs.** PNG, JPEG,
+   and WebP are accepted up to 5 MB, with under 1 MB recommended. Upload starts
+   on selection; campaign save is separate. Removing/replacing an image or
+   deleting a campaign does not delete storage objects, which may be reused.
+   Preview mirrors the Flutter contain advert / cover banner distinction,
+   hides advert text/buttons, and keeps the close position visible. CSS reuses
+   existing light/comfort/dark tokens; no font-weight override was added.
+5. **Metrics are unique accounts, not summed impressions.** Client aggregation
+   reports shown (`seen_count > 0`), dismissed, tapped and tapped/shown percent.
+   Dismissed and tapped can overlap. Campaign and view reads paginate with
+   deterministic ordering until an empty page, including when the hosted row
+   cap is smaller than the requested page size. Refresh updates status/metrics.
+6. **`escapeHtml()` collapses `0` to an empty string, and a lenient test stub
+   hid it.** The helper is `String(value || "")`, so `escapeHtml(0)` returns
+   `""` — priority defaults to 0 and a new campaign has 0 impressions, so the
+   first campaign an admin created rendered blank cells and an empty *required*
+   priority input that blocked its own save. Numbers now go through
+   `popupNumberText()` before being escaped. Do not "fix" this in `escapeHtml`
+   itself: 525+ call sites depend on its falsy coercion, and `??` would start
+   rendering `null` as the text "null". The reason the suite did not catch it is
+   the more important half — the admin harness stubbed `escapeHtml` with `??`
+   instead of `||`, making the mock more forgiving than production and blinding
+   every falsy-rendering test. That stub now mirrors the real function exactly;
+   keep the two in step, and check any new stub against the function it replaces.
+7. **Verification:** 37 Node tests pass, including utility boundary/targeting
+   cases and isolated tests of the actual admin functions for missing tables,
+   absent global, pagination, upload success/missing bucket, escaped preview,
+   live-save cancellation, payload allowlisting and failed-write draft retention.
+   Syntax checks, lint and build pass. Browser visual checks could not run:
+   Aside was unavailable and browser security policy blocked the local file URL.
+   No dev server, hosted writes, schema changes, staging or commits were used.
+
+**Files touched:** `main.js`, `app-popups-utils.js`, `bootstrap.js`, `sw.js`,
+`index.html`, `styles.css`, `package.json`, `tests/app-popups-utils.test.js`,
+`AGENTS.md`, `CHANGELOG.md`.
+
 ### 2026-09-10 — Why a pending student is not auto-approved is now visible
 Reported as "auto-approval is on but some users still are not approved". It is
 working: on the hosted DB, recent signups are approved 27/27 and 7/7, and the

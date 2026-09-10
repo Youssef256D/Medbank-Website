@@ -5,7 +5,7 @@
   "description": "Optional validation and minification tooling for the MedBank static GitHub Pages app.",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "lint": "eslint bootstrap.js main.js video-courses-utils.js sw.js supabase.config.js api/*.js build/*.js tests/*.js",
+    "lint": "eslint bootstrap.js main.js video-courses-utils.js app-popups-utils.js sw.js supabase.config.js api/*.js build/*.js tests/*.js",
     "build": "node build/esbuild.config.js",
     "build:minify": "node build/esbuild.config.js --minify"
   },

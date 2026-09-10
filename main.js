@@ -199,7 +199,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "mcq-subjects", "questions", "bulk-import", "notifications", "site-access", "ai-agents", "activity", "logs"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -583,6 +583,14 @@ const state = {
   adminPresenceError: "",
   adminPresenceLastSyncAt: 0,
   adminActivityReportRunning: false,
+  adminPopups: [],
+  adminPopupMetrics: {},
+  adminPopupsLoading: false,
+  adminPopupsLoadedAt: 0,
+  adminPopupsError: "",
+  adminPopupsMissing: false,
+  adminPopupDraft: null,
+  adminPopupSaving: false,
   adminAgentsLoading: false,
   adminAgentsError: "",
   adminAgentsLoadedAt: 0,
@@ -21232,6 +21240,11 @@ function render() {
     state.adminPresenceRows = [];
     state.adminPresenceLastSyncAt = 0;
     state.adminActivityReportRunning = false;
+    state.adminPopups = [];
+    state.adminPopupMetrics = {};
+    state.adminPopupsLoadedAt = 0;
+    state.adminPopupsError = "";
+    state.adminPopupDraft = null;
     state.adminAgentsLoading = false;
     state.adminAgentsError = "";
     state.adminAgentsLoadedAt = 0;
@@ -29908,6 +29921,326 @@ function renderAdminAgentsSection() {
   `;
 }
 
+// Mobile pop-up administration. All writes use the authenticated browser client.
+function getAppPopupsUtils() {
+  return typeof globalThis !== "undefined" ? globalThis.MedBankAppPopups : null;
+}
+
+// escapeHtml() collapses any falsy value to "", so a raw 0 renders as a blank
+// cell. Priority defaults to 0 and a new campaign has 0 impressions, so every
+// number shown here must be stringified before it is escaped.
+function popupNumberText(value) {
+  return Number.isFinite(value) ? String(value) : "";
+}
+
+function newAdminPopupDraft() {
+  return { title: "", body: "", image_url: "", image_alt: "", image_fills_card: false,
+    action_label: "", target_route: "", target_mcq_subject: "", target_mcq_topic: "",
+    target_video_course_id: "", audience_role: "all", audience_academic_year: null,
+    priority: 0, display_rule: "once", is_active: false, starts_at: "", ends_at: "" };
+}
+
+function adminPopupErrorMessage(error) {
+  if (isMissingRelationError(error)) {
+    state.adminPopupsMissing = true;
+    return "Pop-up tables are not available yet. The pop-up migration (20260910120000_app_popups.sql) from the Flutter app has not been applied. Apply it separately, then refresh this page. Editing is disabled until the tables are available.";
+  }
+  if (isStorageBucketMissingError(error)) return 'The "popup-images" storage bucket is not available yet. Apply the pop-up migration from the Flutter app separately, then retry the upload.';
+  return "Could not complete the pop-up request. Check your connection and admin session, then retry.";
+}
+
+async function readAllAdminPopupRows(client, table, columns) {
+  const rows = [];
+  // Continue to an empty page, even if a hosted row cap is smaller than 500.
+  for (;;) {
+    let query = client.from(table).select(columns);
+    query = table === "app_popups"
+      ? query.order("created_at", { ascending: false }).order("id", { ascending: false })
+      : query.order("popup_id").order("user_id");
+    const page = await runRelationalQueryWithTimeout(query.range(rows.length, rows.length + 499), "Pop-up query timed out.");
+    if (!page?.length) return rows;
+    rows.push(...page);
+  }
+}
+
+async function loadAdminPopups() {
+  if (state.adminPopupsLoading) return;
+  const client = getCoursesPlatformClient();
+  state.adminPopupsLoading = true;
+  state.adminPopupsError = "";
+  state.adminPopupsMissing = false;
+  try {
+    if (!client || getCurrentUser()?.role !== "admin") throw new Error("Admin session required");
+    const [campaigns, views] = await Promise.all([
+      readAllAdminPopupRows(client, "app_popups", "*"),
+      readAllAdminPopupRows(client, "app_popup_views", "popup_id,user_id,seen_count,dismissed_at,clicked_at"),
+    ]);
+    if (getCurrentUser()?.role !== "admin") return;
+    state.adminPopups = campaigns;
+    state.adminPopupMetrics = getAppPopupsUtils()?.aggregatePopupPerformance(views) || {};
+    await loadAdminNotificationVideoCourseOptions();
+  } catch (error) {
+    state.adminPopups = [];
+    state.adminPopupMetrics = {};
+    state.adminPopupsError = adminPopupErrorMessage(error);
+  } finally {
+    state.adminPopupsLoading = false;
+    state.adminPopupsLoadedAt = Date.now();
+  }
+}
+
+function refreshAdminPopupsView() {
+  if (state.route === "admin" && state.adminPage === "popups") {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+function popupDateForInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+function popupSelectOptions(values, selected, emptyLabel) {
+  return (emptyLabel ? `<option value="">${escapeHtml(emptyLabel)}</option>` : "") + values.map((entry) => {
+    const [value, label] = Array.isArray(entry) ? entry : [entry, entry];
+    return `<option value="${escapeHtml(value)}" ${String(selected ?? "") === String(value) ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+}
+
+function renderAdminPopupPreview(draft) {
+  const image = /^https:\/\//i.test(draft.image_url || "") ? draft.image_url : "";
+  const advert = draft.image_fills_card;
+  return `<div class="admin-popup-phone"><div class="admin-popup-preview-card ${advert ? "is-advert" : ""}" role="group" aria-label="${escapeHtml(draft.title || "Pop-up preview")}"><div class="admin-popup-preview-content">
+    ${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(draft.image_alt || draft.title || "Campaign artwork")}" />` : advert ? '<p class="admin-popup-copy">Upload an image to preview this advert.</p>' : ""}
+    ${advert ? "" : `<div class="admin-popup-copy"><h4>${escapeHtml(draft.title || "Campaign title")}</h4><p>${escapeHtml(draft.body || "")}</p>${draft.target_route ? `<span class="btn">${escapeHtml(draft.action_label || "Open")}</span>` : ""}</div>`}
+    </div><span class="admin-popup-close" aria-label="Close button position">×</span>
+  </div></div><p class="subtle">Phone preview · ${advert && draft.target_route ? "The entire image opens the destination." : draft.target_route ? "The action opens the destination." : "Closes only; no destination."}</p>`;
+}
+
+function renderAdminPopupsSection() {
+  const utils = getAppPopupsUtils();
+  if (utils && !state.adminPopupsLoadedAt && !state.adminPopupsLoading) loadAdminPopups().then(refreshAdminPopupsView);
+  const blocked = !utils || state.adminPopupsLoading || state.adminPopupsMissing || !!state.adminPopupsError || state.adminPopupSaving;
+  const draft = state.adminPopupDraft;
+  const rows = state.adminPopups.map((popup) => {
+    const status = utils?.resolvePopupCampaignState(popup) || "Unavailable";
+    const metrics = state.adminPopupMetrics[popup.id] || { shown: 0, dismissed: 0, tapped: 0, tapThroughRate: 0 };
+    return `<tr><td>${escapeHtml(popup.title)}<br><small>${escapeHtml(new Date(popup.created_at).toLocaleString())}</small></td>
+      <td><span class="badge ${status === "Live" ? "good" : "bad"}">${escapeHtml(status)}</span></td>
+      <td>${escapeHtml(popup.audience_role)} · ${escapeHtml(popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year")}</td>
+      <td>${escapeHtml(popupNumberText(popup.priority))}</td><td>${escapeHtml(popupNumberText(metrics.shown))}</td><td>${escapeHtml(popupNumberText(metrics.dismissed))}</td><td>${escapeHtml(popupNumberText(metrics.tapped))}</td><td>${escapeHtml(metrics.tapThroughRate.toFixed(1))}%</td>
+      <td><div class="admin-popup-actions"><button type="button" class="btn ghost admin-btn-sm" data-popup-edit="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>Edit</button>
+      <button type="button" class="btn ghost admin-btn-sm" data-popup-toggle="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>${popup.is_active ? "Deactivate" : "Activate"}</button>
+      <button type="button" class="btn ghost admin-btn-sm" data-popup-delete="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>Delete</button></div></td></tr>`;
+  }).join("");
+  const courses = (state.adminNotificationVideoCourses.length ? state.adminNotificationVideoCourses : state.adminCoursesPlatformCourses || [])
+    .filter((course) => course.is_active !== false && course.is_published !== false)
+    .map((course) => [course.id, getCoursePlatformCourseTitle(course)]);
+  if (draft?.target_video_course_id && !courses.some(([id]) => id === draft.target_video_course_id)) courses.push([draft.target_video_course_id, "Previously selected course (unavailable)"]);
+  return `<section class="card admin-section" id="admin-popups-section">
+    <div class="flex-between"><div><h3>Pop-ups</h3><p class="subtle">Full-screen campaigns for the MedBank mobile app.</p></div><div class="admin-popup-actions">
+    <button type="button" class="btn ghost" data-popup-refresh ${state.adminPopupsLoading || state.adminPopupSaving ? "disabled" : ""}>${state.adminPopupsLoading ? "Loading…" : "Refresh"}</button>
+    <button type="button" class="btn" data-popup-new ${blocked ? "disabled" : ""}>New campaign</button></div></div>
+    ${!utils ? '<p role="status">Pop-up tools could not load. Reload this page to enable editing.</p>' : ""}
+    ${state.adminPopupsError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.adminPopupsError)}</div>` : ""}
+    <p class="subtle">Performance counts unique accounts, not impressions. Tap-through = accounts tapped ÷ accounts shown. Dismissed and tapped can overlap. Refresh to update performance and campaign states.</p>
+    <div class="table-wrap"><table><thead><tr><th>Campaign · newest first</th><th>State</th><th>Audience</th><th>Priority</th><th>People shown</th><th>Dismissed</th><th>Tapped</th><th>Tap-through</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="9">${state.adminPopupsLoading ? "Loading campaigns…" : state.adminPopupsError ? "Campaign data unavailable." : "No campaigns yet. Create an inactive draft to begin."}</td></tr>`}</tbody></table></div>
+    ${draft ? `<div class="admin-popup-editor"><form id="admin-popup-form"><h3>${draft.id ? "Edit campaign" : "New campaign"}</h3>
+    <fieldset ${blocked ? "disabled" : ""}><label>Title (required, including image-only adverts)<input name="title" required value="${escapeHtml(draft.title)}" /></label>
+    <label>Body<textarea name="body" rows="4">${escapeHtml(draft.body || "")}</textarea></label>
+    <label>Action label<input name="action_label" placeholder="Open" value="${escapeHtml(draft.action_label || "")}" /></label>
+    <label>Artwork (PNG, JPEG or WebP)<input name="artwork" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+    <p class="subtle">Recommend portrait or square artwork for image-filled adverts, under ~1 MB. The app uses contain fitting in a card capped at 560pt wide and 85% of screen height. Keep essential text away from the top-right close button. Selecting a file uploads it immediately.</p>
+    <label>Image URL<input name="image_url" readonly value="${escapeHtml(draft.image_url || "")}" /></label><button class="btn ghost" type="button" data-popup-remove-image>Remove image from campaign</button>
+    <label>Image description<input name="image_alt" value="${escapeHtml(draft.image_alt || "")}" /></label>
+    <label><input name="image_fills_card" type="checkbox" ${draft.image_fills_card ? "checked" : ""} /> Image fills the card</label>
+    <p class="subtle">When enabled, title and body are hidden and no action button is drawn. Title is still required for accessibility. An image is required.</p>
+    <label>Open when tapped<select name="target_route">${popupSelectOptions(utils?.POPUP_TARGET_ROUTES || [], draft.target_route, "No destination — closes only")}</select></label>
+    <div data-popup-mcq ${draft.target_route === "create-test" ? "" : "hidden"}>
+      <label>MCQ subject<select name="target_mcq_subject">${popupSelectOptions(Object.keys(QBANK_COURSE_TOPICS), draft.target_mcq_subject, "Any subject")}</select></label>
+      <label>MCQ topic<select name="target_mcq_topic">${popupSelectOptions(QBANK_COURSE_TOPICS[draft.target_mcq_subject] || [], draft.target_mcq_topic, "Any topic")}</select></label>
+    </div><div data-popup-video ${draft.target_route === "video-courses" ? "" : "hidden"}>
+      <label>Video course<select name="target_video_course_id">${popupSelectOptions(courses, draft.target_video_course_id, "Video Courses list")}</select></label>
+      <small class="subtle">${state.adminNotificationVideoCoursesError ? "Course choices could not load. Refresh to retry." : "Course year/semester describes a course; it does not grant access."}</small></div>
+    <div class="form-row"><label>Audience role<select name="audience_role">${popupSelectOptions(utils?.POPUP_AUDIENCE_ROLES || [], draft.audience_role)}</select></label>
+    <label>Academic year<select name="audience_academic_year">${popupSelectOptions([1, 2, 3, 4, 5], draft.audience_academic_year, "Any year")}</select></label></div>
+    <p class="subtle">Academic year here is real audience targeting. Only accounts in the selected year are eligible.</p>
+    <div class="form-row"><label>Starts at<input name="starts_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.starts_at))}" /></label>
+    <label>Ends at<input name="ends_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.ends_at))}" /></label></div>
+    <p class="subtle">Times use your browser's local time zone. Empty dates mean no time limit.</p>
+    <label>Priority<input name="priority" type="number" step="1" min="-2147483648" max="2147483647" required value="${escapeHtml(popupNumberText(draft.priority))}" /></label>
+    <p class="subtle">The app shows ONE pop-up per launch, highest priority first. The rest wait for later launches.</p>
+    <label>Display rule<select name="display_rule">${popupSelectOptions([["once", "Once ever"], ["daily", "Daily"], ["every_launch", "Every launch"]], draft.display_rule)}</select></label>
+    <p class="subtle">Display rules are per ACCOUNT, not per device. Once means once ever for that account across all devices.</p>
+    <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Active (subject to start/end window)</label>
+    <p class="subtle">Saving changes to a Live campaign affects students immediately.</p>
+    <div class="admin-popup-actions"><button class="btn" type="submit">${state.adminPopupSaving ? "Working…" : "Save campaign"}</button><button class="btn ghost" type="button" data-popup-cancel>Close editor</button></div>
+    </fieldset></form><aside><h3>Live preview</h3><div id="admin-popup-preview">${renderAdminPopupPreview(draft)}</div></aside></div>` : ""}
+  </section>`;
+}
+
+function captureAdminPopupDraft(form) {
+  const draft = state.adminPopupDraft;
+  if (!draft) return;
+  for (const name of ["title", "body", "action_label", "image_alt", "target_route", "target_mcq_subject", "target_mcq_topic", "target_video_course_id", "audience_role", "display_rule"]) draft[name] = form.elements[name].value;
+  for (const name of ["image_fills_card", "is_active"]) draft[name] = form.elements[name].checked;
+  draft.priority = form.elements.priority.value === "" ? NaN : Number(form.elements.priority.value);
+  draft.audience_academic_year = form.elements.audience_academic_year.value ? Number(form.elements.audience_academic_year.value) : null;
+  for (const name of ["starts_at", "ends_at"]) {
+    const value = form.elements[name].value;
+    draft[name] = value ? new Date(value).toISOString() : "";
+  }
+}
+
+async function uploadAdminPopupImage(file) {
+  const types = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+  if (!file?.size || !types[file.type]) throw new Error("Use a non-empty PNG, JPEG or WebP image.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("Image is too large. Maximum 5 MB; under 1 MB is recommended.");
+  const client = getCoursesPlatformClient();
+  if (!client?.storage || getCurrentUser()?.role !== "admin") throw new Error("An active admin session is required.");
+  const path = `campaigns/${crypto.randomUUID()}.${types[file.type]}`;
+  const result = await runWithTimeoutResult(client.storage.from("popup-images").upload(path, file,
+    { cacheControl: "3600", upsert: false, contentType: file.type }), Math.max(SUPABASE_QUERY_TIMEOUT_MS, 60000), "Image upload timed out.");
+  if (result?.error) throw new Error(adminPopupErrorMessage(result.error));
+  const url = client.storage.from("popup-images").getPublicUrl(path)?.data?.publicUrl;
+  if (!url) throw new Error("Upload completed but no public URL was returned. Retry the upload.");
+  return url;
+}
+
+async function runAdminPopupMutation(action) {
+  if (state.adminPopupSaving || state.adminPopupsLoading || state.adminPopupsMissing || !getAppPopupsUtils()) return;
+  const client = getCoursesPlatformClient();
+  if (!client || getCurrentUser()?.role !== "admin") return toast("An active admin session is required.");
+  state.adminPopupSaving = true;
+  refreshAdminPopupsView();
+  try {
+    await action(client);
+    await loadAdminPopups();
+  } catch (error) {
+    const message = adminPopupErrorMessage(error);
+    if (state.adminPopupsMissing) state.adminPopupsError = message;
+    toast(message);
+  } finally {
+    state.adminPopupSaving = false;
+    refreshAdminPopupsView();
+  }
+}
+
+function wireAdminPopups() {
+  const section = appEl.querySelector("#admin-popups-section");
+  if (!section) return;
+  const form = section.querySelector("#admin-popup-form");
+  const capture = () => { if (form) captureAdminPopupDraft(form); };
+  section.querySelector("[data-popup-refresh]")?.addEventListener("click", async () => {
+    capture();
+    const loading = loadAdminPopups();
+    refreshAdminPopupsView();
+    await loading;
+    refreshAdminPopupsView();
+  });
+  section.querySelector("[data-popup-new]")?.addEventListener("click", () => {
+    if (state.adminPopupDraft && !confirm("Discard the current unsaved draft?")) return;
+    state.adminPopupDraft = newAdminPopupDraft();
+    refreshAdminPopupsView();
+  });
+  section.querySelector("[data-popup-cancel]")?.addEventListener("click", () => {
+    if (!confirm("Close this editor and discard unsaved changes?")) return;
+    state.adminPopupDraft = null;
+    refreshAdminPopupsView();
+  });
+  for (const action of ["edit", "toggle", "delete"]) section.querySelectorAll(`[data-popup-${action}]`).forEach((button) => button.addEventListener("click", () => {
+    capture();
+    const popup = state.adminPopups.find((row) => row.id === button.getAttribute(`data-popup-${action}`));
+    if (!popup) return;
+    if (action === "edit") {
+      if (state.adminPopupDraft && !confirm("Discard the current unsaved draft?")) return;
+      state.adminPopupDraft = { ...popup };
+      refreshAdminPopupsView();
+      return;
+    }
+    if (action === "delete" && !confirm(`Delete “${popup.title}” and all its performance history? This cannot be undone.`)) return;
+    runAdminPopupMutation(async (client) => {
+      const query = action === "delete" ? client.from("app_popups").delete() : client.from("app_popups").update({ is_active: !popup.is_active, updated_at: nowISO() });
+      const rows = await runRelationalQueryWithTimeout(query.eq("id", popup.id).select("id"));
+      if (!rows?.length) throw new Error("Campaign was not changed");
+      if (state.adminPopupDraft?.id === popup.id) {
+        if (action === "delete") state.adminPopupDraft = null;
+        else state.adminPopupDraft.is_active = !popup.is_active;
+      }
+      toast(action === "delete" ? "Campaign deleted." : "Campaign status updated.");
+    });
+  }));
+  section.querySelector("[data-popup-remove-image]")?.addEventListener("click", () => {
+    capture();
+    state.adminPopupDraft.image_url = "";
+    refreshAdminPopupsView();
+  });
+  form?.addEventListener("input", (event) => {
+    if (state.adminPopupSaving || event.target.name === "artwork") return;
+    capture();
+    const draft = state.adminPopupDraft;
+    if (event.target.name === "target_route") {
+      if (draft.target_route !== "create-test") draft.target_mcq_subject = draft.target_mcq_topic = "";
+      if (draft.target_route !== "video-courses") draft.target_video_course_id = "";
+      refreshAdminPopupsView();
+    } else if (event.target.name === "target_mcq_subject") {
+      draft.target_mcq_topic = "";
+      refreshAdminPopupsView();
+    } else {
+      section.querySelector("#admin-popup-preview").innerHTML = renderAdminPopupPreview(draft);
+    }
+  });
+  form?.elements.artwork.addEventListener("change", async () => {
+    const file = form.elements.artwork.files[0];
+    if (!file || state.adminPopupSaving) return;
+    capture();
+    const draft = state.adminPopupDraft;
+    state.adminPopupSaving = true;
+    refreshAdminPopupsView();
+    try {
+      const url = await uploadAdminPopupImage(file);
+      if (state.adminPopupDraft === draft) draft.image_url = url;
+      toast("Image uploaded. Save the campaign to use it in the app.");
+    } catch (error) { toast(error.message); }
+    finally { state.adminPopupSaving = false; refreshAdminPopupsView(); }
+  });
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    capture();
+    const utils = getAppPopupsUtils();
+    if (!utils || state.adminPopupSaving) return;
+    const draft = state.adminPopupDraft;
+    const validation = utils.validatePopupCampaign(draft);
+    if (!validation.ok) return toast(validation.errors.join(" "));
+    if (draft.target_mcq_subject && !Object.hasOwn(QBANK_COURSE_TOPICS, draft.target_mcq_subject)) return toast("Choose a valid MCQ subject.");
+    if (draft.target_mcq_topic && !(QBANK_COURSE_TOPICS[draft.target_mcq_subject] || []).includes(draft.target_mcq_topic)) return toast("Choose a valid topic for this subject.");
+    if (draft.target_video_course_id && !getNotificationVideoCourseById(draft.target_video_course_id)) return toast("Refresh and choose an available video course.");
+    const existing = state.adminPopups.find((row) => row.id === draft.id);
+    if (existing && utils.resolvePopupCampaignState(existing) === "Live" && !confirm("This campaign is Live. Saving changes affects students immediately. Save changes?")) return;
+    // Explicit allowlist: never send database metadata or arbitrary form properties.
+    const payload = {};
+    for (const key of Object.keys(newAdminPopupDraft())) payload[key] = typeof draft[key] === "string" ? draft[key].trim() || null : draft[key];
+    payload.target_route = utils.normalizePopupTargetRoute(draft.target_route);
+    payload.updated_at = nowISO();
+    runAdminPopupMutation(async (client) => {
+      let query;
+      if (draft.id) query = client.from("app_popups").update(payload).eq("id", draft.id);
+      else {
+        const user = getCurrentUser();
+        payload.created_by = user.supabaseAuthId || user.id;
+        query = client.from("app_popups").insert(payload);
+      }
+      const rows = await runRelationalQueryWithTimeout(query.select("id"));
+      if (!rows?.length) throw new Error("Campaign was not saved");
+      state.adminPopupDraft = null;
+      toast("Campaign saved.");
+    });
+  });
+}
+
 function renderAdminDataSidebarNav(activeAdminPage) {
   const items = [
     ["dashboard", "Dashboard"],
@@ -29916,6 +30249,7 @@ function renderAdminDataSidebarNav(activeAdminPage) {
     ["questions", "Questions"],
     ["bulk-import", "Bulk Import"],
     ["notifications", "Notifications"],
+    ["popups", "Pop-ups"],
     ["site-access", "Site Access"],
     ["ai-agents", "Hermes Assistant"],
     ["activity", "Activity"],
@@ -31550,6 +31884,10 @@ function renderAdmin() {
     `;
   }
 
+  if (activeAdminPage === "popups") {
+    pageContent = renderAdminPopupsSection();
+  }
+
   if (activeAdminPage === "ai-agents") {
     pageContent = renderAdminAgentsSection();
   }
@@ -31927,6 +32265,7 @@ function renderAdminCourseTopicControls(course) {
 }
 
 function wireAdmin() {
+  wireAdminPopups();
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
 
   appEl.querySelectorAll("[data-action='admin-page']").forEach((button) => {
