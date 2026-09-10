@@ -21244,6 +21244,7 @@ function render() {
     state.adminPopupMetrics = {};
     state.adminPopupsLoadedAt = 0;
     state.adminPopupsError = "";
+    state.adminPopupsMissing = false;
     state.adminPopupDraft = null;
     state.adminAgentsLoading = false;
     state.adminAgentsError = "";
@@ -29926,6 +29927,14 @@ function getAppPopupsUtils() {
   return typeof globalThis !== "undefined" ? globalThis.MedBankAppPopups : null;
 }
 
+// Live is the only state that means "students can see this right now", which is
+// the one question the list has to answer at a glance. Scheduled, Ended and
+// Inactive are all healthy states, so none of them wears the danger colour --
+// a red badge on a correctly scheduled campaign reads as a fault report.
+function popupStateBadgeClass(status) {
+  return status === "Live" ? "good" : "neutral";
+}
+
 // escapeHtml() collapses any falsy value to "", so a raw 0 renders as a blank
 // cell. Priority defaults to 0 and a new campaign has 0 impressions, so every
 // number shown here must be stringified before it is escaped.
@@ -30029,7 +30038,7 @@ function renderAdminPopupsSection() {
     const status = utils?.resolvePopupCampaignState(popup) || "Unavailable";
     const metrics = state.adminPopupMetrics[popup.id] || { shown: 0, dismissed: 0, tapped: 0, tapThroughRate: 0 };
     return `<tr><td>${escapeHtml(popup.title)}<br><small>${escapeHtml(new Date(popup.created_at).toLocaleString())}</small></td>
-      <td><span class="badge ${status === "Live" ? "good" : "bad"}">${escapeHtml(status)}</span></td>
+      <td><span class="badge ${popupStateBadgeClass(status)}">${escapeHtml(status)}</span></td>
       <td>${escapeHtml(popup.audience_role)} · ${escapeHtml(popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year")}</td>
       <td>${escapeHtml(popupNumberText(popup.priority))}</td><td>${escapeHtml(popupNumberText(metrics.shown))}</td><td>${escapeHtml(popupNumberText(metrics.dismissed))}</td><td>${escapeHtml(popupNumberText(metrics.tapped))}</td><td>${escapeHtml(metrics.tapThroughRate.toFixed(1))}%</td>
       <td><div class="admin-popup-actions"><button type="button" class="btn ghost admin-btn-sm" data-popup-edit="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>Edit</button>

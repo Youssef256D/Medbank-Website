@@ -191,7 +191,7 @@ can reactivate them.
 
 ### 2026-09-10 — Mobile pop-up campaign admin surface
 Adds **Pop-ups** to the existing admin data shell. Static cache bust:
-`2026-09-10.10-local`. This website only administers mobile campaigns.
+`2026-09-10.11-local`. This website only administers mobile campaigns.
 
 1. **The Flutter migration is the contract, and is still unapplied.** Read
    `../Medbank-App/supabase/migrations/20260910120000_app_popups.sql`; no SQL or
@@ -233,7 +233,21 @@ Adds **Pop-ups** to the existing admin data shell. Static cache bust:
    instead of `||`, making the mock more forgiving than production and blinding
    every falsy-rendering test. That stub now mirrors the real function exactly;
    keep the two in step, and check any new stub against the function it replaces.
-7. **Verification:** 37 Node tests pass, including utility boundary/targeting
+7. **Only `Live` uses a coloured badge; the other three states are `neutral`.**
+   The list exists to answer one question at a glance -- can students see this
+   right now -- so `Live` is `badge good` and Scheduled, Ended and Inactive are
+   all `badge neutral`. None of them is a fault: scheduled is queued, ended is
+   finished, inactive is deliberately paused, and `badge bad` on any of them
+   reads as an error report. The label already distinguishes the three.
+   `state.adminPopupsMissing` is also cleared with its siblings on the admin
+   state reset, so a stale missing-tables panel cannot survive a sign-out.
+8. **Artwork is deliberately never deleted from storage.** Replacing an image or
+   deleting a campaign leaves the object in `popup-images`. That is a choice,
+   not an oversight: deletion is irreversible, the objects are capped at 5 MB
+   and a handful per campaign, and an admin who has pasted a public URL
+   elsewhere would have it broken from under them. Revisit only with a
+   deliberate retention decision.
+9. **Verification:** 38 Node tests pass, including utility boundary/targeting
    cases and isolated tests of the actual admin functions for missing tables,
    absent global, pagination, upload success/missing bucket, escaped preview,
    live-save cancellation, payload allowlisting and failed-write draft retention.

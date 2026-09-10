@@ -202,3 +202,19 @@ test('zero priority and zero impressions render as 0, not blank cells', () => {
   h.state.adminPopupDraft = { ...h.newAdminPopupDraft(), title: 'Draft' };
   assert.match(h.renderAdminPopupsSection(), /name="priority"[^>]*value="0"/);
 });
+
+test('only Live wears the danger-free green badge; healthy states are neutral', () => {
+  const h = adminHarness();
+  assert.equal(h.popupStateBadgeClass('Live'), 'good');
+  // A red badge on a correctly scheduled or deliberately paused campaign reads
+  // as a fault, so none of these may resolve to the danger class.
+  for (const state of ['Scheduled', 'Ended', 'Inactive', 'Unavailable']) {
+    assert.equal(h.popupStateBadgeClass(state), 'neutral', state);
+  }
+  h.state.adminPopups = [
+    { id: 's', title: 'Queued', created_at: now, audience_role: 'all', priority: 1, is_active: true, starts_at: '2099-01-01T00:00:00Z' },
+  ];
+  const html = h.renderAdminPopupsSection();
+  assert.match(html, /class="badge neutral">Scheduled/);
+  assert.doesNotMatch(html, /badge bad/);
+});

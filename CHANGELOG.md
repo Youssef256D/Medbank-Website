@@ -17,9 +17,11 @@ Performance reports unique accounts shown/dismissed/tapped and tap-through rate
 from paginated read-only view rows. Missing backend tables disable editing with
 an explanation; the Flutter migration is applied separately and was not changed.
 New guarded UMD utilities hold validation and route/state/metric logic. Existing
-notifications and website student flows are unchanged. 37 tests, syntax, lint and
+notifications and website student flows are unchanged. Only Live carries a
+coloured state badge; scheduled, ended and paused campaigns are neutral rather
+than red. 38 tests, syntax, lint and
 build pass; visual browser QA remains unverified because local file access was
-blocked. Cache version: `2026-09-10.10-local`.
+blocked. Cache version: `2026-09-10.11-local`.
 
 ### 2026-09-10 — Pending accounts show why they were not auto-approved
 Auto-approval was working; nothing explained its skips. Every message listed all
