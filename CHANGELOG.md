@@ -9,6 +9,20 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-10 — Admin pop-up campaigns for the mobile app
+Added Pop-ups to the existing admin shell: campaigns with computed lifecycle
+states, inactive drafts, editing, activation, confirmed deletion, public artwork
+uploads, route/audience/schedule controls, and a live phone-width preview.
+Performance reports unique accounts shown/dismissed/tapped and tap-through rate
+from paginated read-only view rows. Missing backend tables disable editing with
+an explanation; the Flutter migration is applied separately and was not changed.
+New guarded UMD utilities hold validation and route/state/metric logic. Existing
+notifications and website student flows are unchanged. Only Live carries a
+coloured state badge; scheduled, ended and paused campaigns are neutral rather
+than red. 38 tests, syntax, lint and
+build pass; visual browser QA remains unverified because local file access was
+blocked. Cache version: `2026-09-10.11`.
+
 ### 2026-09-10 — Pending accounts show why they were not auto-approved
 Auto-approval was working; nothing explained its skips. Every message listed all
 four required fields regardless of which were actually missing. Pending rows in
