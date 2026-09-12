@@ -260,14 +260,34 @@ whenever deliberate teardown releases that channel's health entry.
     `user_id=eq.<profileId>` so one student's enrolment change does not wake every
     other connected student. Verified on the hosted DB that all three of those
     tables really do have a `user_id` column — a wrong filter fails silently.
-11. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
+11. **Realtime signals are parked during a block, not applied.**
+    `runContentRealtimeHydration()` returns early on `isExamFocusRoute()`
+    (`session` or `review`) and sets `pendingRealtimeContentRefresh`;
+    `flushPendingRealtimeContentRefresh()` runs it from `syncTopbar()`, which
+    re-runs on every render, so leaving the block applies it. This is what
+    removes the need to press **Get Updates** after finishing a test.
+    `refreshStudentDataSnapshot` already suppressed the *re-render* on those
+    routes, but it still performed the cloud reads and flushed local session
+    state mid-block — deferring leaves the exam completely undisturbed.
+    **Do not "optimise" this into simply re-rendering on exit**; the point is
+    that nothing runs during the block at all (verified: zero hydrations).
+12. **The status line is derived, never asserted.** The notifications page used
+    to hard-code "Live updates are enabled." even while every channel was dead.
+    `getStudentRealtimeConnectionState()` reads the health registry and returns
+    `live` / `reconnecting` / `idle`, and `syncRealtimeStatusIndicators()`
+    patches any `[data-realtime-status]` element's `textContent` in place.
+    **In place, on purpose** — forcing a route re-render on a reconnect could
+    disturb whatever the student is doing. The **Get Updates** button is
+    deliberately kept as a manual override; it is no longer the only way to
+    get fresh data.
+13. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
    curve was verified by lifting the real `getRealtimeChannelHealthEntry` /
    `scheduleRealtimeChannelRetry` / `releaseRealtimeChannelHealth` out of
    `main.js` into a Node harness that simulates the true rebuild path with
    deterministic jitter: 1000, 2000, 4000, 8000, 16000, 30000 ms (capped). The
    same harness run against a copy with only the counter-seeding line reverted
    produces a flat 1000, 1000, 1000 ms — confirming the test discriminates
-   rather than passing vacuously. Static cache bust: `2026-09-12.03-local`.
+   rather than passing vacuously. Static cache bust: `2026-09-12.04-local`.
 
 **Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`,
 `supabase/migrations/20260913090000_enable_video_course_realtime_publication.sql`,

@@ -27,8 +27,14 @@ student-facing `platform_*` / `app_feature_flags` tables to `supabase_realtime`
 (publication membership only - no policy changed, RLS still enforced per
 subscriber), and a new route-scoped `video-courses` channel refreshes the page
 when a course, module, lesson, resource, announcement, enrolment, entitlement or
-site flag changes. Coupon tables are deliberately excluded. Cache version:
-`2026-09-12.03-local`.
+site flag changes. Coupon tables are deliberately excluded.
+
+Realtime signals that arrive while a student is inside a block are now parked
+and applied when they leave it, so nothing runs against the cloud mid-exam and
+no button press is needed after finishing a test. The status line is derived
+from real channel health (`Live` / `Reconnecting...`) instead of the previous
+hard-coded "Live updates are enabled."; **Get Updates** remains as a manual
+override. Cache version: `2026-09-12.04-local`.
 
 ### 2026-09-10 — "Email already exists" on an address that is actually free
 Students whose old Google account was removed were told their email had already

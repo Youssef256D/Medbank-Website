@@ -1208,6 +1208,10 @@ const REALTIME_RETRY_MAX_MS = 30000;
 const REALTIME_WATCHDOG_MS = 45000;
 const REALTIME_CHANNEL_IDS = ["profile-access", "student-refresh", "notifications", "sessions", "content", "video-courses"];
 const VIDEO_COURSE_REALTIME_DEBOUNCE_MS = 400;
+// Realtime signals that arrive while a student is inside a block are parked
+// here instead of running a full cloud read mid-exam, then flushed the moment
+// they leave. See isExamFocusRoute / flushPendingRealtimeContentRefresh.
+let pendingRealtimeContentRefresh = false;
 let videoCourseRealtimeChannel = null;
 let videoCourseRealtimeSubscriptionKey = "";
 let videoCourseRealtimeHydrateTimer = null;
@@ -18672,6 +18676,7 @@ function scheduleRealtimeChannelRetry(id) {
   }
   entry.retryCount = Math.min(entry.retryCount + 1, 10);
   realtimeChannelRetryCounts.set(id, entry.retryCount);
+  syncRealtimeStatusIndicators();
   const base = Math.min(
     REALTIME_RETRY_BASE_MS * 2 ** (entry.retryCount - 1),
     REALTIME_RETRY_MAX_MS,
@@ -18729,6 +18734,7 @@ function subscribeManagedRealtimeChannel({ id, key, channel, rebuild, onSubscrib
     activeEntry.status = status;
     const subscribed = status === "SUBSCRIBED";
     setRealtimeChannelSubscribedState(id, subscribed);
+    syncRealtimeStatusIndicators();
     if (subscribed) {
       activeEntry.retryCount = 0;
       realtimeChannelRetryCounts.delete(id);
@@ -18781,6 +18787,64 @@ function clearRealtimeWatchdog() {
   }
   window.clearInterval(realtimeWatchdogHandle);
   realtimeWatchdogHandle = null;
+}
+
+// Student-facing connection state, derived from the health registry rather than
+// asserted. Before this, the notifications page hard-coded "Live updates are
+// enabled." even while every channel was dead.
+//   "live"         - something is subscribed and nothing is retrying
+//   "reconnecting" - a channel is down, or a rebuild is pending
+//   "idle"         - no managed channels (signed out, admin, onboarding)
+function getStudentRealtimeConnectionState() {
+  if (realtimeChannelHealth.size === 0) {
+    return "idle";
+  }
+  let anySubscribed = false;
+  let anyDown = false;
+  realtimeChannelHealth.forEach((entry) => {
+    if (entry.status === "SUBSCRIBED") {
+      anySubscribed = true;
+    } else {
+      anyDown = true;
+    }
+    if (entry.retryHandle !== null) {
+      anyDown = true;
+    }
+  });
+  if (anyDown) {
+    return "reconnecting";
+  }
+  return anySubscribed ? "live" : "idle";
+}
+
+function getStudentRealtimeStatusLabel() {
+  const connectionState = getStudentRealtimeConnectionState();
+  if (connectionState === "live") {
+    return "Live";
+  }
+  if (connectionState === "reconnecting") {
+    return "Reconnecting...";
+  }
+  return "";
+}
+
+function getStudentLiveStatusText() {
+  const label = getStudentRealtimeStatusLabel();
+  const detail = getStudentDataSyncStatusText();
+  return label ? `${label} · ${detail}` : detail;
+}
+
+// Patches the status line in place so it reflects a drop/recovery without
+// forcing a route re-render (which could disturb whatever the student is doing).
+function syncRealtimeStatusIndicators() {
+  const nodes = document.querySelectorAll("[data-realtime-status]");
+  if (!nodes.length) {
+    return;
+  }
+  const text = getStudentLiveStatusText();
+  nodes.forEach((node) => {
+    node.textContent = text;
+  });
 }
 
 window.__medbankRealtimeHealth = function () {
@@ -19883,12 +19947,38 @@ function clearContentRealtimeSubscription() {
   }
 }
 
+// A student answering questions must never have a full catalog re-page run
+// underneath them. `session` is an in-progress block; `review` is the answer
+// review that follows it. Both are treated as focus routes.
+function isExamFocusRoute(route = null) {
+  const target = String(route || state.route || "");
+  return target === "session" || target === "review";
+}
+
+// Called from syncTopbar(), which re-runs on every render - so leaving a block
+// flushes whatever arrived during it. This is what removes the need to press
+// "Get Updates" after finishing a test.
+function flushPendingRealtimeContentRefresh() {
+  if (!pendingRealtimeContentRefresh || isExamFocusRoute()) {
+    return;
+  }
+  pendingRealtimeContentRefresh = false;
+  scheduleContentRealtimeHydration(0);
+}
+
 async function runContentRealtimeHydration() {
   if (contentRealtimeHydrateInFlight) {
     return;
   }
   const user = getCurrentUser();
   if (!user || user.role !== "student") {
+    return;
+  }
+  if (isExamFocusRoute()) {
+    // Park it. refreshStudentDataSnapshot already suppresses the re-render on
+    // these routes, but it would still run the cloud reads and flush local
+    // session state mid-block; deferring keeps the exam completely undisturbed.
+    pendingRealtimeContentRefresh = true;
     return;
   }
   contentRealtimeHydrateInFlight = true;
@@ -22230,6 +22320,7 @@ function syncTopbar() {
   ensureContentRealtimeSubscription(user);
   ensureVideoCourseRealtimeSubscription(user);
   ensureStudentRefreshRealtimeSubscription(user);
+  flushPendingRealtimeContentRefresh();
   ensureStudentForceRefreshPolling(user);
   ensureStudentBackgroundRefreshPolling(user);
   const isAdmin = user?.role === "admin";
@@ -25344,7 +25435,7 @@ function renderNotifications() {
           </button>
         </div>
       </div>
-      <p class="subtle notifications-sync-note">Live updates are enabled. ${escapeHtml(getStudentDataSyncStatusText())}</p>
+      <p class="subtle notifications-sync-note" data-realtime-status>${escapeHtml(getStudentLiveStatusText())}</p>
       <div class="notifications-list">
         ${listMarkup || `<article class="card"><p class="subtle" style="margin:0;">No notifications yet.</p></article>`}
       </div>
@@ -45610,6 +45701,7 @@ async function logout(options = {}) {
   clearStudentRefreshRealtimeSubscription();
   clearProfileAccessRealtimeSubscription();
   clearRealtimeWatchdog();
+  pendingRealtimeContentRefresh = false;
   realtimeChannelRetryCounts.clear();
   resetQuestionImageRuntimeState();
   clearStudentAccessPolling();
