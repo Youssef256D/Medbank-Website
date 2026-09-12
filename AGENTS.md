@@ -189,6 +189,52 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-13 — Supabase Realtime subscriptions self-heal
+The five long-lived browser subscriptions now share a health registry and
+managed subscribe path. `CHANNEL_ERROR`, `TIMED_OUT`, and `CLOSED` schedule a
+capped exponential-backoff rebuild with jitter; a pending retry is cancelled
+whenever deliberate teardown releases that channel's health entry.
+
+1. **Early returns require a healthy matching channel.** A matching channel
+   object/key is no longer enough: the registry must also report `SUBSCRIBED`.
+   This prevents a dead object from blocking reconstruction for the rest of the
+   tab lifetime.
+2. **Polling fallbacks are preserved.** Student refresh, notification, and
+   session status failures still start their existing polling paths. Their
+   create paths explicitly run those poll ensure functions after registering a
+   channel, so the clear/recreate closures restore them too; healthy early-return
+   paths retain the same calls they had before.
+3. **Lifecycle recovery is explicit.** Visible, online, and `pageshow` events
+   resync all eligible channels. `pagehide` now also clears profile-access and
+   the watchdog; logout clears the watchdog too.
+4. **The watchdog trusts only explicit socket state.** Every 45 seconds it calls
+   `realtime.isConnected()` only while registry entries exist and resyncs solely
+   when the result is exactly `false`; `undefined` is treated as unknown. Quiet
+   channels are never rebuilt based on elapsed event time.
+5. **Diagnostics are non-mutating.** `window.__medbankRealtimeHealth()` returns
+   plain copied status data, timestamps, retry count, and a retry-pending flag;
+   it does not expose registry entries, timeout handles, or rebuild callbacks.
+6. **Retry counters deliberately live outside the health registry, and this is
+   load-bearing.** A rebuild is `clearX() -> ensureX()`, and `clearX()` calls
+   `releaseRealtimeChannelHealth()`, which *deletes* the entry. A `retryCount`
+   stored on the entry is therefore reset to 0 by every rebuild, so the backoff
+   never grows past its first step and a persistently failing channel retries
+   every ~1s forever. `isBrowserOffline()` does not save you here — it only
+   covers a fully offline browser, not a server-side or auth failure while the
+   browser is online. `realtimeChannelRetryCounts` survives the teardown and is
+   cleared only on a successful subscribe and on deliberate teardown (logout /
+   `pagehide`). **Do not move this counter onto the health entry.**
+7. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
+   curve was verified by lifting the real `getRealtimeChannelHealthEntry` /
+   `scheduleRealtimeChannelRetry` / `releaseRealtimeChannelHealth` out of
+   `main.js` into a Node harness that simulates the true rebuild path with
+   deterministic jitter: 1000, 2000, 4000, 8000, 16000, 30000 ms (capped). The
+   same harness run against a copy with only the counter-seeding line reverted
+   produces a flat 1000, 1000, 1000 ms — confirming the test discriminates
+   rather than passing vacuously. Static cache bust: `2026-09-12.01-local`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-10 — Signup refused emails that were actually free
 Reported as "users try their old Google email, the site says it has been used
 before, but as admin I cannot find that email". Both halves were true and the

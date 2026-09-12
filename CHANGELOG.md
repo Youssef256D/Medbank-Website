@@ -9,6 +9,16 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-13 — Supabase Realtime subscriptions self-heal
+All five long-lived Realtime channels now track their health and rebuild after
+`CHANNEL_ERROR`, `TIMED_OUT`, or `CLOSED` with capped exponential backoff and
+jitter. Visibility, online, and bfcache restore events resync subscriptions, and
+a socket watchdog checks explicit disconnected state without treating quiet
+channels as stale. Existing student polling fallbacks remain active while their
+Realtime channels are unavailable. A read-only browser health snapshot is
+available through `window.__medbankRealtimeHealth()`. Cache version:
+`2026-09-12.01-local`.
+
 ### 2026-09-10 — "Email already exists" on an address that is actually free
 Students whose old Google account was removed were told their email had already
 been used when they tried to sign up again — while an admin searching for that
