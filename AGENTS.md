@@ -240,16 +240,38 @@ whenever deliberate teardown releases that channel's health entry.
    catalog when the version actually moved (`questionContentVersionMoved` ->
    `needsFullSync`). Note that `force: true` bypasses that guard entirely, which
    is why the realtime hydration path is intentionally the only heavy caller.
-9. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
+9. **Video Courses are now live, via a sixth managed channel.** Migration
+   `20260913090000_enable_video_course_realtime_publication.sql` (applied to the
+   hosted project; rollback provided) adds nine tables to `supabase_realtime`:
+   the seven student-facing `platform_*` tables plus
+   `platform_course_enrollment_requests` and `app_feature_flags`. **This is
+   publication membership only** — no policy was created or altered, and
+   Realtime still evaluates the existing RLS per subscriber, so it cannot widen
+   access. `platform_course_coupons` and `platform_course_coupon_modules` are
+   **deliberately excluded**: RLS is on with *zero* policies (a deny-all, since
+   codes are hash-only and redeemed through `redeem_platform_course_coupon()`),
+   so publishing them would emit traffic for rows nobody may select. Do not
+   "complete the set".
+10. **`ensureVideoCourseRealtimeSubscription` is scoped to the `video-courses`
+    route on purpose.** The data is only visible there, and `syncTopbar()` re-runs
+    every ensure on each render, so the channel is built on entering the route and
+    torn down on leaving it. Catalog tables are subscribed unfiltered (a publish
+    must reach everyone); the three per-student access tables are filtered
+    `user_id=eq.<profileId>` so one student's enrolment change does not wake every
+    other connected student. Verified on the hosted DB that all three of those
+    tables really do have a `user_id` column — a wrong filter fails silently.
+11. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
    curve was verified by lifting the real `getRealtimeChannelHealthEntry` /
    `scheduleRealtimeChannelRetry` / `releaseRealtimeChannelHealth` out of
    `main.js` into a Node harness that simulates the true rebuild path with
    deterministic jitter: 1000, 2000, 4000, 8000, 16000, 30000 ms (capped). The
    same harness run against a copy with only the counter-seeding line reverted
    produces a flat 1000, 1000, 1000 ms — confirming the test discriminates
-   rather than passing vacuously. Static cache bust: `2026-09-12.02-local`.
+   rather than passing vacuously. Static cache bust: `2026-09-12.03-local`.
 
-**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`,
+`supabase/migrations/20260913090000_enable_video_course_realtime_publication.sql`,
+and its rollback. Hosted: migration applied (9 tables added to supabase_realtime).
 
 ### 2026-09-10 — Signup refused emails that were actually free
 Reported as "users try their old Google email, the site says it has been used

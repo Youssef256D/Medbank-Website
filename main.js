@@ -1206,7 +1206,12 @@ let profileAccessRealtimeHydrateQueued = false;
 const REALTIME_RETRY_BASE_MS = 1000;
 const REALTIME_RETRY_MAX_MS = 30000;
 const REALTIME_WATCHDOG_MS = 45000;
-const REALTIME_CHANNEL_IDS = ["profile-access", "student-refresh", "notifications", "sessions", "content"];
+const REALTIME_CHANNEL_IDS = ["profile-access", "student-refresh", "notifications", "sessions", "content", "video-courses"];
+const VIDEO_COURSE_REALTIME_DEBOUNCE_MS = 400;
+let videoCourseRealtimeChannel = null;
+let videoCourseRealtimeSubscriptionKey = "";
+let videoCourseRealtimeHydrateTimer = null;
+let videoCourseRealtimeHydrateInFlight = false;
 const realtimeChannelHealth = new Map();
 // Retry counters live outside realtimeChannelHealth on purpose. A rebuild runs
 // clearX() -> ensureX(), and clearX() deletes the health entry, so a counter
@@ -3943,6 +3948,7 @@ async function handleSupabaseAuthStateChange(event, session) {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearStudentAccessPolling();
@@ -4176,6 +4182,7 @@ async function initSupabaseAuthNow() {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearStudentAccessPolling();
@@ -17550,6 +17557,7 @@ async function resumeDeferredAppWork(options = {}) {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearAdminPresencePolling();
@@ -18043,6 +18051,7 @@ function bindGlobalEvents() {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearRealtimeWatchdog();
@@ -18084,6 +18093,7 @@ function bindGlobalEvents() {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearAdminPresencePolling();
@@ -18746,6 +18756,7 @@ function resyncRealtimeSubscriptions() {
   ensureNotificationsRealtimeSubscription(user);
   ensureSessionRealtimeSubscription(user);
   ensureContentRealtimeSubscription(user);
+  ensureVideoCourseRealtimeSubscription(user);
   ensureStudentRefreshRealtimeSubscription(user);
 }
 
@@ -19672,6 +19683,164 @@ function ensureSessionRealtimeSubscription(user = null) {
   sessionRealtimeChannel = channel;
   sessionRealtimeSubscriptionKey = nextKey;
   ensureStudentSessionPolling(currentUser);
+}
+
+function clearVideoCourseRealtimeHydrateTimer() {
+  if (videoCourseRealtimeHydrateTimer) {
+    window.clearTimeout(videoCourseRealtimeHydrateTimer);
+    videoCourseRealtimeHydrateTimer = null;
+  }
+}
+
+function clearVideoCourseRealtimeSubscription() {
+  releaseRealtimeChannelHealth("video-courses");
+  clearVideoCourseRealtimeHydrateTimer();
+  videoCourseRealtimeHydrateInFlight = false;
+  videoCourseRealtimeSubscriptionKey = "";
+  const activeChannel = videoCourseRealtimeChannel;
+  videoCourseRealtimeChannel = null;
+  if (!activeChannel) {
+    return;
+  }
+  const client = getSupabaseAuthClient();
+  if (client && typeof client.removeChannel === "function") {
+    Promise.resolve(client.removeChannel(activeChannel)).catch(() => {
+      if (typeof activeChannel.unsubscribe === "function") {
+        try {
+          activeChannel.unsubscribe();
+        } catch {
+          // Ignore realtime unsubscribe errors.
+        }
+      }
+    });
+    return;
+  }
+  if (typeof activeChannel.unsubscribe === "function") {
+    try {
+      activeChannel.unsubscribe();
+    } catch {
+      // Ignore realtime unsubscribe errors.
+    }
+  }
+}
+
+async function runVideoCourseRealtimeHydration() {
+  if (videoCourseRealtimeHydrateInFlight) {
+    return;
+  }
+  const user = getCurrentUser();
+  if (!user || user.role !== "student" || state.route !== "video-courses") {
+    return;
+  }
+  videoCourseRealtimeHydrateInFlight = true;
+  try {
+    const loaded = await loadStudentCoursesWithProgress({ force: true });
+    if (loaded && state.route === "video-courses") {
+      // Mirror the existing load path in the courses renderer: skip the route
+      // animation so a background refresh does not replay the intro motion.
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  } finally {
+    videoCourseRealtimeHydrateInFlight = false;
+  }
+}
+
+function scheduleVideoCourseRealtimeHydration(delayMs = VIDEO_COURSE_REALTIME_DEBOUNCE_MS) {
+  clearVideoCourseRealtimeHydrateTimer();
+  videoCourseRealtimeHydrateTimer = window.setTimeout(() => {
+    videoCourseRealtimeHydrateTimer = null;
+    runVideoCourseRealtimeHydration().catch((error) => {
+      console.warn("Realtime video course refresh failed.", error?.message || error);
+    });
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+// Video Course liveness. Deliberately scoped to the `video-courses` route: the
+// data is only visible there, and a student sitting on the MCQ dashboard does
+// not need catalog change traffic. syncTopbar() re-runs this on every render,
+// so the channel is created on entering the route and torn down on leaving it.
+function ensureVideoCourseRealtimeSubscription(user = null) {
+  const currentUser = user || getCurrentUser();
+  const client = getSupabaseAuthClient();
+  const profileId = getCurrentSessionProfileId(currentUser);
+  if (
+    !client
+    || isBrowserOffline()
+    || currentUser?.role !== "student"
+    || !isUuidValue(profileId)
+    || state.route !== "video-courses"
+    || isStudentOnboardingRoute(state.route, currentUser)
+  ) {
+    clearVideoCourseRealtimeSubscription();
+    return;
+  }
+
+  const nextKey = `student:${profileId}`;
+  if (
+    videoCourseRealtimeChannel
+    && videoCourseRealtimeSubscriptionKey === nextKey
+    && isRealtimeChannelHealthy("video-courses", nextKey)
+  ) {
+    return;
+  }
+
+  clearVideoCourseRealtimeSubscription();
+  const channel = client.channel(`video-courses-live:${nextKey}`);
+
+  // Catalog-wide tables: a publish/unpublish or a new lesson must reach every
+  // student. RLS still decides what each subscriber actually receives.
+  ["platform_courses", "platform_course_modules", "platform_course_lessons", "platform_course_resources", "platform_course_announcements"].forEach((table) => {
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      () => {
+        recordRealtimeChannelEvent("video-courses");
+        scheduleVideoCourseRealtimeHydration();
+      },
+    );
+  });
+
+  // Per-student access rows, filtered server-side so one student's enrolment
+  // change does not wake every other connected student.
+  ["platform_course_enrollments", "platform_course_module_entitlements", "platform_course_enrollment_requests"].forEach((table) => {
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table, filter: `user_id=eq.${profileId}` },
+      () => {
+        recordRealtimeChannelEvent("video-courses");
+        scheduleVideoCourseRealtimeHydration();
+      },
+    );
+  });
+
+  // One-row table; no filter needed. Covers the courses-coming-soon and access
+  // switches an admin can flip while a student is looking at the page.
+  channel.on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "app_feature_flags" },
+    () => {
+      recordRealtimeChannelEvent("video-courses");
+      scheduleVideoCourseRealtimeHydration();
+    },
+  );
+
+  subscribeManagedRealtimeChannel({
+    id: "video-courses",
+    key: nextKey,
+    channel,
+    rebuild: () => {
+      clearVideoCourseRealtimeSubscription();
+      ensureVideoCourseRealtimeSubscription();
+    },
+    onSubscribed: () => {
+      // Catch anything that changed between route entry and the socket coming up.
+      scheduleVideoCourseRealtimeHydration(0);
+    },
+  });
+
+  videoCourseRealtimeChannel = channel;
+  videoCourseRealtimeSubscriptionKey = nextKey;
 }
 
 function clearContentRealtimeHydrateTimer() {
@@ -22059,6 +22228,7 @@ function syncTopbar() {
   ensureSessionRealtimeSubscription(user);
   ensureStudentSessionPolling(user);
   ensureContentRealtimeSubscription(user);
+  ensureVideoCourseRealtimeSubscription(user);
   ensureStudentRefreshRealtimeSubscription(user);
   ensureStudentForceRefreshPolling(user);
   ensureStudentBackgroundRefreshPolling(user);
@@ -45436,6 +45606,7 @@ async function logout(options = {}) {
   clearNotificationRealtimeSubscription();
   clearSessionRealtimeSubscription();
   clearContentRealtimeSubscription();
+  clearVideoCourseRealtimeSubscription();
   clearStudentRefreshRealtimeSubscription();
   clearProfileAccessRealtimeSubscription();
   clearRealtimeWatchdog();

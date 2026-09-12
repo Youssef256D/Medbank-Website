@@ -19,8 +19,16 @@ Realtime channels are unavailable. A read-only browser health snapshot is
 available through `window.__medbankRealtimeHealth()`. The redundant per-row
 `questions` subscription was dropped in favour of the one-row `content_versions`
 signal that already covers it, cutting a 3,000-row bulk import from 3,000
-realtime messages per student to one. Cache version:
-`2026-09-12.02-local`.
+realtime messages per student to one.
+
+Video Courses are live for the first time: migration
+`20260913090000_enable_video_course_realtime_publication.sql` adds the nine
+student-facing `platform_*` / `app_feature_flags` tables to `supabase_realtime`
+(publication membership only - no policy changed, RLS still enforced per
+subscriber), and a new route-scoped `video-courses` channel refreshes the page
+when a course, module, lesson, resource, announcement, enrolment, entitlement or
+site flag changes. Coupon tables are deliberately excluded. Cache version:
+`2026-09-12.03-local`.
 
 ### 2026-09-10 — "Email already exists" on an address that is actually free
 Students whose old Google account was removed were told their email had already
