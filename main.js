@@ -19766,15 +19766,16 @@ function ensureContentRealtimeSubscription(user = null) {
 
   clearContentRealtimeSubscription();
   const channel = client.channel(`content-live:${nextKey}`);
-  // Subscribe to question row changes so students see new/updated questions immediately.
-  channel.on(
-    "postgres_changes",
-    { event: "*", schema: "public", table: "questions" },
-    () => {
-      recordRealtimeChannelEvent("content");
-      scheduleContentRealtimeHydration();
-    },
-  );
+  // NOTE: there is deliberately no per-row `questions` subscription here.
+  // content_versions (below) is bumped by statement triggers on BOTH questions
+  // and question_choices, so it already covers every case the row events did —
+  // and it does so in one message instead of one per row. A 3,000-row bulk
+  // import previously fanned out 3,000 events to every connected student;
+  // verified on the hosted DB that trg_questions_bump_content_version and
+  // trg_question_choices_bump_content_version are the triggers behind it.
+  // Do NOT re-add a raw `questions` subscription — it is pure message
+  // amplification against the Realtime quota.
+  //
   // content_versions is a one-row table bumped by DB triggers on any
   // questions/question_choices statement. Unlike per-row question events, this
   // signal is visible to every authenticated user, so it catches bulk imports

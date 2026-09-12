@@ -16,8 +16,11 @@ jitter. Visibility, online, and bfcache restore events resync subscriptions, and
 a socket watchdog checks explicit disconnected state without treating quiet
 channels as stale. Existing student polling fallbacks remain active while their
 Realtime channels are unavailable. A read-only browser health snapshot is
-available through `window.__medbankRealtimeHealth()`. Cache version:
-`2026-09-12.01-local`.
+available through `window.__medbankRealtimeHealth()`. The redundant per-row
+`questions` subscription was dropped in favour of the one-row `content_versions`
+signal that already covers it, cutting a 3,000-row bulk import from 3,000
+realtime messages per student to one. Cache version:
+`2026-09-12.02-local`.
 
 ### 2026-09-10 — "Email already exists" on an address that is actually free
 Students whose old Google account was removed were told their email had already

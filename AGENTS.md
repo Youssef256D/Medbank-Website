@@ -224,14 +224,30 @@ whenever deliberate teardown releases that channel's health entry.
    browser is online. `realtimeChannelRetryCounts` survives the teardown and is
    cleared only on a successful subscribe and on deliberate teardown (logout /
    `pagehide`). **Do not move this counter onto the health entry.**
-7. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
+7. **The redundant per-row `questions` subscription was removed from the content
+   channel; `course_topics` was deliberately kept.** Confirmed on the hosted DB
+   that `content_versions` is bumped by `trg_questions_bump_content_version` and
+   `trg_question_choices_bump_content_version` — so it already covers everything
+   the raw `questions` row events covered, in one message instead of one per
+   row. A 3,000-row bulk import previously fanned out 3,000 events to every
+   connected student, which is the real Realtime quota risk at 600+ accounts.
+   **`course_topics` has no such trigger and is NOT covered by
+   `content_versions`**, so its subscription must stay — dropping it would
+   silently kill live topic updates. Do not "symmetrically" remove it.
+8. **Already present, do not re-add: the content-version guard.**
+   `refreshStudentDataSnapshot` already does a cheap one-row
+   `fetchRemoteQuestionContentVersion()` read and only re-pages the question
+   catalog when the version actually moved (`questionContentVersionMoved` ->
+   `needsFullSync`). Note that `force: true` bypasses that guard entirely, which
+   is why the realtime hydration path is intentionally the only heavy caller.
+9. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
    curve was verified by lifting the real `getRealtimeChannelHealthEntry` /
    `scheduleRealtimeChannelRetry` / `releaseRealtimeChannelHealth` out of
    `main.js` into a Node harness that simulates the true rebuild path with
    deterministic jitter: 1000, 2000, 4000, 8000, 16000, 30000 ms (capped). The
    same harness run against a copy with only the counter-seeding line reverted
    produces a flat 1000, 1000, 1000 ms — confirming the test discriminates
-   rather than passing vacuously. Static cache bust: `2026-09-12.01-local`.
+   rather than passing vacuously. Static cache bust: `2026-09-12.02-local`.
 
 **Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
 
