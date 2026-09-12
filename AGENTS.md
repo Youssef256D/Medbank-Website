@@ -189,6 +189,110 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-13 — Supabase Realtime subscriptions self-heal
+The five long-lived browser subscriptions now share a health registry and
+managed subscribe path. `CHANNEL_ERROR`, `TIMED_OUT`, and `CLOSED` schedule a
+capped exponential-backoff rebuild with jitter; a pending retry is cancelled
+whenever deliberate teardown releases that channel's health entry.
+
+1. **Early returns require a healthy matching channel.** A matching channel
+   object/key is no longer enough: the registry must also report `SUBSCRIBED`.
+   This prevents a dead object from blocking reconstruction for the rest of the
+   tab lifetime.
+2. **Polling fallbacks are preserved.** Student refresh, notification, and
+   session status failures still start their existing polling paths. Their
+   create paths explicitly run those poll ensure functions after registering a
+   channel, so the clear/recreate closures restore them too; healthy early-return
+   paths retain the same calls they had before.
+3. **Lifecycle recovery is explicit.** Visible, online, and `pageshow` events
+   resync all eligible channels. `pagehide` now also clears profile-access and
+   the watchdog; logout clears the watchdog too.
+4. **The watchdog trusts only explicit socket state.** Every 45 seconds it calls
+   `realtime.isConnected()` only while registry entries exist and resyncs solely
+   when the result is exactly `false`; `undefined` is treated as unknown. Quiet
+   channels are never rebuilt based on elapsed event time.
+5. **Diagnostics are non-mutating.** `window.__medbankRealtimeHealth()` returns
+   plain copied status data, timestamps, retry count, and a retry-pending flag;
+   it does not expose registry entries, timeout handles, or rebuild callbacks.
+6. **Retry counters deliberately live outside the health registry, and this is
+   load-bearing.** A rebuild is `clearX() -> ensureX()`, and `clearX()` calls
+   `releaseRealtimeChannelHealth()`, which *deletes* the entry. A `retryCount`
+   stored on the entry is therefore reset to 0 by every rebuild, so the backoff
+   never grows past its first step and a persistently failing channel retries
+   every ~1s forever. `isBrowserOffline()` does not save you here — it only
+   covers a fully offline browser, not a server-side or auth failure while the
+   browser is online. `realtimeChannelRetryCounts` survives the teardown and is
+   cleared only on a successful subscribe and on deliberate teardown (logout /
+   `pagehide`). **Do not move this counter onto the health entry.**
+7. **The redundant per-row `questions` subscription was removed from the content
+   channel; `course_topics` was deliberately kept.** Confirmed on the hosted DB
+   that `content_versions` is bumped by `trg_questions_bump_content_version` and
+   `trg_question_choices_bump_content_version` — so it already covers everything
+   the raw `questions` row events covered, in one message instead of one per
+   row. A 3,000-row bulk import previously fanned out 3,000 events to every
+   connected student, which is the real Realtime quota risk at 600+ accounts.
+   **`course_topics` has no such trigger and is NOT covered by
+   `content_versions`**, so its subscription must stay — dropping it would
+   silently kill live topic updates. Do not "symmetrically" remove it.
+8. **Already present, do not re-add: the content-version guard.**
+   `refreshStudentDataSnapshot` already does a cheap one-row
+   `fetchRemoteQuestionContentVersion()` read and only re-pages the question
+   catalog when the version actually moved (`questionContentVersionMoved` ->
+   `needsFullSync`). Note that `force: true` bypasses that guard entirely, which
+   is why the realtime hydration path is intentionally the only heavy caller.
+9. **Video Courses are now live, via a sixth managed channel.** Migration
+   `20260913090000_enable_video_course_realtime_publication.sql` (applied to the
+   hosted project; rollback provided) adds nine tables to `supabase_realtime`:
+   the seven student-facing `platform_*` tables plus
+   `platform_course_enrollment_requests` and `app_feature_flags`. **This is
+   publication membership only** — no policy was created or altered, and
+   Realtime still evaluates the existing RLS per subscriber, so it cannot widen
+   access. `platform_course_coupons` and `platform_course_coupon_modules` are
+   **deliberately excluded**: RLS is on with *zero* policies (a deny-all, since
+   codes are hash-only and redeemed through `redeem_platform_course_coupon()`),
+   so publishing them would emit traffic for rows nobody may select. Do not
+   "complete the set".
+10. **`ensureVideoCourseRealtimeSubscription` is scoped to the `video-courses`
+    route on purpose.** The data is only visible there, and `syncTopbar()` re-runs
+    every ensure on each render, so the channel is built on entering the route and
+    torn down on leaving it. Catalog tables are subscribed unfiltered (a publish
+    must reach everyone); the three per-student access tables are filtered
+    `user_id=eq.<profileId>` so one student's enrolment change does not wake every
+    other connected student. Verified on the hosted DB that all three of those
+    tables really do have a `user_id` column — a wrong filter fails silently.
+11. **Realtime signals are parked during a block, not applied.**
+    `runContentRealtimeHydration()` returns early on `isExamFocusRoute()`
+    (`session` or `review`) and sets `pendingRealtimeContentRefresh`;
+    `flushPendingRealtimeContentRefresh()` runs it from `syncTopbar()`, which
+    re-runs on every render, so leaving the block applies it. This is what
+    removes the need to press **Get Updates** after finishing a test.
+    `refreshStudentDataSnapshot` already suppressed the *re-render* on those
+    routes, but it still performed the cloud reads and flushed local session
+    state mid-block — deferring leaves the exam completely undisturbed.
+    **Do not "optimise" this into simply re-rendering on exit**; the point is
+    that nothing runs during the block at all (verified: zero hydrations).
+12. **The status line is derived, never asserted.** The notifications page used
+    to hard-code "Live updates are enabled." even while every channel was dead.
+    `getStudentRealtimeConnectionState()` reads the health registry and returns
+    `live` / `reconnecting` / `idle`, and `syncRealtimeStatusIndicators()`
+    patches any `[data-realtime-status]` element's `textContent` in place.
+    **In place, on purpose** — forcing a route re-render on a reconnect could
+    disturb whatever the student is doing. The **Get Updates** button is
+    deliberately kept as a manual override; it is no longer the only way to
+    get fresh data.
+13. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
+   curve was verified by lifting the real `getRealtimeChannelHealthEntry` /
+   `scheduleRealtimeChannelRetry` / `releaseRealtimeChannelHealth` out of
+   `main.js` into a Node harness that simulates the true rebuild path with
+   deterministic jitter: 1000, 2000, 4000, 8000, 16000, 30000 ms (capped). The
+   same harness run against a copy with only the counter-seeding line reverted
+   produces a flat 1000, 1000, 1000 ms — confirming the test discriminates
+   rather than passing vacuously. Static cache bust: `2026-09-13.01`.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`,
+`supabase/migrations/20260913090000_enable_video_course_realtime_publication.sql`,
+and its rollback. Hosted: migration applied (9 tables added to supabase_realtime).
+
 ### 2026-09-10 — Signup refused emails that were actually free
 Reported as "users try their old Google email, the site says it has been used
 before, but as admin I cannot find that email". Both halves were true and the

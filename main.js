@@ -1203,6 +1203,28 @@ let profileAccessRealtimeSubscriptionKey = "";
 let profileAccessRealtimeHydrateTimer = null;
 let profileAccessRealtimeHydrateInFlight = false;
 let profileAccessRealtimeHydrateQueued = false;
+const REALTIME_RETRY_BASE_MS = 1000;
+const REALTIME_RETRY_MAX_MS = 30000;
+const REALTIME_WATCHDOG_MS = 45000;
+const REALTIME_CHANNEL_IDS = ["profile-access", "student-refresh", "notifications", "sessions", "content", "video-courses"];
+const VIDEO_COURSE_REALTIME_DEBOUNCE_MS = 400;
+// Realtime signals that arrive while a student is inside a block are parked
+// here instead of running a full cloud read mid-exam, then flushed the moment
+// they leave. See isExamFocusRoute / flushPendingRealtimeContentRefresh.
+let pendingRealtimeContentRefresh = false;
+let videoCourseRealtimeChannel = null;
+let videoCourseRealtimeSubscriptionKey = "";
+let videoCourseRealtimeHydrateTimer = null;
+let videoCourseRealtimeHydrateInFlight = false;
+const realtimeChannelHealth = new Map();
+// Retry counters live outside realtimeChannelHealth on purpose. A rebuild runs
+// clearX() -> ensureX(), and clearX() deletes the health entry, so a counter
+// stored on the entry would reset to 0 on every rebuild and the backoff would
+// never grow past its first step. Keeping it here lets the delay actually climb
+// across consecutive failures; it is cleared on a successful subscribe and on
+// deliberate teardown (logout / pagehide).
+const realtimeChannelRetryCounts = new Map();
+let realtimeWatchdogHandle = null;
 let studentNotificationPollHandle = null;
 let studentDataAutoRefreshPollHandle = null;
 let studentDataAutoRefreshInFlight = false;
@@ -3930,6 +3952,7 @@ async function handleSupabaseAuthStateChange(event, session) {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearStudentAccessPolling();
@@ -4163,6 +4186,7 @@ async function initSupabaseAuthNow() {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearStudentAccessPolling();
@@ -17537,6 +17561,7 @@ async function resumeDeferredAppWork(options = {}) {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearAdminPresencePolling();
@@ -18011,6 +18036,7 @@ function bindGlobalEvents() {
     }
     setCoursePrivacyObscured(false);
     clearBackgroundSync();
+    resyncRealtimeSubscriptions();
     scheduleDeferredAppResume(0);
   });
 
@@ -18029,7 +18055,11 @@ function bindGlobalEvents() {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
+    clearProfileAccessRealtimeSubscription();
+    clearRealtimeWatchdog();
+    realtimeChannelRetryCounts.clear();
     endCurrentUserActivitySession().catch(() => { });
     markCurrentUserOffline().catch(() => { });
     syncPresenceRuntime(null);
@@ -18041,6 +18071,7 @@ function bindGlobalEvents() {
 
   window.addEventListener("pageshow", () => {
     setCoursePrivacyObscured(false);
+    resyncRealtimeSubscriptions();
     scheduleDeferredAppResume(0);
   });
 
@@ -18052,6 +18083,7 @@ function bindGlobalEvents() {
   });
 
   window.addEventListener("online", () => {
+    resyncRealtimeSubscriptions();
     scheduleDeferredAppResume(0);
   });
 
@@ -18065,6 +18097,7 @@ function bindGlobalEvents() {
     clearNotificationRealtimeSubscription();
     clearSessionRealtimeSubscription();
     clearContentRealtimeSubscription();
+    clearVideoCourseRealtimeSubscription();
     clearStudentRefreshRealtimeSubscription();
     clearProfileAccessRealtimeSubscription();
     clearAdminPresencePolling();
@@ -18593,7 +18626,246 @@ function scheduleProfileAccessRealtimeCheck(delayMs = PROFILE_ACCESS_REALTIME_DE
   }, Math.max(0, Number(delayMs) || 0));
 }
 
+function getRealtimeChannelHealthEntry(id) {
+  let entry = realtimeChannelHealth.get(id);
+  if (!entry) {
+    entry = {
+      key: "",
+      status: "IDLE",
+      lastSubscribedAt: 0,
+      lastEventAt: 0,
+      retryCount: realtimeChannelRetryCounts.get(id) || 0,
+      retryHandle: null,
+      rebuild: null,
+    };
+    realtimeChannelHealth.set(id, entry);
+  }
+  return entry;
+}
+
+function recordRealtimeChannelEvent(id) {
+  const entry = realtimeChannelHealth.get(id);
+  if (entry) {
+    entry.lastEventAt = Date.now();
+  }
+}
+
+function isRealtimeChannelHealthy(id, key) {
+  const entry = realtimeChannelHealth.get(id);
+  return Boolean(entry && entry.key === key && entry.status === "SUBSCRIBED");
+}
+
+function clearRealtimeChannelRetry(id) {
+  const entry = realtimeChannelHealth.get(id);
+  if (!entry || entry.retryHandle === null) {
+    return;
+  }
+  window.clearTimeout(entry.retryHandle);
+  entry.retryHandle = null;
+}
+
+function releaseRealtimeChannelHealth(id) {
+  clearRealtimeChannelRetry(id);
+  realtimeChannelHealth.delete(id);
+}
+
+function scheduleRealtimeChannelRetry(id) {
+  const entry = realtimeChannelHealth.get(id);
+  if (!entry || entry.retryHandle !== null) {
+    return;
+  }
+  entry.retryCount = Math.min(entry.retryCount + 1, 10);
+  realtimeChannelRetryCounts.set(id, entry.retryCount);
+  syncRealtimeStatusIndicators();
+  const base = Math.min(
+    REALTIME_RETRY_BASE_MS * 2 ** (entry.retryCount - 1),
+    REALTIME_RETRY_MAX_MS,
+  );
+  const delay = Math.round(base * (0.7 + Math.random() * 0.6));
+  entry.retryHandle = window.setTimeout(() => {
+    entry.retryHandle = null;
+    if (realtimeChannelHealth.get(id) !== entry) {
+      return;
+    }
+    if (isBrowserOffline()) {
+      scheduleRealtimeChannelRetry(id);
+      return;
+    }
+    if (typeof entry.rebuild === "function") {
+      entry.rebuild();
+    }
+  }, delay);
+}
+
+function setRealtimeChannelSubscribedState(id, subscribed) {
+  if (id === "student-refresh") {
+    studentRefreshRealtimeSubscribed = subscribed;
+  } else if (id === "notifications") {
+    notificationRealtimeSubscribed = subscribed;
+  } else if (id === "sessions") {
+    sessionRealtimeSubscribed = subscribed;
+  } else if (id === "content") {
+    contentRealtimeSubscribed = subscribed;
+  }
+}
+
+function ensureRealtimeChannelPollingFallback(id) {
+  const currentUser = getCurrentUser();
+  if (id === "student-refresh") {
+    ensureStudentForceRefreshPolling(currentUser);
+  } else if (id === "notifications" && currentUser?.role === "student") {
+    ensureStudentNotificationPolling(currentUser);
+  } else if (id === "sessions") {
+    ensureStudentSessionPolling(currentUser);
+  }
+}
+
+function subscribeManagedRealtimeChannel({ id, key, channel, rebuild, onSubscribed }) {
+  const entry = getRealtimeChannelHealthEntry(id);
+  entry.key = key;
+  entry.rebuild = rebuild;
+  entry.status = "SUBSCRIBING";
+  setRealtimeChannelSubscribedState(id, false);
+  channel.subscribe((status) => {
+    if (realtimeChannelHealth.get(id)?.key !== key) {
+      return;
+    }
+    const activeEntry = realtimeChannelHealth.get(id);
+    activeEntry.status = status;
+    const subscribed = status === "SUBSCRIBED";
+    setRealtimeChannelSubscribedState(id, subscribed);
+    syncRealtimeStatusIndicators();
+    if (subscribed) {
+      activeEntry.retryCount = 0;
+      realtimeChannelRetryCounts.delete(id);
+      activeEntry.lastSubscribedAt = Date.now();
+      clearRealtimeChannelRetry(id);
+      if (typeof onSubscribed === "function") {
+        onSubscribed();
+      }
+      return;
+    }
+    if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+      ensureRealtimeChannelPollingFallback(id);
+      scheduleRealtimeChannelRetry(id);
+    }
+  });
+}
+
+function resyncRealtimeSubscriptions() {
+  const user = getCurrentUser();
+  if (!user) {
+    return;
+  }
+  ensureRealtimeWatchdog();
+  ensureProfileAccessRealtimeSubscription(user);
+  ensureNotificationsRealtimeSubscription(user);
+  ensureSessionRealtimeSubscription(user);
+  ensureContentRealtimeSubscription(user);
+  ensureVideoCourseRealtimeSubscription(user);
+  ensureStudentRefreshRealtimeSubscription(user);
+}
+
+function ensureRealtimeWatchdog() {
+  if (realtimeWatchdogHandle) {
+    return;
+  }
+  realtimeWatchdogHandle = window.setInterval(() => {
+    if (realtimeChannelHealth.size === 0) {
+      return;
+    }
+    const socketConnected = getSupabaseAuthClient()?.realtime?.isConnected?.();
+    if (socketConnected === false) {
+      resyncRealtimeSubscriptions();
+    }
+  }, REALTIME_WATCHDOG_MS);
+}
+
+function clearRealtimeWatchdog() {
+  if (!realtimeWatchdogHandle) {
+    return;
+  }
+  window.clearInterval(realtimeWatchdogHandle);
+  realtimeWatchdogHandle = null;
+}
+
+// Student-facing connection state, derived from the health registry rather than
+// asserted. Before this, the notifications page hard-coded "Live updates are
+// enabled." even while every channel was dead.
+//   "live"         - something is subscribed and nothing is retrying
+//   "reconnecting" - a channel is down, or a rebuild is pending
+//   "idle"         - no managed channels (signed out, admin, onboarding)
+function getStudentRealtimeConnectionState() {
+  if (realtimeChannelHealth.size === 0) {
+    return "idle";
+  }
+  let anySubscribed = false;
+  let anyDown = false;
+  realtimeChannelHealth.forEach((entry) => {
+    if (entry.status === "SUBSCRIBED") {
+      anySubscribed = true;
+    } else {
+      anyDown = true;
+    }
+    if (entry.retryHandle !== null) {
+      anyDown = true;
+    }
+  });
+  if (anyDown) {
+    return "reconnecting";
+  }
+  return anySubscribed ? "live" : "idle";
+}
+
+function getStudentRealtimeStatusLabel() {
+  const connectionState = getStudentRealtimeConnectionState();
+  if (connectionState === "live") {
+    return "Live";
+  }
+  if (connectionState === "reconnecting") {
+    return "Reconnecting...";
+  }
+  return "";
+}
+
+function getStudentLiveStatusText() {
+  const label = getStudentRealtimeStatusLabel();
+  const detail = getStudentDataSyncStatusText();
+  return label ? `${label} · ${detail}` : detail;
+}
+
+// Patches the status line in place so it reflects a drop/recovery without
+// forcing a route re-render (which could disturb whatever the student is doing).
+function syncRealtimeStatusIndicators() {
+  const nodes = document.querySelectorAll("[data-realtime-status]");
+  if (!nodes.length) {
+    return;
+  }
+  const text = getStudentLiveStatusText();
+  nodes.forEach((node) => {
+    node.textContent = text;
+  });
+}
+
+window.__medbankRealtimeHealth = function () {
+  return REALTIME_CHANNEL_IDS
+    .filter((id) => realtimeChannelHealth.has(id))
+    .map((id) => {
+      const entry = realtimeChannelHealth.get(id);
+      return {
+        id,
+        key: entry.key,
+        status: entry.status,
+        lastSubscribedAt: entry.lastSubscribedAt,
+        lastEventAt: entry.lastEventAt,
+        retryCount: entry.retryCount,
+        retryPending: entry.retryHandle !== null,
+      };
+    });
+};
+
 function clearProfileAccessRealtimeSubscription() {
+  releaseRealtimeChannelHealth("profile-access");
   clearProfileAccessRealtimeHydrateTimer();
   profileAccessRealtimeHydrateQueued = false;
   profileAccessRealtimeHydrateInFlight = false;
@@ -18641,7 +18913,11 @@ function ensureProfileAccessRealtimeSubscription(user = null) {
   }
 
   const nextKey = `student:${profileId}`;
-  if (profileAccessRealtimeChannel && profileAccessRealtimeSubscriptionKey === nextKey) {
+  if (
+    profileAccessRealtimeChannel
+    && profileAccessRealtimeSubscriptionKey === nextKey
+    && isRealtimeChannelHealthy("profile-access", nextKey)
+  ) {
     return;
   }
 
@@ -18656,14 +18932,22 @@ function ensureProfileAccessRealtimeSubscription(user = null) {
       filter: `id=eq.${profileId}`,
     },
     () => {
+      recordRealtimeChannelEvent("profile-access");
       scheduleProfileAccessRealtimeCheck();
     },
   );
 
-  channel.subscribe((status) => {
-    if (status === "SUBSCRIBED") {
+  subscribeManagedRealtimeChannel({
+    id: "profile-access",
+    key: nextKey,
+    channel,
+    rebuild: () => {
+      clearProfileAccessRealtimeSubscription();
+      ensureProfileAccessRealtimeSubscription();
+    },
+    onSubscribed: () => {
       scheduleProfileAccessRealtimeCheck(0);
-    }
+    },
   });
 
   profileAccessRealtimeChannel = channel;
@@ -18732,6 +19016,7 @@ function clearStudentRefreshRealtimeHydrateTimer() {
 }
 
 function clearStudentRefreshRealtimeSubscription() {
+  releaseRealtimeChannelHealth("student-refresh");
   clearStudentRefreshRealtimeHydrateTimer();
   clearStudentForceRefreshPolling();
   studentRefreshRealtimeHydrateQueued = false;
@@ -18832,7 +19117,11 @@ function ensureStudentRefreshRealtimeSubscription(user = null) {
   }
 
   const nextKey = `student:${profileId}`;
-  if (studentRefreshRealtimeChannel && studentRefreshRealtimeSubscriptionKey === nextKey) {
+  if (
+    studentRefreshRealtimeChannel
+    && studentRefreshRealtimeSubscriptionKey === nextKey
+    && isRealtimeChannelHealthy("student-refresh", nextKey)
+  ) {
     ensureStudentForceRefreshPolling(currentUser);
     return;
   }
@@ -18843,6 +19132,7 @@ function ensureStudentRefreshRealtimeSubscription(user = null) {
     "broadcast",
     { event: STUDENT_REFRESH_BROADCAST_EVENT },
     ({ payload }) => {
+      recordRealtimeChannelEvent("student-refresh");
       handleStudentRefreshRealtimeSignal(payload, { user: getCurrentUser() }).catch((error) => {
         console.warn("Realtime student refresh broadcast failed.", error?.message || error);
       });
@@ -18860,6 +19150,7 @@ function ensureStudentRefreshRealtimeSubscription(user = null) {
       filter: `${filterColumn}=eq.${realtimeStorageKey}`,
     },
     () => {
+      recordRealtimeChannelEvent("student-refresh");
       scheduleStudentRefreshRealtimeHydration(0);
     },
   );
@@ -18873,23 +19164,29 @@ function ensureStudentRefreshRealtimeSubscription(user = null) {
         filter: `${filterColumn}=eq.${STORAGE_KEYS.studentRefreshTrigger}`,
       },
       () => {
+        recordRealtimeChannelEvent("student-refresh");
         scheduleStudentRefreshRealtimeHydration(0);
       },
     );
   }
 
-  channel.subscribe((status) => {
-    studentRefreshRealtimeSubscribed = status === "SUBSCRIBED";
-    if (status === "SUBSCRIBED") {
+  subscribeManagedRealtimeChannel({
+    id: "student-refresh",
+    key: nextKey,
+    channel,
+    rebuild: () => {
+      clearStudentRefreshRealtimeSubscription();
+      ensureStudentRefreshRealtimeSubscription();
+    },
+    onSubscribed: () => {
       clearStudentForceRefreshPolling();
       scheduleStudentRefreshRealtimeHydration(0);
-      return;
-    }
-    ensureStudentForceRefreshPolling(currentUser);
+    },
   });
 
   studentRefreshRealtimeChannel = channel;
   studentRefreshRealtimeSubscriptionKey = nextKey;
+  ensureStudentForceRefreshPolling(currentUser);
 }
 
 function ensureStudentForceRefreshPolling(user = null) {
@@ -19004,6 +19301,7 @@ function ensureStudentNotificationPolling(user = null) {
 }
 
 function clearNotificationRealtimeSubscription() {
+  releaseRealtimeChannelHealth("notifications");
   clearNotificationRealtimeHydrateTimer();
   clearStudentNotificationPolling();
   notificationRealtimeHydrateQueued = false;
@@ -19038,6 +19336,7 @@ function clearNotificationRealtimeSubscription() {
 }
 
 function clearSessionRealtimeSubscription() {
+  releaseRealtimeChannelHealth("sessions");
   clearSessionRealtimeHydrateTimer();
   clearStudentSessionPolling();
   sessionRealtimeHydrateQueued = false;
@@ -19253,7 +19552,11 @@ function ensureNotificationsRealtimeSubscription(user = null) {
   }
 
   const nextKey = `${role}:${profileId}`;
-  if (notificationRealtimeChannel && notificationRealtimeSubscriptionKey === nextKey) {
+  if (
+    notificationRealtimeChannel
+    && notificationRealtimeSubscriptionKey === nextKey
+    && isRealtimeChannelHealthy("notifications", nextKey)
+  ) {
     if (role === "student") {
       ensureStudentNotificationPolling(currentUser);
     }
@@ -19266,6 +19569,7 @@ function ensureNotificationsRealtimeSubscription(user = null) {
     "postgres_changes",
     { event: "*", schema: "public", table: "notifications" },
     () => {
+      recordRealtimeChannelEvent("notifications");
       scheduleNotificationRealtimeHydration();
     },
   );
@@ -19279,24 +19583,30 @@ function ensureNotificationsRealtimeSubscription(user = null) {
         filter: `user_id=eq.${profileId}`,
       },
       () => {
+        recordRealtimeChannelEvent("notifications");
         scheduleNotificationRealtimeHydration();
       },
     );
   }
 
-  channel.subscribe((status) => {
-    notificationRealtimeSubscribed = status === "SUBSCRIBED";
-    if (status === "SUBSCRIBED") {
+  subscribeManagedRealtimeChannel({
+    id: "notifications",
+    key: nextKey,
+    channel,
+    rebuild: () => {
+      clearNotificationRealtimeSubscription();
+      ensureNotificationsRealtimeSubscription();
+    },
+    onSubscribed: () => {
       clearStudentNotificationPolling();
       scheduleNotificationRealtimeHydration(0);
-      return;
-    }
-    if (role === "student") {
-      ensureStudentNotificationPolling(currentUser);
-    }
+    },
   });
   notificationRealtimeChannel = channel;
   notificationRealtimeSubscriptionKey = nextKey;
+  if (role === "student") {
+    ensureStudentNotificationPolling(currentUser);
+  }
 }
 
 function ensureStudentSessionPolling(user = null) {
@@ -19363,7 +19673,11 @@ function ensureSessionRealtimeSubscription(user = null) {
   }
 
   const nextKey = `student:${profileId}`;
-  if (sessionRealtimeChannel && sessionRealtimeSubscriptionKey === nextKey) {
+  if (
+    sessionRealtimeChannel
+    && sessionRealtimeSubscriptionKey === nextKey
+    && isRealtimeChannelHealthy("sessions", nextKey)
+  ) {
     ensureStudentSessionPolling(currentUser);
     return;
   }
@@ -19379,6 +19693,7 @@ function ensureSessionRealtimeSubscription(user = null) {
       filter: `user_id=eq.${profileId}`,
     },
     () => {
+      recordRealtimeChannelEvent("sessions");
       scheduleSessionRealtimeHydration();
     },
   );
@@ -19394,6 +19709,7 @@ function ensureSessionRealtimeSubscription(user = null) {
         filter: `${supabaseSync.storageKeyColumn}=eq.${realtimeStorageKey}`,
       },
       () => {
+        recordRealtimeChannelEvent("sessions");
         scheduleSessionRealtimeHydration();
       },
     );
@@ -19407,24 +19723,188 @@ function ensureSessionRealtimeSubscription(user = null) {
           filter: `${supabaseSync.storageKeyColumn}=eq.${STORAGE_KEYS.sessions}`,
         },
         () => {
+          recordRealtimeChannelEvent("sessions");
           scheduleSessionRealtimeHydration();
         },
       );
     }
   }
 
-  channel.subscribe((status) => {
-    sessionRealtimeSubscribed = status === "SUBSCRIBED";
-    if (status === "SUBSCRIBED") {
+  subscribeManagedRealtimeChannel({
+    id: "sessions",
+    key: nextKey,
+    channel,
+    rebuild: () => {
+      clearSessionRealtimeSubscription();
+      ensureSessionRealtimeSubscription();
+    },
+    onSubscribed: () => {
       clearStudentSessionPolling();
       scheduleSessionRealtimeHydration(SESSION_REALTIME_DEBOUNCE_MS);
-      return;
-    }
-    ensureStudentSessionPolling(currentUser);
+    },
   });
 
   sessionRealtimeChannel = channel;
   sessionRealtimeSubscriptionKey = nextKey;
+  ensureStudentSessionPolling(currentUser);
+}
+
+function clearVideoCourseRealtimeHydrateTimer() {
+  if (videoCourseRealtimeHydrateTimer) {
+    window.clearTimeout(videoCourseRealtimeHydrateTimer);
+    videoCourseRealtimeHydrateTimer = null;
+  }
+}
+
+function clearVideoCourseRealtimeSubscription() {
+  releaseRealtimeChannelHealth("video-courses");
+  clearVideoCourseRealtimeHydrateTimer();
+  videoCourseRealtimeHydrateInFlight = false;
+  videoCourseRealtimeSubscriptionKey = "";
+  const activeChannel = videoCourseRealtimeChannel;
+  videoCourseRealtimeChannel = null;
+  if (!activeChannel) {
+    return;
+  }
+  const client = getSupabaseAuthClient();
+  if (client && typeof client.removeChannel === "function") {
+    Promise.resolve(client.removeChannel(activeChannel)).catch(() => {
+      if (typeof activeChannel.unsubscribe === "function") {
+        try {
+          activeChannel.unsubscribe();
+        } catch {
+          // Ignore realtime unsubscribe errors.
+        }
+      }
+    });
+    return;
+  }
+  if (typeof activeChannel.unsubscribe === "function") {
+    try {
+      activeChannel.unsubscribe();
+    } catch {
+      // Ignore realtime unsubscribe errors.
+    }
+  }
+}
+
+async function runVideoCourseRealtimeHydration() {
+  if (videoCourseRealtimeHydrateInFlight) {
+    return;
+  }
+  const user = getCurrentUser();
+  if (!user || user.role !== "student" || state.route !== "video-courses") {
+    return;
+  }
+  videoCourseRealtimeHydrateInFlight = true;
+  try {
+    const loaded = await loadStudentCoursesWithProgress({ force: true });
+    if (loaded && state.route === "video-courses") {
+      // Mirror the existing load path in the courses renderer: skip the route
+      // animation so a background refresh does not replay the intro motion.
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  } finally {
+    videoCourseRealtimeHydrateInFlight = false;
+  }
+}
+
+function scheduleVideoCourseRealtimeHydration(delayMs = VIDEO_COURSE_REALTIME_DEBOUNCE_MS) {
+  clearVideoCourseRealtimeHydrateTimer();
+  videoCourseRealtimeHydrateTimer = window.setTimeout(() => {
+    videoCourseRealtimeHydrateTimer = null;
+    runVideoCourseRealtimeHydration().catch((error) => {
+      console.warn("Realtime video course refresh failed.", error?.message || error);
+    });
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+// Video Course liveness. Deliberately scoped to the `video-courses` route: the
+// data is only visible there, and a student sitting on the MCQ dashboard does
+// not need catalog change traffic. syncTopbar() re-runs this on every render,
+// so the channel is created on entering the route and torn down on leaving it.
+function ensureVideoCourseRealtimeSubscription(user = null) {
+  const currentUser = user || getCurrentUser();
+  const client = getSupabaseAuthClient();
+  const profileId = getCurrentSessionProfileId(currentUser);
+  if (
+    !client
+    || isBrowserOffline()
+    || currentUser?.role !== "student"
+    || !isUuidValue(profileId)
+    || state.route !== "video-courses"
+    || isStudentOnboardingRoute(state.route, currentUser)
+  ) {
+    clearVideoCourseRealtimeSubscription();
+    return;
+  }
+
+  const nextKey = `student:${profileId}`;
+  if (
+    videoCourseRealtimeChannel
+    && videoCourseRealtimeSubscriptionKey === nextKey
+    && isRealtimeChannelHealthy("video-courses", nextKey)
+  ) {
+    return;
+  }
+
+  clearVideoCourseRealtimeSubscription();
+  const channel = client.channel(`video-courses-live:${nextKey}`);
+
+  // Catalog-wide tables: a publish/unpublish or a new lesson must reach every
+  // student. RLS still decides what each subscriber actually receives.
+  ["platform_courses", "platform_course_modules", "platform_course_lessons", "platform_course_resources", "platform_course_announcements"].forEach((table) => {
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      () => {
+        recordRealtimeChannelEvent("video-courses");
+        scheduleVideoCourseRealtimeHydration();
+      },
+    );
+  });
+
+  // Per-student access rows, filtered server-side so one student's enrolment
+  // change does not wake every other connected student.
+  ["platform_course_enrollments", "platform_course_module_entitlements", "platform_course_enrollment_requests"].forEach((table) => {
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table, filter: `user_id=eq.${profileId}` },
+      () => {
+        recordRealtimeChannelEvent("video-courses");
+        scheduleVideoCourseRealtimeHydration();
+      },
+    );
+  });
+
+  // One-row table; no filter needed. Covers the courses-coming-soon and access
+  // switches an admin can flip while a student is looking at the page.
+  channel.on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "app_feature_flags" },
+    () => {
+      recordRealtimeChannelEvent("video-courses");
+      scheduleVideoCourseRealtimeHydration();
+    },
+  );
+
+  subscribeManagedRealtimeChannel({
+    id: "video-courses",
+    key: nextKey,
+    channel,
+    rebuild: () => {
+      clearVideoCourseRealtimeSubscription();
+      ensureVideoCourseRealtimeSubscription();
+    },
+    onSubscribed: () => {
+      // Catch anything that changed between route entry and the socket coming up.
+      scheduleVideoCourseRealtimeHydration(0);
+    },
+  });
+
+  videoCourseRealtimeChannel = channel;
+  videoCourseRealtimeSubscriptionKey = nextKey;
 }
 
 function clearContentRealtimeHydrateTimer() {
@@ -19435,6 +19915,7 @@ function clearContentRealtimeHydrateTimer() {
 }
 
 function clearContentRealtimeSubscription() {
+  releaseRealtimeChannelHealth("content");
   clearContentRealtimeHydrateTimer();
   contentRealtimeHydrateInFlight = false;
   contentRealtimeSubscriptionKey = "";
@@ -19466,12 +19947,38 @@ function clearContentRealtimeSubscription() {
   }
 }
 
+// A student answering questions must never have a full catalog re-page run
+// underneath them. `session` is an in-progress block; `review` is the answer
+// review that follows it. Both are treated as focus routes.
+function isExamFocusRoute(route = null) {
+  const target = String(route || state.route || "");
+  return target === "session" || target === "review";
+}
+
+// Called from syncTopbar(), which re-runs on every render - so leaving a block
+// flushes whatever arrived during it. This is what removes the need to press
+// "Get Updates" after finishing a test.
+function flushPendingRealtimeContentRefresh() {
+  if (!pendingRealtimeContentRefresh || isExamFocusRoute()) {
+    return;
+  }
+  pendingRealtimeContentRefresh = false;
+  scheduleContentRealtimeHydration(0);
+}
+
 async function runContentRealtimeHydration() {
   if (contentRealtimeHydrateInFlight) {
     return;
   }
   const user = getCurrentUser();
   if (!user || user.role !== "student") {
+    return;
+  }
+  if (isExamFocusRoute()) {
+    // Park it. refreshStudentDataSnapshot already suppresses the re-render on
+    // these routes, but it would still run the cloud reads and flush local
+    // session state mid-block; deferring keeps the exam completely undisturbed.
+    pendingRealtimeContentRefresh = true;
     return;
   }
   contentRealtimeHydrateInFlight = true;
@@ -19508,20 +20015,26 @@ function ensureContentRealtimeSubscription(user = null) {
   }
 
   const nextKey = `student:${profileId}`;
-  if (contentRealtimeChannel && contentRealtimeSubscriptionKey === nextKey) {
+  if (
+    contentRealtimeChannel
+    && contentRealtimeSubscriptionKey === nextKey
+    && isRealtimeChannelHealthy("content", nextKey)
+  ) {
     return;
   }
 
   clearContentRealtimeSubscription();
   const channel = client.channel(`content-live:${nextKey}`);
-  // Subscribe to question row changes so students see new/updated questions immediately.
-  channel.on(
-    "postgres_changes",
-    { event: "*", schema: "public", table: "questions" },
-    () => {
-      scheduleContentRealtimeHydration();
-    },
-  );
+  // NOTE: there is deliberately no per-row `questions` subscription here.
+  // content_versions (below) is bumped by statement triggers on BOTH questions
+  // and question_choices, so it already covers every case the row events did —
+  // and it does so in one message instead of one per row. A 3,000-row bulk
+  // import previously fanned out 3,000 events to every connected student;
+  // verified on the hosted DB that trg_questions_bump_content_version and
+  // trg_question_choices_bump_content_version are the triggers behind it.
+  // Do NOT re-add a raw `questions` subscription — it is pure message
+  // amplification against the Realtime quota.
+  //
   // content_versions is a one-row table bumped by DB triggers on any
   // questions/question_choices statement. Unlike per-row question events, this
   // signal is visible to every authenticated user, so it catches bulk imports
@@ -19530,6 +20043,7 @@ function ensureContentRealtimeSubscription(user = null) {
     "postgres_changes",
     { event: "UPDATE", schema: "public", table: "content_versions" },
     () => {
+      recordRealtimeChannelEvent("content");
       scheduleContentRealtimeHydration();
     },
   );
@@ -19538,6 +20052,7 @@ function ensureContentRealtimeSubscription(user = null) {
     "postgres_changes",
     { event: "*", schema: "public", table: "course_topics" },
     () => {
+      recordRealtimeChannelEvent("content");
       scheduleContentRealtimeHydration();
     },
   );
@@ -19550,6 +20065,7 @@ function ensureContentRealtimeSubscription(user = null) {
       filter: `user_id=eq.${profileId}`,
     },
     () => {
+      recordRealtimeChannelEvent("content");
       scheduleContentRealtimeHydration();
     },
   );
@@ -19562,17 +20078,24 @@ function ensureContentRealtimeSubscription(user = null) {
       filter: `id=eq.${profileId}`,
     },
     () => {
+      recordRealtimeChannelEvent("content");
       scheduleContentRealtimeHydration();
     },
   );
 
-  channel.subscribe((status) => {
-    contentRealtimeSubscribed = status === "SUBSCRIBED";
-    if (status === "SUBSCRIBED") {
+  subscribeManagedRealtimeChannel({
+    id: "content",
+    key: nextKey,
+    channel,
+    rebuild: () => {
+      clearContentRealtimeSubscription();
+      ensureContentRealtimeSubscription();
+    },
+    onSubscribed: () => {
       // Fetch immediately on subscription to catch any changes that happened
       // between page load and realtime becoming active.
       scheduleContentRealtimeHydration(0);
-    }
+    },
   });
 
   contentRealtimeChannel = channel;
@@ -21795,7 +22318,9 @@ function syncTopbar() {
   ensureSessionRealtimeSubscription(user);
   ensureStudentSessionPolling(user);
   ensureContentRealtimeSubscription(user);
+  ensureVideoCourseRealtimeSubscription(user);
   ensureStudentRefreshRealtimeSubscription(user);
+  flushPendingRealtimeContentRefresh();
   ensureStudentForceRefreshPolling(user);
   ensureStudentBackgroundRefreshPolling(user);
   const isAdmin = user?.role === "admin";
@@ -24910,7 +25435,7 @@ function renderNotifications() {
           </button>
         </div>
       </div>
-      <p class="subtle notifications-sync-note">Live updates are enabled. ${escapeHtml(getStudentDataSyncStatusText())}</p>
+      <p class="subtle notifications-sync-note" data-realtime-status>${escapeHtml(getStudentLiveStatusText())}</p>
       <div class="notifications-list">
         ${listMarkup || `<article class="card"><p class="subtle" style="margin:0;">No notifications yet.</p></article>`}
       </div>
@@ -45172,8 +45697,12 @@ async function logout(options = {}) {
   clearNotificationRealtimeSubscription();
   clearSessionRealtimeSubscription();
   clearContentRealtimeSubscription();
+  clearVideoCourseRealtimeSubscription();
   clearStudentRefreshRealtimeSubscription();
   clearProfileAccessRealtimeSubscription();
+  clearRealtimeWatchdog();
+  pendingRealtimeContentRefresh = false;
+  realtimeChannelRetryCounts.clear();
   resetQuestionImageRuntimeState();
   clearStudentAccessPolling();
   clearStudentBackgroundRefreshPolling();

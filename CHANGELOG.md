@@ -9,6 +9,33 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-13 — Supabase Realtime subscriptions self-heal
+All five long-lived Realtime channels now track their health and rebuild after
+`CHANNEL_ERROR`, `TIMED_OUT`, or `CLOSED` with capped exponential backoff and
+jitter. Visibility, online, and bfcache restore events resync subscriptions, and
+a socket watchdog checks explicit disconnected state without treating quiet
+channels as stale. Existing student polling fallbacks remain active while their
+Realtime channels are unavailable. A read-only browser health snapshot is
+available through `window.__medbankRealtimeHealth()`. The redundant per-row
+`questions` subscription was dropped in favour of the one-row `content_versions`
+signal that already covers it, cutting a 3,000-row bulk import from 3,000
+realtime messages per student to one.
+
+Video Courses are live for the first time: migration
+`20260913090000_enable_video_course_realtime_publication.sql` adds the nine
+student-facing `platform_*` / `app_feature_flags` tables to `supabase_realtime`
+(publication membership only - no policy changed, RLS still enforced per
+subscriber), and a new route-scoped `video-courses` channel refreshes the page
+when a course, module, lesson, resource, announcement, enrolment, entitlement or
+site flag changes. Coupon tables are deliberately excluded.
+
+Realtime signals that arrive while a student is inside a block are now parked
+and applied when they leave it, so nothing runs against the cloud mid-exam and
+no button press is needed after finishing a test. The status line is derived
+from real channel health (`Live` / `Reconnecting...`) instead of the previous
+hard-coded "Live updates are enabled."; **Get Updates** remains as a manual
+override. Cache version: `2026-09-13.01`.
+
 ### 2026-09-10 — "Email already exists" on an address that is actually free
 Students whose old Google account was removed were told their email had already
 been used when they tried to sign up again — while an admin searching for that
