@@ -287,7 +287,7 @@ whenever deliberate teardown releases that channel's health entry.
    deterministic jitter: 1000, 2000, 4000, 8000, 16000, 30000 ms (capped). The
    same harness run against a copy with only the counter-seeding line reverted
    produces a flat 1000, 1000, 1000 ms — confirming the test discriminates
-   rather than passing vacuously. Static cache bust: `2026-09-12.04-local`.
+   rather than passing vacuously. Static cache bust: `2026-09-13.01`.
 
 **Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`,
 `supabase/migrations/20260913090000_enable_video_course_realtime_publication.sql`,

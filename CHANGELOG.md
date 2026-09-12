@@ -34,7 +34,7 @@ and applied when they leave it, so nothing runs against the cloud mid-exam and
 no button press is needed after finishing a test. The status line is derived
 from real channel health (`Live` / `Reconnecting...`) instead of the previous
 hard-coded "Live updates are enabled."; **Get Updates** remains as a manual
-override. Cache version: `2026-09-12.04-local`.
+override. Cache version: `2026-09-13.01`.
 
 ### 2026-09-10 — "Email already exists" on an address that is actually free
 Students whose old Google account was removed were told their email had already
