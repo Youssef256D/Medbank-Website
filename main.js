@@ -18593,12 +18593,22 @@ async function runProfileAccessRealtimeCheck() {
     if (accessStatus?.active === false) {
       return;
     }
+    if (isExamFocusRoute()) {
+      // The access enforcement above still runs during a block on purpose - a
+      // student whose access was revoked must be stopped immediately. But the
+      // snapshot refresh is parked, because `rerender: false` only suppressed
+      // the repaint: the full forced cloud read still ran underneath someone
+      // answering questions. flushPendingRealtimeContentRefresh() applies it
+      // from syncTopbar() the moment they leave the block.
+      pendingRealtimeContentRefresh = true;
+      return;
+    }
     // A profile row change can also mean year/semester/course scope changed, not
     // just approval status. Refresh the student snapshot so their account updates
     // immediately after an admin edits enrollment details.
     await refreshStudentDataSnapshot(user, {
       force: true,
-      rerender: state.route !== "session" && state.route !== "review",
+      rerender: true,
     });
   } catch (error) {
     console.warn("Profile access realtime check failed.", error?.message || error);

@@ -280,14 +280,29 @@ whenever deliberate teardown releases that channel's health entry.
     disturb whatever the student is doing. The **Get Updates** button is
     deliberately kept as a manual override; it is no longer the only way to
     get fresh data.
-13. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
+14. **`runProfileAccessRealtimeCheck` had the same mid-exam flaw and is fixed;
+    one sibling deliberately is not.** It passed
+    `rerender: state.route !== "session" && ...` to `refreshStudentDataSnapshot`,
+    which only suppressed the *repaint* — the full forced cloud read still ran
+    underneath a student answering questions. Caught by driving a real student
+    session on production: the content signal parked correctly but
+    `studentDataLastSyncAt` still advanced. It now parks the snapshot refresh
+    like the content path, while `enforceCurrentStudentAccessStatus` still runs
+    during a block on purpose, so a revoked student is stopped immediately.
+    **Still unguarded, knowingly:** `revalidateApprovedStudentAccess(...,
+    { refreshSnapshot: true })` inside `enforceCurrentStudentAccessStatus`
+    (~L18555) carries the same `rerender:` pattern. It is a conditional
+    access-*repair* path rather than the frequent one, and was left alone rather
+    than altering access-repair behaviour as a side effect of a latency fix.
+    Revisit deliberately.
+15. **Verification:** `node --check main.js` and `npm run lint` pass. The backoff
    curve was verified by lifting the real `getRealtimeChannelHealthEntry` /
    `scheduleRealtimeChannelRetry` / `releaseRealtimeChannelHealth` out of
    `main.js` into a Node harness that simulates the true rebuild path with
    deterministic jitter: 1000, 2000, 4000, 8000, 16000, 30000 ms (capped). The
    same harness run against a copy with only the counter-seeding line reverted
    produces a flat 1000, 1000, 1000 ms — confirming the test discriminates
-   rather than passing vacuously. Static cache bust: `2026-09-13.01`.
+   rather than passing vacuously. Static cache bust: `2026-09-13.02`.
 
 **Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`,
 `supabase/migrations/20260913090000_enable_video_course_realtime_publication.sql`,
