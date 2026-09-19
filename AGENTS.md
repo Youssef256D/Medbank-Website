@@ -189,6 +189,26 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-19 — Coupon module links no longer block Video Course deletion
+Follow-up to the 2026-08-09 entry below, which cascaded the course -> coupon
+edges but missed `platform_course_coupon_modules.module_id`. That edge was still
+`ON DELETE RESTRICT` against `platform_course_modules`, and RESTRICT is checked
+immediately: the course -> modules cascade hit it before the parallel
+course -> coupons -> coupon_modules cascade had removed the referencing rows. So
+any course with a module-scoped coupon (5 of the hosted courses) failed to
+delete.
+
+Hosted migration `20260919003526_fix_coupon_modules_course_delete.sql`
+(rollback provided) makes it `NO ACTION DEFERRABLE INITIALLY DEFERRED`, matching
+the other coupon provenance edges. **Direct module deletion stays protected:**
+deleting a module a coupon still references is rejected at commit. Verified in
+a rollback-only transaction on the hosted DB: the course with 12 coupon-module
+rows deleted with 0 modules/coupons left, and a direct module delete still
+raised `foreign_key_violation`. No served file changed, so no cache bust.
+
+**Files touched:** migration + rollback `20260919003526_fix_coupon_modules_course_delete.sql`,
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-19 — Video Courses admin: course table no longer on every tab
 `renderAdminCourseSelector` rendered the full course table (search, three
 filters, 8 columns) above every Video Courses sub-tab once there were more than

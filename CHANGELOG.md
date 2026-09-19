@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-19 — Video Courses with module coupons can be deleted
+- Deleting a Video Course whose coupons grant module access failed with
+  `platform_course_coupon_modules_module_id_fkey`. The 2026-08-09 cascade fix
+  missed that edge; it is now `NO ACTION DEFERRABLE INITIALLY DEFERRED`
+  (hosted migration `20260919003526`, rollback provided). Deleting a single
+  module that a coupon still references is still refused.
+
 ### 2026-09-19 — Video Courses admin tabs decluttered
 - The full course table no longer sits on top of every Video Courses admin tab.
   Per-course tabs (Builder, Enrolled Users, Suggestions, Announcements) show a
