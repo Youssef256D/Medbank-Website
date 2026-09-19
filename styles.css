@@ -20402,3 +20402,19 @@ small.admin-account-approval-gap {
 }
 
 .admin-popup-preview-content { max-height: 578px; overflow: auto; }
+
+/* Bulk-import backup/export tools. */
+.admin-import-tool-card { margin-top: .8rem; border: 1px solid var(--line); }
+.admin-import-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; margin-bottom: .75rem; }
+.admin-import-card-heading h4,
+.admin-import-card-heading p { margin: 0; }
+.admin-import-history-list { display: grid; gap: .55rem; }
+.admin-import-history-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem 0; border-top: 1px solid var(--line); }
+.admin-import-history-copy { min-width: 0; overflow-wrap: anywhere; }
+.admin-import-history-title { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; }
+.admin-import-note { margin: 0; }
+@media (max-width: 640px) {
+  .admin-import-card-heading,
+  .admin-import-history-row { align-items: stretch; flex-direction: column; }
+  .admin-import-history-row .btn { width: 100%; }
+}
