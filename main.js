@@ -52610,32 +52610,53 @@ function renderAdminCourseTable(courses, selectedCourseId, options = {}) {
   `;
 }
 
-function renderAdminCourseSelector(courses, selectedCourseId, rows, pendingRequestCount) {
+function renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingRequestCount) {
   const profileCount = rows.enrollments.length;
-  const pills = `
-    <div class="admin-course-selector-pills">
-      <span class="admin-course-meta-pill"><b>${rows.modules.length}</b><small>Modules</small></span>
-      <span class="admin-course-meta-pill"><b>${rows.lessons.length}</b><small>Lessons</small></span>
-      <span class="admin-course-meta-pill"><b>${profileCount}</b><small>Enrollments</small></span>
-      <span class="admin-course-meta-pill"><b>${pendingRequestCount}</b><small>Pending requests</small></span>
-    </div>
-  `;
-  if (courses.length <= 3) {
-    return `
-      <div class="courses-builder-selector">
-        <label>Selected Course
-          <select id="admin-course-builder-course-select">
-            ${courses.map((course) => `<option value="${escapeHtml(course.id)}" ${course.id === selectedCourseId ? "selected" : ""}>${escapeHtml(getCoursePlatformCourseTitle(course))} • Y${escapeHtml(course.academic_year)} S${escapeHtml(course.academic_semester)}</option>`).join("")}
-          </select>
-        </label>
-        ${pills}
-      </div>
-    `;
-  }
+  const groupedCourses = new Map();
+  [...courses]
+    .sort((left, right) => {
+      const yearDifference = (Number(left?.academic_year) || 0) - (Number(right?.academic_year) || 0);
+      if (yearDifference) return yearDifference;
+      const semesterDifference = (Number(left?.academic_semester) || 0) - (Number(right?.academic_semester) || 0);
+      if (semesterDifference) return semesterDifference;
+      return getCoursePlatformCourseTitle(left).localeCompare(getCoursePlatformCourseTitle(right));
+    })
+    .forEach((course) => {
+      const year = Number(course?.academic_year) || 0;
+      const semester = Number(course?.academic_semester) || 0;
+      const groupKey = `${year}:${semester}`;
+      if (!groupedCourses.has(groupKey)) {
+        groupedCourses.set(groupKey, { year, semester, courses: [] });
+      }
+      groupedCourses.get(groupKey).courses.push(course);
+    });
+
   return `
-    <div class="admin-course-selector-table">
-      ${renderAdminCourseTable(courses, selectedCourseId, { compact: true })}
-      ${pills}
+    <div class="admin-course-context-bar">
+      <label class="admin-course-context-select">
+        <span>Course</span>
+        <select id="admin-course-builder-course-select">
+          ${[...groupedCourses.values()].map((group) => `
+            <optgroup label="${escapeHtml(`Year ${group.year} · Semester ${group.semester}`)}">
+              ${group.courses.map((course) => {
+                const courseId = String(course?.id || "").trim();
+                const optionParts = [getCoursePlatformCourseTitle(course)];
+                const courseCode = String(course?.course_code || "").trim();
+                if (courseCode) optionParts.push(courseCode);
+                if (!course?.is_published) optionParts.push("Draft");
+                return `<option value="${escapeHtml(courseId)}" ${courseId === selectedCourseId ? "selected" : ""}>${escapeHtml(optionParts.join(" · "))}</option>`;
+              }).join("")}
+            </optgroup>
+          `).join("")}
+        </select>
+      </label>
+      <div class="admin-course-selector-pills">
+        <span class="admin-course-meta-pill"><b>${rows.modules.length}</b><small>Modules</small></span>
+        <span class="admin-course-meta-pill"><b>${rows.lessons.length}</b><small>Lessons</small></span>
+        <span class="admin-course-meta-pill"><b>${profileCount}</b><small>Enrollments</small></span>
+        <span class="admin-course-meta-pill"><b>${pendingRequestCount}</b><small>Pending requests</small></span>
+      </div>
+      <button class="btn ghost admin-btn-sm admin-course-context-all" type="button" data-action="admin-course-platform-section" data-section="overview">All courses</button>
     </div>
   `;
 }
@@ -53796,8 +53817,7 @@ function adminRenderCourseBuilder(courseId) {
       && String(request?.status || "").trim() === "pending",
   ).length;
   const activePlatformSection = getAdminCoursePlatformSection();
-  const useCourseTableSelector = courses.length > 3;
-  const showOverviewCourseTable = activePlatformSection === "overview" && !useCourseTableSelector;
+  const showsCourseContextBar = ["builder", "enrollments", "suggestions", "announcements"].includes(activePlatformSection);
   const sectionCopy = {
     overview: {
       title: "Course metadata",
@@ -53807,9 +53827,17 @@ function adminRenderCourseBuilder(courseId) {
       title: "Course Builder",
       description: "Create new student courses, then build their modules, video lessons, and lesson materials.",
     },
+    approvals: {
+      title: "Course approvals",
+      description: "Review courses creators submitted from the app before they reach students.",
+    },
     enrollments: {
       title: "Enrolled users",
       description: "Choose a course, review enrolled students, and manually enroll users into that course.",
+    },
+    coupons: {
+      title: "Activation coupons",
+      description: "Generate one-time activation codes and track redemptions for a course.",
     },
     suggestions: {
       title: "Suggestions",
@@ -53854,17 +53882,18 @@ function adminRenderCourseBuilder(courseId) {
       ${state.adminCoursesPlatformError ? `<div class="courses-error"><b>Courses platform admin error</b><p>${escapeHtml(state.adminCoursesPlatformError)}</p></div>` : ""}
       ${state.adminCoursesPlatformLoading && !state.adminCoursesPlatformLoadedAt ? `<p class="subtle loading-inline"><span class="inline-loader" aria-hidden="true"></span><span>Loading Courses platform builder...</span></p>` : ""}
       
-      ${activePlatformSection === "availability" ? renderAdminCoursesComingSoonControl() : !selectedCourse && activePlatformSection !== "builder" ? `<div class="admin-course-empty-state"><h4 style="margin: 0;">No platform courses yet</h4><p class="subtle" style="margin: 0;">Create the first course for students.</p><button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">New course</button></div>` : `
-        ${activePlatformSection !== "requests" && selectedCourse ? renderAdminCourseSelector(courses, selectedCourseId, rows, pendingRequestCount) : ""}
+      ${activePlatformSection === "availability" ? renderAdminCoursesComingSoonControl() : !selectedCourse && activePlatformSection !== "builder" && activePlatformSection !== "overview" ? `<div class="admin-course-empty-state"><h4 style="margin: 0;">No platform courses yet</h4><p class="subtle" style="margin: 0;">Create the first course for students.</p><button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">New course</button></div>` : `
+        ${showsCourseContextBar && selectedCourse ? renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingRequestCount) : ""}
 
-        ${activePlatformSection === "overview" && selectedCourse ? `
+        ${activePlatformSection === "overview" ? `
           ${renderAdminCourseStatsCards()}
-          ${showOverviewCourseTable ? renderAdminCourseTable(courses, selectedCourseId, { showStats: false }) : ""}
-          <div class="course-platform-section-note">
-            <b>Course metadata</b>
-            <span>${useCourseTableSelector ? "Select a course from the table above to edit its details." : "Select a course from the table to edit its details."}</span>
-          </div>
-          <form id="admin-course-metadata-form" class="course-builder-form" style="background: transparent; border: none; padding: 0; gap: 1.5rem;">
+          ${renderAdminCourseTable(courses, selectedCourseId, { showStats: false })}
+          ${selectedCourse ? `
+            <div class="course-platform-section-note">
+              <b>Course metadata</b>
+              <span>Select a course in the table above to edit its details.</span>
+            </div>
+            <form id="admin-course-metadata-form" class="course-builder-form" style="background: transparent; border: none; padding: 0; gap: 1.5rem;">
             <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid var(--line); padding-bottom: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.75rem;">
               <h4 style="margin: 0; border: none; padding: 0;">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.25rem; vertical-align: middle;">
@@ -53874,6 +53903,7 @@ function adminRenderCourseBuilder(courseId) {
                 Edit Course Details
               </h4>
               <div class="stack">
+                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(selectedCourseId)}">Open in Course Builder</button>
                 <button class="btn admin-btn-sm" type="submit">Save course metadata</button>
                 <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
               </div>
@@ -53976,7 +54006,8 @@ function adminRenderCourseBuilder(courseId) {
               <button class="btn admin-btn-sm" type="submit">Save course metadata</button>
               <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
             </div>
-          </form>
+            </form>
+          ` : `<div class="admin-course-empty-state"><h4 style="margin: 0;">No platform courses yet</h4><p class="subtle" style="margin: 0;">Create the first course for students.</p><button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">New course</button></div>`}
         ` : ""}
 
         ${activePlatformSection === "suggestions" && selectedCourse ? `${renderAdminGlobalSuggestions()}${adminRenderSuggestionSettings(selectedCourseId)}` : ""}

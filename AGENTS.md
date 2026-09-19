@@ -189,6 +189,30 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-19 — Video Courses admin: course table no longer on every tab
+`renderAdminCourseSelector` rendered the full course table (search, three
+filters, 8 columns) above every Video Courses sub-tab once there were more than
+3 courses, burying each tab's real content. Static cache bust:
+`2026-09-19.02-local`.
+
+1. **`renderAdminCourseContextBar`** replaces it: one slim row with a course
+   `<select>` grouped by `Year N · Semester S`, the four stat pills, and an
+   **All courses** button that jumps to Course metadata. It keeps the id
+   `admin-course-builder-course-select`, so the existing change handler drives it.
+2. **Shown only on per-course tabs:** builder, enrollments, suggestions,
+   announcements. Coupons has its own course picker; requests, approvals and
+   availability are cross-course, so they get none.
+3. **Course metadata (overview) is the catalog:** stats + full filterable table
+   always, then the edit form, which gained **Open in Course Builder**.
+4. Coupons and Approvals now have their own heading copy instead of the generic
+   "Courses learning platform" fallback.
+5. **Verified** in the preview with 7 stub courses: bar/table/title correct on
+   all 8 tabs, switching course, All courses, row-select + Open in Course
+   Builder all work; no horizontal overflow at 375px. `node --check` and
+   `npm run lint` clean.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-19 — Bulk import upload history + per-subject CSV export
 Prompted by losing the GIT (SM 503) and Nephrology (SM 502) banks: their rows
 had no correct answers, the 2026-06-28 shell cleanup deleted them, and no

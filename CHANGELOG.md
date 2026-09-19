@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-19 — Video Courses admin tabs decluttered
+- The full course table no longer sits on top of every Video Courses admin tab.
+  Per-course tabs (Builder, Enrolled Users, Suggestions, Announcements) show a
+  compact course switcher instead; the full table lives on Course metadata,
+  which also gained an **Open in Course Builder** button. Coupons and Approvals
+  get proper headings.
+
 ### 2026-09-19 — Bulk import upload history and CSV export
 - Every successfully published bulk-import file (or pasted text) is now kept in
   a private admin-only Storage bucket and listed under **Upload history** on the
