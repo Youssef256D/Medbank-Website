@@ -189,6 +189,47 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-19 — Bulk import upload history + per-subject CSV export
+Prompted by losing the GIT (SM 503) and Nephrology (SM 502) banks: their rows
+had no correct answers, the 2026-06-28 shell cleanup deleted them, and no
+source file had been kept anywhere. Static cache bust: `2026-09-19.01`.
+
+1. **Upload history.** After `persistImportedQuestionsNow` succeeds, every
+   source with `added > 0` is uploaded byte-for-byte to the private
+   `bulk-import-uploads` bucket (`<yyyy>/<mm>/<uuid>-<name>`) and recorded in
+   `public.bulk_import_uploads` via `saveBulkImportSourceToHistory()`. Pasted
+   text is saved as `pasted-import-<ts>.csv|json`. The Bulk Import page lists
+   the newest 50 with a Download button (60 s signed URL).
+2. **History can never fail an import.** Upload/insert errors are caught and
+   surface as one warning toast; the import result is unchanged. A missing
+   table/bucket (migration not applied) renders a calm "not set up yet" note.
+3. **Admin-only, append-only.** Migration
+   `20260919120000_add_bulk_import_upload_history.sql` (rollback provided)
+   gates select/insert on `private.is_admin_user()` for both the table and the
+   bucket objects, and deliberately has **no update/delete policy** — this is a
+   record of sources, and deleting it is the failure it exists to prevent.
+   Additive only; no existing policy or gating column touched.
+4. **CSV export** (`exportAdminQuestionsCsv`) reads straight from Supabase —
+   not the local cache — by course and optional topic, all statuses or
+   published only, in the exact import-template column order with a UTF-8 BOM.
+   Round-trip verified through the real `parseCsvRecords`/`normalizeImportCorrect`.
+   It does **not** fabricate choices or answers for broken rows.
+5. **`toCsvCell(value, { guardFormula: false })`** — the Users export keeps the
+   formula guard; question CSVs opt out because the apostrophe would corrupt
+   stems like "-ve ..." on re-import. Do not flip the default.
+6. **Single file vs. textarea:** selecting one file loads it into the textarea;
+   the source is recorded as that *file* unless the textarea was actually edited.
+   The comparison normalises CRLF/LF because textareas rewrite line endings —
+   without that every Excel CSV was recorded as "pasted" and lost its name.
+7. **Known importer limitation (not changed):** `importQuestionsFromRaw` maps
+   `archived` to `published` and defaults a blank `correct` to `A`. So an
+   "All statuses" export re-imported as-is would publish archived rows and
+   invent answers for answerless ones. Export is a faithful backup; re-import it
+   with care (or choose "Published only").
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, migration + rollback
+`20260919120000_add_bulk_import_upload_history.sql`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-13 — Supabase Realtime subscriptions self-heal
 The five long-lived browser subscriptions now share a health registry and
 managed subscribe path. `CHANNEL_ERROR`, `TIMED_OUT`, and `CLOSED` schedule a

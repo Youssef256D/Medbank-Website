@@ -9,6 +9,19 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-19 — Bulk import upload history and CSV export
+- Every successfully published bulk-import file (or pasted text) is now kept in
+  a private admin-only Storage bucket and listed under **Upload history** on the
+  Bulk Import page, with a Download button for the exact original.
+- New **Export questions to CSV** card: download any MCQ subject, or one topic
+  inside it, in the import-template format (all statuses or published only),
+  read directly from Supabase.
+- Migration `20260919120000_add_bulk_import_upload_history.sql` adds the
+  `bulk-import-uploads` bucket and `bulk_import_uploads` table (append-only,
+  admin-only). Until it is applied the history panel shows a "not set up yet"
+  note and imports behave exactly as before.
+- Static cache bust: `2026-09-19.01`.
+
 ### 2026-09-13 — Supabase Realtime subscriptions self-heal
 All five long-lived Realtime channels now track their health and rebuild after
 `CHANNEL_ERROR`, `TIMED_OUT`, or `CLOSED` with capped exponential backoff and

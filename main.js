@@ -560,6 +560,15 @@ const state = {
   adminImportDraft: "",
   adminImportCourse: "",
   adminImportTopic: "",
+  adminImportHistory: [],
+  adminImportHistoryLoading: false,
+  adminImportHistoryLoaded: false,
+  adminImportHistoryError: "",
+  adminImportHistoryMissing: false,
+  adminQuestionExportCourse: "",
+  adminQuestionExportTopic: "",
+  adminQuestionExportStatus: "all",
+  adminQuestionExportRunning: false,
   skipNextRouteAnimation: false,
   adminDataRefreshing: false,
   adminDataLastSyncAt: 0,
@@ -1253,6 +1262,7 @@ let studentNonCriticalHydrationKey = "";
 let studentNonCriticalHydrationInFlight = false;
 let adminQuestionsLastHydratedAt = 0;
 let adminQuestionCountSnapshotRequestSeq = 0;
+let adminImportHistoryRequestSeq = 0;
 const presenceRuntime = {
   timer: null,
   solvingStartedAt: null,
@@ -6166,11 +6176,13 @@ function matchesAdminUserProviderFilter(account, providerFilter) {
 
 // CSV export of the admin Users list, used before destructive bulk actions so
 // there is a record of who was affected. Values are quoted and internal quotes
-// doubled; a leading =, +, -, or @ is prefixed with an apostrophe so spreadsheet
-// software treats the cell as text rather than a formula.
-function toCsvCell(value) {
+// doubled. By default a leading =, +, -, or @ is prefixed with an apostrophe so
+// spreadsheet software treats the cell as text rather than a formula; round-trip
+// import exports can opt out so the original value is not changed.
+function toCsvCell(value, options = {}) {
   const raw = value === null || value === undefined ? "" : String(value);
-  const guarded = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  const guardFormula = options?.guardFormula !== false;
+  const guarded = guardFormula && /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
   return `"${guarded.replace(/"/g, '""')}"`;
 }
 
@@ -21797,6 +21809,13 @@ function render() {
     state.adminPopupsError = "";
     state.adminPopupsMissing = false;
     state.adminPopupDraft = null;
+    state.adminImportHistory = [];
+    state.adminImportHistoryLoading = false;
+    state.adminImportHistoryLoaded = false;
+    state.adminImportHistoryError = "";
+    state.adminImportHistoryMissing = false;
+    state.adminQuestionExportRunning = false;
+    adminImportHistoryRequestSeq += 1;
     state.adminAgentsLoading = false;
     state.adminAgentsError = "";
     state.adminAgentsLoadedAt = 0;
@@ -29897,6 +29916,559 @@ function resolveAdminImportView(allCourses, preferredCourse = "") {
   };
 }
 
+const BULK_IMPORT_HISTORY_BUCKET = "bulk-import-uploads";
+const ADMIN_QUESTION_EXPORT_HEADERS = [
+  "stem",
+  "choiceA",
+  "choiceB",
+  "choiceC",
+  "choiceD",
+  "choiceE",
+  "correct",
+  "explanation",
+  "course",
+  "topic",
+  "system",
+  "difficulty",
+  "status",
+  "tags",
+  "objective",
+  "references",
+  "questionImage",
+  "explanationImage",
+];
+
+function isBulkImportHistoryMigrationMissingError(error) {
+  const code = String(error?.code || "").trim();
+  const message = [error?.message, error?.error, error?.details]
+    .map((value) => String(value || ""))
+    .join(" ");
+  return code === "42P01"
+    || code === "PGRST205"
+    || /relation .* does not exist/i.test(message)
+    || /bucket not found/i.test(message)
+    || isMissingRelationError(error)
+    || isStorageBucketMissingError(error);
+}
+
+function sanitizeBulkImportStorageFileName(fileName) {
+  const rawName = String(fileName || "import.csv").trim() || "import.csv";
+  const extensionMatch = rawName.match(/\.[A-Za-z0-9]{1,12}$/);
+  const extension = extensionMatch ? extensionMatch[0] : "";
+  const base = extension ? rawName.slice(0, -extension.length) : rawName;
+  const safeBase = base
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^[_\.\-]+|[_\.\-]+$/g, "") || "import";
+  const safeExtension = extension.replace(/[^A-Za-z0-9.]/g, "").toLowerCase();
+  return `${safeBase.slice(0, Math.max(1, 160 - safeExtension.length))}${safeExtension}`;
+}
+
+function capBulkImportHistoryFileName(fileName) {
+  const rawName = String(fileName || "import.csv").trim() || "import.csv";
+  if (rawName.length <= 300) return rawName;
+  const extensionMatch = rawName.match(/\.[A-Za-z0-9]{1,12}$/);
+  const extension = extensionMatch ? extensionMatch[0] : "";
+  return `${rawName.slice(0, Math.max(1, 300 - extension.length))}${extension}`;
+}
+
+function getBulkImportContentType(fileName) {
+  return String(fileName || "").trim().toLowerCase().endsWith(".json")
+    ? "application/json"
+    : "text/csv";
+}
+
+function isBulkImportJsonText(raw) {
+  const trimmed = String(raw || "").trim();
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    return true;
+  }
+  if (!trimmed) {
+    return false;
+  }
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildPastedBulkImportFile(raw) {
+  const extension = isBulkImportJsonText(raw) ? "json" : "csv";
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = `pasted-import-${timestamp}.${extension}`;
+  const contentType = getBulkImportContentType(fileName);
+  return {
+    body: new Blob([String(raw || "")], { type: contentType }),
+    contentType,
+    fileName,
+  };
+}
+
+async function saveBulkImportSourceToHistory(source, sourceResult, metadata = {}) {
+  const client = getRelationalClient() || getSupabaseAuthClient();
+  if (!client) {
+    return { ok: false, message: "Upload history needs the cloud connection." };
+  }
+
+  const sourceType = source?.source === "file" ? "file" : "pasted";
+  const pastedFile = sourceType === "pasted" ? buildPastedBulkImportFile(source?.originalRaw ?? source?.raw ?? "") : null;
+  const originalFile = sourceType === "file" ? source?.file : null;
+  const rawFileName = sourceType === "file"
+    ? String(originalFile?.name || source?.label || "import.csv").trim()
+    : pastedFile.fileName;
+  const fileName = capBulkImportHistoryFileName(rawFileName);
+  const contentType = sourceType === "file" ? getBulkImportContentType(rawFileName) : pastedFile.contentType;
+  const fileBody = sourceType === "file" ? originalFile : pastedFile.body;
+  if (!fileBody) {
+    return { ok: false, message: "The original import file is no longer available." };
+  }
+
+  const now = new Date();
+  const storagePath = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}-${sanitizeBulkImportStorageFileName(rawFileName)}`;
+  const uploadResult = await runWithTimeoutResult(
+    client.storage.from(BULK_IMPORT_HISTORY_BUCKET).upload(storagePath, fileBody, {
+      contentType,
+      upsert: false,
+    }),
+    QUESTION_RELATIONAL_TIMEOUT_MS,
+    "Import source upload timed out.",
+  );
+  if (uploadResult.error) {
+    if (isBulkImportHistoryMigrationMissingError(uploadResult.error)) {
+      state.adminImportHistoryMissing = true;
+    }
+    return {
+      ok: false,
+      missing: isBulkImportHistoryMigrationMissingError(uploadResult.error),
+      message: getErrorMessage(uploadResult.error, "Could not upload the original import source."),
+    };
+  }
+
+  const currentUser = getCurrentUser();
+  const insertResult = await runWithTimeoutResult(
+    client.from("bulk_import_uploads").insert({
+      file_name: fileName,
+      storage_path: storagePath,
+      file_size: Number(fileBody.size || 0),
+      content_type: contentType,
+      source: sourceType,
+      default_course: String(metadata?.defaultCourse || "").trim() || null,
+      default_topic: String(metadata?.defaultTopic || "").trim() || null,
+      import_as_draft: Boolean(metadata?.importAsDraft),
+      rows_total: Math.max(0, Number(sourceResult?.total || 0)),
+      rows_added: Math.max(0, Number(sourceResult?.added || 0)),
+      error_count: Math.max(0, Number(sourceResult?.errors?.length || 0)),
+      uploaded_by_name: String(currentUser?.name || "").trim() || null,
+    }),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Import history record timed out.",
+  );
+  if (insertResult.error) {
+    if (isBulkImportHistoryMigrationMissingError(insertResult.error)) {
+      state.adminImportHistoryMissing = true;
+    }
+    return {
+      ok: false,
+      missing: isBulkImportHistoryMigrationMissingError(insertResult.error),
+      message: getErrorMessage(insertResult.error, "Could not record the import in upload history."),
+    };
+  }
+  return { ok: true };
+}
+
+async function loadAdminImportHistory(options = {}) {
+  const force = Boolean(options?.force);
+  const renderAfter = options?.renderAfter !== false;
+  if (state.adminImportHistoryLoading || (state.adminImportHistoryLoaded && !force)) {
+    return;
+  }
+
+  const requestSeq = ++adminImportHistoryRequestSeq;
+  const client = getRelationalClient() || getSupabaseAuthClient();
+  state.adminImportHistoryLoading = true;
+  state.adminImportHistoryError = "";
+  if (!client) {
+    state.adminImportHistory = [];
+    state.adminImportHistoryLoaded = true;
+    state.adminImportHistoryLoading = false;
+    state.adminImportHistoryMissing = false;
+    if (renderAfter && state.route === "admin" && state.adminPage === "bulk-import") {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+    return;
+  }
+
+  if (renderAfter && state.route === "admin" && state.adminPage === "bulk-import") {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+
+  const result = await runWithTimeoutResult(
+    client
+      .from("bulk_import_uploads")
+      .select("id,file_name,storage_path,file_size,content_type,source,default_course,default_topic,import_as_draft,rows_total,rows_added,error_count,uploaded_by_name,created_at")
+      .order("created_at", { ascending: false })
+      .limit(50),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Upload history request timed out.",
+  );
+  if (requestSeq !== adminImportHistoryRequestSeq || getCurrentUser()?.role !== "admin") {
+    return;
+  }
+
+  if (result.error) {
+    state.adminImportHistory = [];
+    state.adminImportHistoryMissing = isBulkImportHistoryMigrationMissingError(result.error);
+    state.adminImportHistoryError = state.adminImportHistoryMissing
+      ? ""
+      : getErrorMessage(result.error, "Could not load upload history.");
+  } else {
+    state.adminImportHistory = Array.isArray(result.data) ? result.data : [];
+    state.adminImportHistoryMissing = false;
+    state.adminImportHistoryError = "";
+  }
+  state.adminImportHistoryLoaded = true;
+  state.adminImportHistoryLoading = false;
+  if (renderAfter && state.route === "admin" && state.adminPage === "bulk-import") {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+async function downloadBulkImportHistoryEntry(entry) {
+  const client = getRelationalClient() || getSupabaseAuthClient();
+  if (!client) {
+    toast("Upload history needs the cloud connection.");
+    return;
+  }
+  const fileName = String(entry?.file_name || "bulk-import-source").trim() || "bulk-import-source";
+  const result = await runWithTimeoutResult(
+    client.storage.from(BULK_IMPORT_HISTORY_BUCKET).createSignedUrl(
+      String(entry?.storage_path || ""),
+      60,
+      { download: fileName },
+    ),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Download link request timed out.",
+  );
+  if (result.error || !result.data?.signedUrl) {
+    if (isBulkImportHistoryMigrationMissingError(result.error)) {
+      state.adminImportHistoryMissing = true;
+      state.skipNextRouteAnimation = true;
+      render();
+      return;
+    }
+    toast(`Could not download upload history file: ${getErrorMessage(result.error, "Download link was not created.")}`);
+    return;
+  }
+  const anchor = document.createElement("a");
+  anchor.href = result.data.signedUrl;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function getAdminQuestionExportLocalMatchMaps() {
+  const byExternalId = new Map();
+  const byDbId = new Map();
+  getQuestions().forEach((question) => {
+    const externalId = String(question?.id || "").trim();
+    const dbId = String(question?.dbId || "").trim();
+    if (externalId) byExternalId.set(externalId, question);
+    if (dbId) byDbId.set(dbId, question);
+  });
+  return { byExternalId, byDbId };
+}
+
+function buildAdminQuestionExportRecord(question, choices, courseName, topicName, localQuestion = null, options = {}) {
+  const choiceTextByLabel = {};
+  const correctLabels = [];
+  (Array.isArray(choices) ? choices : []).forEach((choice) => {
+    const label = String(choice?.choice_label ?? choice?.id ?? "").trim().toUpperCase();
+    if (!/^[A-E]$/.test(label)) return;
+    choiceTextByLabel[label] = String(choice?.choice_text ?? choice?.text ?? "");
+    if (choice?.is_correct === true) correctLabels.push(label);
+  });
+  if (options.localCorrect) {
+    const localCorrect = Array.isArray(question?.correct) ? question.correct : [question?.correct];
+    localCorrect.forEach((value) => {
+      const label = String(value || "").trim().toUpperCase();
+      if (/^[A-E]$/.test(label) && !correctLabels.includes(label)) correctLabels.push(label);
+    });
+  }
+  correctLabels.sort((a, b) => a.localeCompare(b));
+  // The current relational question sync has no authoritative system/tags/
+  // references payload, so preserve those only from an exact local identity match.
+  const localTags = Array.isArray(localQuestion?.tags)
+    ? localQuestion.tags.map((tag) => String(tag || "").trim()).filter(Boolean).join("|")
+    : "";
+  return {
+    stem: String(question?.stem || ""),
+    choiceA: choiceTextByLabel.A || "",
+    choiceB: choiceTextByLabel.B || "",
+    choiceC: choiceTextByLabel.C || "",
+    choiceD: choiceTextByLabel.D || "",
+    choiceE: choiceTextByLabel.E || "",
+    correct: correctLabels.join("|"),
+    explanation: String(question?.explanation || ""),
+    course: courseName,
+    topic: topicName,
+    system: String(localQuestion?.system || courseName),
+    difficulty: options.localDifficulty
+      ? normalizeImportDifficulty(question?.difficulty)
+      : fromRelationalDifficulty(question?.difficulty),
+    status: String(question?.status || "draft").trim().toLowerCase() || "draft",
+    tags: localTags,
+    objective: String(question?.objective || ""),
+    references: String(localQuestion?.references || ""),
+    questionImage: String(options.questionImage || ""),
+    explanationImage: String(options.explanationImage || ""),
+  };
+}
+
+function getLocalAdminQuestionExportRecords(courseName, topicName, statusMode) {
+  const courseKey = normalizeAdminQuestionFilterToken(courseName);
+  const topicKey = normalizeAdminQuestionFilterToken(topicName);
+  return getQuestions()
+    .filter((question) => {
+      const meta = getQbankCourseTopicMeta(question);
+      return normalizeAdminQuestionFilterToken(meta.course) === courseKey
+        && (!topicKey || normalizeAdminQuestionFilterToken(meta.topic) === topicKey)
+        && (statusMode !== "published" || String(question?.status || "").toLowerCase() === "published");
+    })
+    .slice()
+    .sort((a, b) => {
+      const aSort = normalizeQuestionSortOrder(a?.sortOrder);
+      const bSort = normalizeQuestionSortOrder(b?.sortOrder);
+      if (aSort !== null && bSort !== null && aSort !== bSort) return aSort - bSort;
+      if (aSort !== null) return -1;
+      if (bSort !== null) return 1;
+      return String(a?.dateAdded || "").localeCompare(String(b?.dateAdded || ""))
+        || String(a?.id || "").localeCompare(String(b?.id || ""));
+    })
+    .map((question) => {
+      const meta = getQbankCourseTopicMeta(question);
+      const choices = (Array.isArray(question?.choices) ? question.choices : []).map((choice) => ({
+        id: choice?.id,
+        text: choice?.text,
+      }));
+      return buildAdminQuestionExportRecord(question, choices, meta.course, meta.topic, question, {
+        localCorrect: true,
+        localDifficulty: true,
+        questionImage: question?.questionImage,
+        explanationImage: question?.explanationImage,
+      });
+    });
+}
+
+async function getCloudAdminQuestionExportRecords(courseName, topicName, statusMode, client) {
+  const coursesResult = await fetchRowsPaged((from, to) => client
+    .from("courses")
+    .select("id,course_name")
+    .eq("course_name", courseName)
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (coursesResult.error) throw coursesResult.error;
+  const courseRow = (coursesResult.data || [])[0];
+  if (!courseRow?.id) return [];
+
+  const topicsResult = await fetchRowsPaged((from, to) => client
+    .from("course_topics")
+    .select("id,course_id,topic_name")
+    .eq("course_id", courseRow.id)
+    .order("topic_name", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (topicsResult.error) throw topicsResult.error;
+  const topicRows = Array.isArray(topicsResult.data) ? topicsResult.data : [];
+  const selectedTopic = topicName
+    ? topicRows.find((topic) => String(topic?.topic_name || "") === topicName)
+    : null;
+  if (topicName && !selectedTopic?.id) return [];
+
+  const columnSupport = await getRelationalQuestionColumnSupport(client);
+  const questionColumns = [
+    "id",
+    "external_id",
+    "topic_id",
+    "stem",
+    "explanation",
+    "objective",
+    "difficulty",
+    "status",
+    "created_at",
+    ...(columnSupport.sortOrder ? ["sort_order"] : []),
+    ...(columnSupport.questionImageUrl ? ["question_image_url"] : []),
+    ...(columnSupport.explanationImageUrl ? ["explanation_image_url"] : []),
+  ].join(",");
+  const questionsResult = await fetchRowsPaged((from, to) => {
+    let query = client
+      .from("questions")
+      .select(questionColumns)
+      .eq("course_id", courseRow.id);
+    if (selectedTopic?.id) query = query.eq("topic_id", selectedTopic.id);
+    if (statusMode === "published") query = query.eq("status", "published");
+    if (columnSupport.sortOrder) query = query.order("sort_order", { ascending: true, nullsFirst: false });
+    return query
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
+  }, {
+    pageSize: QUESTION_RELATIONAL_PAGE_SIZE,
+    timeoutMs: QUESTION_RELATIONAL_TIMEOUT_MS,
+    timeoutMessage: "Question export timed out.",
+  });
+  if (questionsResult.error) throw questionsResult.error;
+  const questionRows = Array.isArray(questionsResult.data) ? questionsResult.data : [];
+  if (!questionRows.length) return [];
+
+  const choiceRows = [];
+  const questionIds = questionRows.map((question) => String(question?.id || "")).filter(Boolean);
+  for (const questionIdBatch of splitIntoBatches(questionIds, RELATIONAL_IN_BATCH_SIZE)) {
+    const choicesResult = await fetchRowsPaged((from, to) => client
+      .from("question_choices")
+      .select("question_id,choice_label,choice_text,is_correct")
+      .in("question_id", questionIdBatch)
+      .order("question_id", { ascending: true })
+      .order("choice_label", { ascending: true })
+      .range(from, to), {
+      pageSize: QUESTION_CHOICE_RELATIONAL_PAGE_SIZE,
+      timeoutMs: QUESTION_RELATIONAL_TIMEOUT_MS,
+      timeoutMessage: "Question choice export timed out.",
+    });
+    if (choicesResult.error) throw choicesResult.error;
+    choiceRows.push(...(choicesResult.data || []));
+  }
+
+  const topicNameById = Object.fromEntries(topicRows.map((topic) => [topic.id, String(topic.topic_name || "")]));
+  const choicesByQuestionId = {};
+  choiceRows.forEach((choice) => {
+    const questionId = String(choice?.question_id || "");
+    if (!choicesByQuestionId[questionId]) choicesByQuestionId[questionId] = [];
+    choicesByQuestionId[questionId].push(choice);
+  });
+  const localMaps = getAdminQuestionExportLocalMatchMaps();
+  return questionRows.map((question) => {
+    const localQuestion = localMaps.byExternalId.get(String(question?.external_id || ""))
+      || localMaps.byDbId.get(String(question?.id || ""))
+      || null;
+    return buildAdminQuestionExportRecord(
+      question,
+      choicesByQuestionId[String(question?.id || "")] || [],
+      String(courseRow.course_name || courseName),
+      String(topicNameById[question?.topic_id] || topicName || ""),
+      localQuestion,
+      {
+        questionImage: columnSupport.questionImageUrl
+          ? question?.question_image_url
+          : localQuestion?.questionImage,
+        explanationImage: columnSupport.explanationImageUrl
+          ? question?.explanation_image_url
+          : localQuestion?.explanationImage,
+      },
+    );
+  });
+}
+
+function buildAdminQuestionExportCsv(records) {
+  const rows = [ADMIN_QUESTION_EXPORT_HEADERS];
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    rows.push(ADMIN_QUESTION_EXPORT_HEADERS.map((header) => record?.[header] ?? ""));
+  });
+  return `\uFEFF${rows
+    .map((row) => row.map((value) => toCsvCell(value, { guardFormula: false })).join(","))
+    .join("\r\n")}\r\n`;
+}
+
+function sanitizeAdminQuestionExportFileSegment(value, fallback) {
+  const safe = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-_.]+|[-_.]+$/g, "");
+  return safe.slice(0, 80) || fallback;
+}
+
+async function exportAdminQuestionsCsv(courseName, topicName, statusMode) {
+  const client = getRelationalClient() || getSupabaseAuthClient();
+  const records = client
+    ? await getCloudAdminQuestionExportRecords(courseName, topicName, statusMode, client)
+    : getLocalAdminQuestionExportRecords(courseName, topicName, statusMode);
+  if (!records.length) {
+    toast("No questions found for that selection.");
+    return 0;
+  }
+  const courseSegment = sanitizeAdminQuestionExportFileSegment(courseName, "subject");
+  const topicSegment = topicName
+    ? sanitizeAdminQuestionExportFileSegment(topicName, "topic")
+    : "all-topics";
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const csv = buildAdminQuestionExportCsv(records);
+  downloadBlobFile(
+    new Blob([csv], { type: "text/csv;charset=utf-8;" }),
+    `medbank-${courseSegment}-${topicSegment}-${dateStamp}.csv`,
+  );
+  toast(`Exported ${records.length} questions.`);
+  return records.length;
+}
+
+function renderAdminImportHistoryCard() {
+  const clientAvailable = Boolean(getRelationalClient() || getSupabaseAuthClient());
+  let body = "";
+  if (!clientAvailable) {
+    body = `<p class="subtle admin-import-note">Upload history needs the cloud connection.</p>`;
+  } else if (state.adminImportHistoryMissing) {
+    body = `<p class="subtle admin-import-note">Upload history is not set up yet (database migration pending).</p>`;
+  } else if (state.adminImportHistoryLoading && !state.adminImportHistory.length) {
+    body = `<p class="subtle admin-import-note">Loading upload history...</p>`;
+  } else if (state.adminImportHistoryError) {
+    body = `<p class="subtle admin-import-note">Could not load upload history: ${escapeHtml(state.adminImportHistoryError)}</p>`;
+  } else if (!state.adminImportHistory.length) {
+    body = `<p class="subtle admin-import-note">No successful import uploads have been recorded yet.</p>`;
+  } else {
+    body = `
+      <div class="admin-import-history-list">
+        ${state.adminImportHistory.map((entry) => {
+    const courseTopic = [entry?.default_course, entry?.default_topic]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" / ") || "No default course/topic";
+    const uploaderName = String(entry?.uploaded_by_name || "Unknown admin");
+    return `
+            <div class="admin-import-history-row">
+              <div class="admin-import-history-copy">
+                <div class="admin-import-history-title">
+                  <b>${escapeHtml(entry?.file_name || "Import source")}</b>
+                  ${entry?.import_as_draft ? `<span class="badge neutral">Draft</span>` : ""}
+                </div>
+                <small class="subtle">${escapeHtml(formatReportDateTime(entry?.created_at))} · ${escapeHtml(String(entry?.rows_added ?? 0))}/${escapeHtml(String(entry?.rows_total ?? 0))} rows · ${escapeHtml(courseTopic)} · ${escapeHtml(uploaderName)}</small>
+              </div>
+              <button class="btn ghost admin-btn-sm" type="button" data-import-history-download="${escapeHtml(entry?.id || "")}">Download</button>
+            </div>
+          `;
+  }).join("")}
+      </div>
+    `;
+  }
+  return `
+    <div class="card admin-import-tool-card" id="admin-import-history-card">
+      <div class="admin-import-card-heading">
+        <div>
+          <h4>Upload history</h4>
+          <p class="subtle">The newest 50 successfully published import sources.</p>
+        </div>
+        <button class="btn ghost admin-btn-sm" type="button" id="admin-import-history-refresh" ${state.adminImportHistoryLoading ? "disabled" : ""}>${state.adminImportHistoryLoading ? "Refreshing..." : "Refresh"}</button>
+      </div>
+      ${body}
+    </div>
+  `;
+}
+
 function renderAdminBulkImportSection(allCourses, options = {}) {
   const preferredCourse = String(options.preferredCourse || "").trim();
   const {
@@ -29911,6 +30483,15 @@ function renderAdminBulkImportSection(allCourses, options = {}) {
     importStatusTone,
   } = resolveAdminImportView(allCourses, preferredCourse);
   const importErrorPreview = (importReport?.errors || []).slice(0, 15);
+  const exportCourse = allCourses.includes(state.adminQuestionExportCourse)
+    ? state.adminQuestionExportCourse
+    : importCourse;
+  const exportTopics = QBANK_COURSE_TOPICS[exportCourse] || [];
+  const exportTopic = exportTopics.includes(state.adminQuestionExportTopic)
+    ? state.adminQuestionExportTopic
+    : "";
+  const exportStatus = state.adminQuestionExportStatus === "published" ? "published" : "all";
+  const exportRunning = Boolean(state.adminQuestionExportRunning);
 
   return `
     <section class="card admin-section" id="admin-bulk-import-section">
@@ -29981,6 +30562,44 @@ function renderAdminBulkImportSection(allCourses, options = {}) {
           `
       : ""
     }
+      <div class="card admin-import-tool-card" id="admin-question-export-card">
+        <div class="admin-import-card-heading">
+          <div>
+            <h4>Export questions to CSV</h4>
+            <p class="subtle">Download a re-importable backup for one MCQ subject or topic.</p>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>
+            MCQ subject
+            <select id="admin-question-export-course" ${exportRunning ? "disabled" : ""}>
+              ${allCourses
+      .map((course) => `<option value="${escapeHtml(course)}" ${exportCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+      .join("")}
+            </select>
+          </label>
+          <label>
+            Topic
+            <select id="admin-question-export-topic" ${exportRunning ? "disabled" : ""}>
+              <option value="">All topics</option>
+              ${exportTopics
+      .map((topic) => `<option value="${escapeHtml(topic)}" ${exportTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
+      .join("")}
+            </select>
+          </label>
+          <label>
+            Status
+            <select id="admin-question-export-status" ${exportRunning ? "disabled" : ""}>
+              <option value="all" ${exportStatus === "all" ? "selected" : ""}>All statuses</option>
+              <option value="published" ${exportStatus === "published" ? "selected" : ""}>Published only</option>
+            </select>
+          </label>
+        </div>
+        <button class="btn ${exportRunning ? "is-loading" : ""}" type="button" id="admin-question-export-download" ${exportRunning || !exportCourse ? "disabled" : ""}>
+          ${exportRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Preparing CSV...</span>` : "Download CSV"}
+        </button>
+      </div>
+      ${renderAdminImportHistoryCard()}
     </section>
   `;
 }
@@ -36766,12 +37385,35 @@ function wireAdmin() {
     syncImportSelectionsFromInputs();
   });
 
+  const exportCourseSelect = document.getElementById("admin-question-export-course");
+  const exportTopicSelect = document.getElementById("admin-question-export-topic");
+  const exportStatusSelect = document.getElementById("admin-question-export-status");
+  const exportDownloadButton = document.getElementById("admin-question-export-download");
+  const syncExportSelectionsFromInputs = () => {
+    const course = exportCourseSelect?.value || allCourses[0] || "";
+    const topics = QBANK_COURSE_TOPICS[course] || [];
+    const topic = topics.includes(exportTopicSelect?.value || "")
+      ? String(exportTopicSelect?.value || "")
+      : "";
+    state.adminQuestionExportCourse = course;
+    state.adminQuestionExportTopic = topic;
+    state.adminQuestionExportStatus = exportStatusSelect?.value === "published" ? "published" : "all";
+  };
+  syncExportSelectionsFromInputs();
+  exportCourseSelect?.addEventListener("change", () => {
+    setSelectOptions(exportTopicSelect, QBANK_COURSE_TOPICS[exportCourseSelect.value] || [], true);
+    syncExportSelectionsFromInputs();
+  });
+  exportTopicSelect?.addEventListener("change", syncExportSelectionsFromInputs);
+  exportStatusSelect?.addEventListener("change", syncExportSelectionsFromInputs);
+
   const importFileInput = document.getElementById("admin-import-file");
   const importTextInput = document.getElementById("admin-import-text");
   const importTemplateButton = document.getElementById("admin-download-template");
   const importSyncNowButton = document.getElementById("admin-sync-questions-now");
   const importErrorDownloadButton = document.getElementById("admin-download-import-errors");
   const importReportClearButton = document.getElementById("admin-clear-import-report");
+  const importHistoryRefreshButton = document.getElementById("admin-import-history-refresh");
 
   if (importTextInput) {
     if (importTextInput.value !== String(state.adminImportDraft || "")) {
@@ -36785,14 +37427,6 @@ function wireAdmin() {
   const isSupportedBulkImportFile = (file) => {
     const fileName = String(file?.name || "").toLowerCase();
     return fileName.endsWith(".csv") || fileName.endsWith(".json");
-  };
-
-  const toCsvCell = (value) => {
-    const text = String(value == null ? "" : value);
-    if (/["\n\r,]/.test(text)) {
-      return `"${text.replace(/"/g, "\"\"")}"`;
-    }
-    return text;
   };
 
   importSyncNowButton?.addEventListener("click", async () => {
@@ -36871,29 +37505,64 @@ function wireAdmin() {
       explanationImage: "https://example.com/image.png",
     };
     const csvRows = [headers, headers.map((header) => sampleRow[header] || "")]
-      .map((row) => row.map(toCsvCell).join(","))
+      .map((row) => row.map((value) => toCsvCell(value, { guardFormula: false })).join(","))
       .join("\r\n");
     const csvContent = `\uFEFF${csvRows}`;
     const fileName = "bulk_import_template.csv";
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    if (window.navigator && typeof window.navigator.msSaveOrOpenBlob === "function") {
-      window.navigator.msSaveOrOpenBlob(blob, fileName);
-      toast("Template downloaded. Fill it, then upload it for bulk import.");
-      return;
-    }
-    const blobUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = blobUrl;
-    anchor.download = fileName;
-    anchor.style.display = "none";
-    document.body.append(anchor);
-    anchor.click();
-    window.setTimeout(() => {
-      URL.revokeObjectURL(blobUrl);
-      anchor.remove();
-    }, 1500);
+    downloadBlobFile(blob, fileName);
     toast("Template downloaded. Fill it, then upload it for bulk import.");
   });
+
+  exportDownloadButton?.addEventListener("click", async () => {
+    if (state.adminQuestionExportRunning) return;
+    syncExportSelectionsFromInputs();
+    const courseName = state.adminQuestionExportCourse;
+    const topicName = state.adminQuestionExportTopic;
+    const statusMode = state.adminQuestionExportStatus;
+    if (!courseName) {
+      toast("Choose an MCQ subject to export.");
+      return;
+    }
+    state.adminQuestionExportRunning = true;
+    state.skipNextRouteAnimation = true;
+    render();
+    try {
+      await exportAdminQuestionsCsv(courseName, topicName, statusMode);
+    } catch (error) {
+      toast(`Could not export questions: ${getErrorMessage(error, "Export failed.")}`);
+    } finally {
+      state.adminQuestionExportRunning = false;
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  });
+
+  importHistoryRefreshButton?.addEventListener("click", () => {
+    loadAdminImportHistory({ force: true }).catch((error) => {
+      console.warn("Could not refresh upload history.", error?.message || error);
+    });
+  });
+
+  appEl.querySelectorAll("[data-import-history-download]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const entryId = String(button.getAttribute("data-import-history-download") || "");
+      const entry = state.adminImportHistory.find((candidate) => String(candidate?.id || "") === entryId);
+      if (!entry) {
+        toast("That upload history entry is no longer available. Refresh and try again.");
+        return;
+      }
+      downloadBulkImportHistoryEntry(entry).catch((error) => {
+        toast(`Could not download upload history file: ${getErrorMessage(error, "Download failed.")}`);
+      });
+    });
+  });
+
+  if (!state.adminImportHistoryLoaded && !state.adminImportHistoryLoading) {
+    loadAdminImportHistory().catch((error) => {
+      console.warn("Could not load upload history.", error?.message || error);
+    });
+  }
 
   importFileInput?.addEventListener("change", async () => {
     const files = [...(importFileInput.files || [])];
@@ -37129,16 +37798,20 @@ function wireAdmin() {
         return;
       }
       importSources = await Promise.all(
-        selectedImportFiles.map(async (file) => ({
-          label: String(file.name || "Uploaded file"),
-          raw: String(await file.text()),
-        })),
+        selectedImportFiles.map(async (file) => {
+          const fileRaw = String(await file.text());
+          return {
+            label: String(file.name || "Uploaded file"),
+            raw: fileRaw,
+            originalRaw: fileRaw,
+            file,
+            source: "file",
+          };
+        }),
       );
     } else {
       const raw = rawInput.trim();
-      if (raw) {
-        importSources = [{ label: "Pasted import text", raw }];
-      } else if (selectedImportFiles.length === 1) {
+      if (selectedImportFiles.length === 1) {
         const [singleFile] = selectedImportFiles;
         if (!isSupportedBulkImportFile(singleFile)) {
           const invalidFileName = String(singleFile.name || "file");
@@ -37149,9 +37822,31 @@ function wireAdmin() {
           toast(`Unsupported file type: ${invalidFileName}`);
           return;
         }
+        const fileRaw = String(await singleFile.text());
+        // Textareas normalise CRLF to LF, so an Excel-saved CSV loaded into the
+        // textarea must not count as "edited" or history would lose the file.
+        const normalizeLineEndings = (text) => String(text || "").replace(/\r\n?/g, "\n").trim();
+        const textareaChanged = Boolean(raw) && normalizeLineEndings(rawInput) !== normalizeLineEndings(fileRaw);
+        importSources = textareaChanged
+          ? [{
+            label: "Pasted import text",
+            raw: rawInput,
+            originalRaw: rawInput,
+            source: "pasted",
+          }]
+          : [{
+            label: String(singleFile.name || "Uploaded file"),
+            raw: fileRaw,
+            originalRaw: fileRaw,
+            file: singleFile,
+            source: "file",
+          }];
+      } else if (raw) {
         importSources = [{
-          label: String(singleFile.name || "Uploaded file"),
-          raw: String(await singleFile.text()),
+          label: "Pasted import text",
+          raw: rawInput,
+          originalRaw: rawInput,
+          source: "pasted",
         }];
       } else {
         state.adminImportStatus = "Paste import content or upload a file first.";
@@ -37184,6 +37879,10 @@ function wireAdmin() {
         if (!sourceRaw) {
           const emptyError = "No import rows found. File is empty.";
           aggregate.errors.push(shouldPrefixErrors ? `${sourceLabel}: ${emptyError}` : emptyError);
+          aggregate.sources.push({
+            source,
+            result: { total: 0, added: 0, errors: [emptyError] },
+          });
           return aggregate;
         }
         const sourceResult = importQuestionsFromRaw(sourceRaw, {
@@ -37200,8 +37899,9 @@ function wireAdmin() {
             aggregate.errors.push(shouldPrefixErrors ? `${sourceLabel}: ${normalizedError}` : normalizedError);
           });
         }
+        aggregate.sources.push({ source, result: sourceResult });
         return aggregate;
-      }, { total: 0, added: 0, errors: [] });
+      }, { total: 0, added: 0, errors: [], sources: [] });
       state.adminImportReport = {
         createdAt: nowISO(),
         total: result.total,
@@ -37210,6 +37910,8 @@ function wireAdmin() {
       };
 
       let syncMessage = "";
+      let syncSucceeded = false;
+      let historyWarning = "";
       const visibilityNote = importAsDraft ? " as draft" : "";
       const sourceSummary = importSources.length > 1 ? ` across ${importSources.length} files` : "";
       if (result.added) {
@@ -37218,7 +37920,42 @@ function wireAdmin() {
         if (!syncResult.ok) {
           syncMessage = syncResult.message || "Database sync failed.";
         } else {
+          syncSucceeded = true;
           refreshAdminQuestionCountSnapshot({ force: true }).catch(() => { });
+        }
+      }
+
+      if (syncSucceeded) {
+        const historySources = result.sources.filter((entry) => Number(entry?.result?.added || 0) > 0);
+        const historyResults = await Promise.all(historySources.map(async (entry) => {
+          try {
+            return await saveBulkImportSourceToHistory(
+              entry.source,
+              entry.result,
+              { defaultCourse, defaultTopic, importAsDraft },
+            );
+          } catch (error) {
+            const migrationMissing = isBulkImportHistoryMigrationMissingError(error);
+            if (migrationMissing) state.adminImportHistoryMissing = true;
+            return {
+              ok: false,
+              missing: migrationMissing,
+              message: getErrorMessage(error, "Unknown upload history error."),
+            };
+          }
+        }));
+        const recordedCount = historyResults.filter((entry) => entry?.ok).length;
+        const historyFailure = historyResults.find((entry) => !entry?.ok);
+        if (historyFailure) {
+          historyWarning = historyFailure.missing
+            ? "Upload history is not set up yet (database migration pending)."
+            : String(historyFailure.message || "Unknown upload history error.");
+        }
+        if (recordedCount) {
+          state.adminImportHistoryLoaded = false;
+          await loadAdminImportHistory({ force: true, renderAfter: false }).catch((error) => {
+            console.warn("Could not reload upload history after import.", error?.message || error);
+          });
         }
       }
 
@@ -37234,6 +37971,10 @@ function wireAdmin() {
         state.adminImportStatus = `Done importing ${result.added}/${result.total} rows${visibilityNote}${sourceSummary}.`;
         state.adminImportStatusTone = "success";
         toast(`Imported ${result.added}/${result.total} rows${visibilityNote}${sourceSummary} successfully.`);
+      }
+
+      if (historyWarning) {
+        toast(`Questions imported, but the upload could not be saved to history: ${historyWarning}`);
       }
 
       if (result.added) {
