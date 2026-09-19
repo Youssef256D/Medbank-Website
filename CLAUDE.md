@@ -19,7 +19,8 @@ browser uses only the anon key; privileged work happens in Edge Functions.
   IIFE): one mutable `state` object, one `render()` router on `state.route`.
 - `bootstrap.js` loads supabase-js + GSAP + Lucide from CDNs, then loads `main.js`.
 - `styles.css` (~15k lines): light/dark/comfort themes.
-- Supabase: 52 migrations in `supabase/migrations/`, 6 Edge Functions.
+- Supabase: 98 migrations in `supabase/migrations/`, 9 Edge Functions in
+  `supabase/functions/` (10 deployed — see the status note below).
 - Optional tooling: esbuild + ESLint (not deployed). `framer-motion` in
   `package.json` is unused — GSAP (CDN) is the real animation runtime.
 
@@ -81,9 +82,24 @@ npm run build:minify  # minified variant
 5. **Don't extend the deprecated `api/*.js`** — extend the Edge Function instead.
 6. Prefer additive, reversible changes; this repo is shared by multiple AI tools.
 
-## Status notes (verified against hosted DB 2026-06-30)
+## Status notes
 
-- **Hosted DB ↔ repo migrations: in sync** (52 migrations, no drift).
+Migrations and Edge Functions verified against the hosted DB on 2026-09-20; the
+rest of this section dates from 2026-06-30.
+
+- **Hosted DB ↔ repo migrations: reconciled 2026-09-20** — 98 in the repo, 98 in
+  the hosted ledger, with two known and deliberate exceptions:
+  `20260910120000_app_popups` is applied here but lives in the sibling
+  `Medbank-App` (Flutter) repo, and `20260909101500_add_student_auto_approval_feature_flag`
+  is in this repo but never applied (the app upserts the flag row itself, so it
+  is optional — see the 2026-09-09 refactor log entry).
+  **Do not assume this stays true:** migrations have repeatedly been applied to
+  the hosted project without being committed. Check with
+  `supabase_migrations.schema_migrations` before trusting this line.
+- **Edge Functions:** 10 are deployed, 9 have source in `supabase/functions/`.
+  `dispatch-notification-pushes` (called every minute by the
+  `dispatch-notification-pushes` cron job) is deployed with **no source in the
+  repo** — recover it before changing anything in that path.
 - **Course Platform (LMS):** live — 9 platform tables, 1 published course.
 - **Hermes AI agent:** live/used — `admin-agent-tool` active, ~4,103 action-log
   entries.
