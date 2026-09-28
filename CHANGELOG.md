@@ -9,6 +9,21 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-28 — Video Course lessons no longer silently hidden
+- **New lessons and modules are published by default** in the website Course
+  Builder, matching the app's Creator Studio. Previously the "Published" box
+  started unchecked (and the DB column defaults to `false`), so a lesson added
+  on the website was invisible to students until someone remembered to tick it.
+- The syllabus outline shows a **Draft · Publish** pill on every unpublished
+  lesson/module (one click publishes it) and a **Module draft** pill on
+  published lessons inside a draft module.
+- After **Add lesson / Add module**, the editor opens the new item instead of
+  closing (the create call now returns the inserted id).
+- App side (Medbank-App, same branch): admin chapter list shows draft-lesson
+  counts with a **Publish drafts** action and supports pull-to-refresh; the
+  student chapter list supports pull-to-refresh.
+- No schema, RLS, or policy change. Static cache bust: `2026-09-28.02`.
+
 ### 2026-09-28 — Device limit exemptions
 - Admins can exempt a student from the one-device limit (and remove the
   exemption) from the same **Device** dialog. Exempt students get the same
