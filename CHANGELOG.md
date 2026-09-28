@@ -9,6 +9,21 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-28 — University and college at sign-up; MCQ Bank for eligible students only
+- Sign-up, Google onboarding and Complete profile ask for **University** and
+  **College**. Only Medicine students at a university that offers the MCQ Bank
+  (today: October 6 University) get it; everyone else gets Video Courses, and the
+  form says so before they submit.
+- Students without the MCQ Bank no longer see any MCQ UI (launcher card, nav
+  tabs, home quick actions, MCQ notification links). Profile shows university
+  and college. Students with a missing university/college are asked to fill it.
+- New **Admin → Universities** page (add/edit/hide/delete, offer or turn off the
+  MCQ Bank per university) and a **University** dialog on Admin → Users rows.
+- Backend: migration `20260928083023` (already live). Known gap: signed-out
+  visitors cannot read the universities list yet because the select policy
+  calls `private.is_admin_user()`; see the AGENTS.md entry.
+- New served file `universities-utils.js`. Static cache bust: `2026-09-28.03-local`.
+
 ### 2026-09-28 — Video Course lessons no longer silently hidden
 - **New lessons and modules are published by default** in the website Course
   Builder, matching the app's Creator Studio. Previously the "Published" box
