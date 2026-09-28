@@ -51051,18 +51051,18 @@ async function adminSaveCourseMetadata(courseId, data) {
 async function adminCreateModule(courseId, data) {
   const client = getCoursesPlatformClient();
   if (!client || !isUuidValue(courseId)) throw new Error("Module cannot be created.");
-  await runRelationalQueryWithTimeout(
+  const created = await runRelationalQueryWithTimeout(
     client.from("platform_course_modules").insert({
       course_id: courseId,
       title: String(data.title || "").trim(),
       description: String(data.description || "").trim() || null,
       position: Number(data.position) || 0,
       is_published: Boolean(data.is_published),
-    }),
+    }).select("id").single(),
     "Module create timed out.",
   );
   await loadAdminCoursesPlatform({ force: true });
-  return true;
+  return created || true;
 }
 
 async function adminUpdateModule(moduleId, data) {
@@ -51129,6 +51129,31 @@ async function adminMoveModule(moduleId, direction) {
   }
   await loadAdminCoursesPlatform({ force: true });
   return true;
+}
+
+// Publish/unpublish one lesson or module straight from the syllabus outline, so
+// a draft is never one forgotten checkbox away from being invisible to students.
+async function adminSetCourseItemPublished(kind, itemId, isPublished) {
+  const client = getCoursesPlatformClient();
+  const table = kind === "module" ? "platform_course_modules" : kind === "lesson" ? "platform_course_lessons" : "";
+  if (!client || !table || !isUuidValue(itemId)) throw new Error("Publish state cannot be changed.");
+  await runRelationalQueryWithTimeout(
+    client.from(table).update({ is_published: Boolean(isPublished), updated_at: nowISO() }).eq("id", itemId),
+    "Publish update timed out.",
+  );
+  await loadAdminCoursesPlatform({ force: true });
+  return true;
+}
+
+function renderOutlinePublishControl(kind, item, { hiddenByModule = false } = {}) {
+  const id = escapeHtml(item.id);
+  if (!item.is_published) {
+    return `<button class="outline-publish-pill is-draft" type="button" data-action="admin-set-course-item-published" data-kind="${kind}" data-item-id="${id}" data-published="true" title="Hidden from students. Click to publish.">Draft · Publish</button>`;
+  }
+  if (hiddenByModule) {
+    return `<span class="outline-publish-pill is-muted" title="This lesson is published, but its module is a draft, so students cannot see it yet.">Module draft</span>`;
+  }
+  return "";
 }
 
 async function adminMoveLesson(lessonId, direction) {
@@ -51754,7 +51779,7 @@ async function adminCreateLesson(courseId, moduleId, data) {
   if (!client || !isUuidValue(courseId) || !isUuidValue(moduleId)) throw new Error("Lesson cannot be created.");
   const durationSeconds = await resolveAdminLessonDurationSeconds(data, 0);
   const videoSource = await resolveAdminLessonVideoSource(courseId, data);
-  await runRelationalQueryWithTimeout(
+  const created = await runRelationalQueryWithTimeout(
     client.from("platform_course_lessons").insert({
       course_id: courseId,
       module_id: moduleId,
@@ -51767,11 +51792,11 @@ async function adminCreateLesson(courseId, moduleId, data) {
       position: Number(data.position) || 0,
       is_free_preview: Boolean(data.is_free_preview),
       is_published: Boolean(data.is_published),
-    }),
+    }).select("id").single(),
     "Lesson create timed out.",
   );
   await loadAdminCoursesPlatform({ force: true });
-  return true;
+  return created || true;
 }
 
 async function adminUpdateLesson(lessonId, data) {
@@ -53644,6 +53669,7 @@ function renderSyllabusOutline(selectedCourse, rows) {
             </svg>
             <span class="outline-lesson-title" title="${escapeHtml(lesson.title)}">${escapeHtml(lesson.title)}</span>
           </div>
+          ${renderOutlinePublishControl("lesson", lesson, { hiddenByModule: !module.is_published })}
           <div class="outline-actions">
             <button class="outline-btn active-hover" type="button" data-action="admin-move-lesson" data-lesson-id="${escapeHtml(lesson.id)}" data-direction="up" ${lIdx === 0 ? "disabled" : ""} title="Move Up">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
@@ -53668,6 +53694,7 @@ function renderSyllabusOutline(selectedCourse, rows) {
             </button>
             <span class="outline-module-title" title="${escapeHtml(module.title)}">${escapeHtml(module.title)}</span>
           </div>
+          ${renderOutlinePublishControl("module", module)}
           <div class="outline-actions">
             <button class="outline-btn active-hover" type="button" data-action="admin-move-module" data-module-id="${escapeHtml(module.id)}" data-direction="up" ${mIdx === 0 ? "disabled" : ""} title="Move Up">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
@@ -53867,7 +53894,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           <label>Title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "title", ""))}" required /></label>
           <label>Description<input name="description" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", ""))}" /></label>
           <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "position", rows.modules.length + 1))}" /></label>
-          <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", false)} /> Published</label>
+          <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published (visible to students)</label>
         </div>
         <button class="btn admin-btn-sm" type="submit" style="margin-top: 0.75rem;">Add module</button>
       </form>
@@ -53892,7 +53919,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
             <label>Module title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "title", module.title || ""))}" required /></label>
             <label>Description<input name="description" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", module.description || ""))}" /></label>
             <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "position", module.position || 0))}" /></label>
-            <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", module.is_published)} /> Published</label>
+            <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", module.is_published)} /> Published (visible to students)</label>
           </div>
           <div class="stack" style="margin-top: 0.75rem;">
             <button class="btn admin-btn-sm" type="submit">Save module</button>
@@ -53938,7 +53965,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
             ${renderAdminCourseVideoUploadField(dk, "Upload video")}
             <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "position", moduleLessons.length + 1))}" /></label>
             <label class="course-builder-check"><input type="checkbox" name="is_free_preview" ${getAdminCourseBuilderCheckboxState(dk, "is_free_preview", false)} /> Free preview</label>
-            <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", false)} /> Published</label>
+            <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published (visible to students)</label>
             <label class="course-builder-wide">Description<input name="description" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", ""))}" /></label>
             <label class="course-builder-wide">Lesson text<textarea name="content_html" rows="4">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "content_html", ""))}</textarea></label>
           </div>
@@ -53980,7 +54007,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
             <label class="course-builder-check"><input type="checkbox" name="remove_video" /> Remove current video</label>
             <label>Position<input name="position" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkLesson, "position", lesson.position || 0))}" /></label>
             <label class="course-builder-check"><input type="checkbox" name="is_free_preview" ${getAdminCourseBuilderCheckboxState(dkLesson, "is_free_preview", lesson.is_free_preview)} /> Free preview</label>
-            <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dkLesson, "is_published", lesson.is_published)} /> Published</label>
+            <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dkLesson, "is_published", lesson.is_published)} /> Published (visible to students)</label>
             <label class="course-builder-wide">Description<input name="description" value="${escapeHtml(getAdminCourseBuilderFieldValue(dkLesson, "description", lesson.description || ""))}" /></label>
             <label class="course-builder-wide">Lesson text<textarea name="content_html" rows="4">${escapeHtml(getAdminCourseBuilderFieldValue(dkLesson, "content_html", lesson.content_html || ""))}</textarea></label>
           </div>
@@ -54790,6 +54817,12 @@ function wireAdminCoursesPlatformBuilder() {
       const moduleId = button.getAttribute("data-module-id") || "";
       const direction = button.getAttribute("data-direction") || "";
       runAdminCourseAction("Module moved.", () => adminMoveModule(moduleId, direction));
+    } else if (action === "admin-set-course-item-published") {
+      const kind = button.getAttribute("data-kind") || "";
+      const itemId = button.getAttribute("data-item-id") || "";
+      const publish = button.getAttribute("data-published") === "true";
+      const label = kind === "module" ? "Module" : "Lesson";
+      runAdminCourseAction(publish ? `${label} published.` : `${label} unpublished.`, () => adminSetCourseItemPublished(kind, itemId, publish));
     } else if (action === "admin-move-lesson") {
       const lessonId = button.getAttribute("data-lesson-id") || "";
       const direction = button.getAttribute("data-direction") || "";

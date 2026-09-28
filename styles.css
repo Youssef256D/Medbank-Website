@@ -20548,3 +20548,34 @@ small.admin-account-approval-gap {
   padding-top: 0.85rem;
   border-top: 1px solid var(--line);
 }
+
+/* Syllabus outline: draft lessons/modules are hidden from students, so they
+   carry a visible one-click publish control instead of a buried checkbox. */
+.outline-publish-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.outline-publish-pill.is-draft {
+  border-color: var(--accent);
+  background: rgba(244, 162, 89, 0.16);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.outline-publish-pill.is-draft:hover,
+.outline-publish-pill.is-draft:focus-visible {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}

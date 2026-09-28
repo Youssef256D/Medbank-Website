@@ -189,6 +189,31 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-28 — Video Course lessons published by default; drafts visible
+Reported as "a new lesson doesn't appear" and "I forget to tick Publish".
+Students only see a lesson when the lesson **and** its module are
+`is_published` (RLS `platform_lessons_select_student_visible`), and both columns
+default to `false`. The app's Creator Studio always inserts `is_published: true`;
+the website's create forms defaulted the checkbox to off. Static cache bust:
+`2026-09-28.02`.
+
+1. **Create forms default to published** (module + lesson). Unticking still
+   creates a draft on purpose. Labels read "Published (visible to students)".
+2. **Draft state is surfaced in the outline.** `renderOutlinePublishControl()`
+   renders a clickable **Draft · Publish** pill (`admin-set-course-item-published`
+   -> `adminSetCourseItemPublished(kind, id, bool)`) and a passive **Module draft**
+   pill for a published lesson whose module is a draft.
+3. **`adminCreateModule` / `adminCreateLesson` return the inserted row**
+   (`.select("id").single()`); the submit handlers already expected `.id` and
+   were closing the editor because they got `true`.
+4. **Deliberately not changed:** the DB column defaults and RLS. Both clients
+   write `is_published` explicitly, so the defaults are not what hid lessons.
+5. **App (Medbank-App):** `AdminCourseModule.draftLessonCount` (from
+   `platform_course_lessons(is_published)`), a **Publish drafts** action per
+   chapter, pull-to-refresh on the admin course and student chapter screens.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-28 — Device limit exemptions
 Follow-up to the registered-device entry below. Static cache bust:
 `2026-09-28.02-local`.
