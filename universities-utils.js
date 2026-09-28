@@ -150,7 +150,102 @@
     return fallback;
   }
 
+  // -------------------------------------------------------------------------
+  // Auto MCQ access for new students (migration 20260928125817).
+  //
+  // `app_feature_flags.student_auto_mcq_access`: on, a new eligible student
+  // gets the MCQ Bank at once; off, they are created with MCQ off and
+  // `profiles.mcq_access_held_at` stamped ("waiting for MCQ activation").
+  // Enabling a student's MCQ access clears the hold in the database, and
+  // turning the switch back on activates every student still held. A missing
+  // flag row reads as off, exactly as private.is_app_feature_enabled does.
+  // -------------------------------------------------------------------------
+  const AUTO_MCQ_ACCESS_FEATURE_KEY = "student_auto_mcq_access";
+  const AUTO_MCQ_ACCESS_FEATURE_DESCRIPTION = "When enabled, new eligible students get MCQ Bank access immediately. When disabled, new accounts wait for an admin to activate MCQ access; turning it back on activates everyone still waiting.";
+  const AUTO_MCQ_ACCESS_LABEL = "Auto MCQ access for new students";
+  const AUTO_MCQ_ACCESS_OFF_CONFIRM = "New students will get Video Courses only until you activate MCQ access for each of them, or turn this back on.";
+  const MCQ_HELD_BADGE_LABEL = "Waiting for MCQ";
+
+  // Friendly names for app_feature_flags keys, for any list of site switches.
+  const FEATURE_FLAG_LABELS = Object.freeze({
+    student_auto_mcq_access: AUTO_MCQ_ACCESS_LABEL,
+    student_auto_approval: "Auto-approve new students",
+    courses_coming_soon: "Video Courses: coming soon",
+  });
+
+  function getFeatureFlagLabel(featureKey) {
+    const key = text(featureKey);
+    return FEATURE_FLAG_LABELS[key] || key;
+  }
+
+  // An ISO timestamp, or null for anything that is not a real date.
+  function normalizeMcqAccessHeldAt(value) {
+    if (value === null || value === undefined || text(value) === "") return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  // Held = a student with a hold stamp whose MCQ access is still off. The
+  // access check keeps a just-activated row from showing the badge in the
+  // moment between the write and the re-read.
+  function isMcqAccessHeld(account) {
+    return text(account?.role) === "student"
+      && account?.mcqAccessEnabled === false
+      && normalizeMcqAccessHeldAt(account?.mcqAccessHeldAt) !== null;
+  }
+
+  function formatMcqHeldSince(value, locale = "en-GB") {
+    const iso = normalizeMcqAccessHeldAt(value);
+    if (!iso) return "";
+    return new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  const pluralStudents = (count) => `${count} student${count === 1 ? "" : "s"}`;
+  const normalizeCount = (value) => (Number.isInteger(value) && value >= 0 ? value : null);
+
+  // The one line under the switch. `enabled` null = not read yet / unreadable.
+  function describeAutoMcqAccessState(enabled, heldCount = null) {
+    const count = normalizeCount(heldCount);
+    if (enabled === true) {
+      return "On: new Medicine students at a university with the MCQ Bank get MCQ access as soon as they sign up."
+        + (count ? ` ${pluralStudents(count)} from before are still waiting; activate them below or turn this off and on again.` : "");
+    }
+    if (enabled === false) {
+      const waiting = count === null ? "" : ` ${count ? `${pluralStudents(count)} waiting now.` : "Nobody is waiting now."}`;
+      return `Off: new eligible students get Video Courses only and wait for you to activate MCQ access.${waiting}`;
+    }
+    return "Checking whether new students get MCQ access automatically…";
+  }
+
+  function buildAutoMcqAccessConfirmMessage(nextEnabled, heldCount = null) {
+    if (!nextEnabled) {
+      return `Turn off ${AUTO_MCQ_ACCESS_LABEL.toLowerCase()}?\n\n${AUTO_MCQ_ACCESS_OFF_CONFIRM}`;
+    }
+    const count = normalizeCount(heldCount);
+    let waiting;
+    if (count === null) {
+      waiting = "The number of waiting students could not be read. Every student still waiting for MCQ activation will be activated now.";
+    } else if (count === 0) {
+      waiting = "No students are waiting for MCQ activation right now.";
+    } else {
+      waiting = `${pluralStudents(count)} waiting for MCQ activation will all be activated now.`;
+    }
+    return `Turn on ${AUTO_MCQ_ACCESS_LABEL.toLowerCase()}?\n\nNew eligible students will get MCQ access as soon as they sign up.\n\n${waiting}`;
+  }
+
   return Object.freeze({
+    AUTO_MCQ_ACCESS_FEATURE_KEY,
+    AUTO_MCQ_ACCESS_FEATURE_DESCRIPTION,
+    AUTO_MCQ_ACCESS_LABEL,
+    AUTO_MCQ_ACCESS_OFF_CONFIRM,
+    MCQ_HELD_BADGE_LABEL,
+    FEATURE_FLAG_LABELS,
+    getFeatureFlagLabel,
+    normalizeMcqAccessHeldAt,
+    isMcqAccessHeld,
+    formatMcqHeldSince,
+    describeAutoMcqAccessState,
+    buildAutoMcqAccessConfirmMessage,
     COLLEGE_OPTIONS,
     COLLEGE_VALUES,
     MCQ_COLLEGE,
