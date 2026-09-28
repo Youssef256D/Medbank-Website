@@ -379,6 +379,7 @@
       })
       .then(() => loadScript(`video-courses-utils.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
       .then(() => loadScript(`app-popups-utils.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
+      .then(() => loadScript(`universities-utils.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
       .then(() => loadScript(`main.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
       .then(() => {
         if (window.supabase?.createClient) {

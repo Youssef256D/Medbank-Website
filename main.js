@@ -199,7 +199,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -640,6 +640,12 @@ const state = {
   studentQuestionReadError: "",
   studentQuestionReadStartedAt: 0,
   studentQuestionReadCompletedAt: 0,
+  universities: [],
+  universitiesLoading: false,
+  universitiesLoadedAt: 0,
+  universitiesError: "",
+  adminUniversityDraft: null,
+  adminUniversitySaving: false,
   userMenuOpen: false,
   notificationMenuOpen: false,
 };
@@ -4528,7 +4534,7 @@ async function bootstrapRelationalProfileFromAuth(authUser, fallbackUser = null)
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
       .eq("id", profileRow.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -4625,7 +4631,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
       .eq("id", authUser.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -4838,6 +4844,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
     isApproved: resolvedApproval,
     mcqAccessEnabled: role === "admin" ? true : profile.mcq_access_enabled !== false,
     coursesAccessEnabled: role === "admin" ? true : profile.courses_access_enabled !== false,
+    ...readProfileUniversityFields(profile),
     approvedAt: resolvedApproval ? localUser?.approvedAt || profile.created_at || nowISO() : null,
     approvedBy: resolvedApproval ? localUser?.approvedBy || "admin" : null,
     authProvider,
@@ -4954,6 +4961,11 @@ function isUserMcqAccessEnabled(user) {
   if (user.role === "admin") {
     return true;
   }
+  if (user.role === "student" && resolveUserMcqEligibility(user) === false) {
+    // The database already keeps mcq_access_enabled off for these students;
+    // this only stops a stale local flag from showing MCQ UI in between.
+    return false;
+  }
   return isUserAccessApproved(user) && user.mcqAccessEnabled !== false;
 }
 
@@ -4967,12 +4979,329 @@ function isUserCoursesAccessEnabled(user) {
   return user.coursesAccessEnabled !== false;
 }
 
-function getMcqAccessBlockedMessage() {
+function getMcqAccessBlockedMessage(user = getCurrentUser()) {
+  if (user?.role === "student" && resolveUserMcqEligibility(user) === false) {
+    return getMcqIneligibleNote();
+  }
   return "MCQ Bank access is disabled for this account. Video Courses remain available if you are enrolled.";
 }
 
 function getCoursesAccessBlockedMessage() {
   return "Video Courses access is unavailable for this account. Contact the admin if you need access.";
+}
+
+// University + college (MCQ Bank eligibility). Migration
+// 20260928083023_universities_and_college_mcq_eligibility: only students whose
+// university has `mcq_bank_available` AND whose college is 'medicine' may use
+// the MCQ Bank. The database enforces it (a trigger keeps
+// profiles.mcq_access_enabled false for everyone else), so the website reads
+// that flag as before; the helpers below only explain the rule and hide MCQ
+// entry points early. Pure logic lives in universities-utils.js.
+//
+// Local user fields: `universityId` / `college` are `null` when the profile was
+// read and the column is empty, and absent (undefined) when this browser has
+// not read them yet. Only a known null prompts the student to fill them in.
+function getUniversitiesUtils() {
+  return typeof globalThis !== "undefined" ? globalThis.MedBankUniversities || null : null;
+}
+
+const UNIVERSITY_COLLEGE_FALLBACK_OPTIONS = [
+  { value: "medicine", label: "Medicine" },
+  { value: "dentistry", label: "Dentistry" },
+  { value: "pharmacy", label: "Pharmacy" },
+  { value: "nursing", label: "Nursing" },
+  { value: "physical_therapy", label: "Physical Therapy" },
+  { value: "applied_health_sciences", label: "Applied Health Sciences" },
+  { value: "other", label: "Other" },
+];
+const UNIVERSITIES_SELECT = "id,name,name_ar,mcq_bank_available,is_active,sort_order,created_at,updated_at";
+const MCQ_INELIGIBLE_NOTE_FALLBACK = "The MCQ Bank is available for Medicine students at October 6 University. You'll have full access to Video Courses.";
+
+function getCollegeOptions() {
+  return getUniversitiesUtils()?.COLLEGE_OPTIONS || UNIVERSITY_COLLEGE_FALLBACK_OPTIONS;
+}
+
+function normalizeCollegeValue(value) {
+  const utils = getUniversitiesUtils();
+  if (utils) return utils.normalizeCollege(value);
+  const college = String(value ?? "").trim().toLowerCase();
+  return UNIVERSITY_COLLEGE_FALLBACK_OPTIONS.some((entry) => entry.value === college) ? college : null;
+}
+
+function getCollegeLabel(value) {
+  const college = normalizeCollegeValue(value);
+  return getCollegeOptions().find((entry) => entry.value === college)?.label || "";
+}
+
+function normalizeUniversityIdValue(value) {
+  const id = String(value ?? "").trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : null;
+}
+
+// Reads a profile row's university/college into the local-user shape, keeping
+// "column read and empty" (null) distinct from "column not read" (undefined).
+function readProfileUniversityFields(profile) {
+  const fields = {};
+  if (profile && Object.prototype.hasOwnProperty.call(profile, "university_id")) {
+    fields.universityId = normalizeUniversityIdValue(profile.university_id);
+  }
+  if (profile && Object.prototype.hasOwnProperty.call(profile, "college")) {
+    fields.college = normalizeCollegeValue(profile.college);
+  }
+  return fields;
+}
+
+function getMcqIneligibleNote() {
+  return getUniversitiesUtils()?.MCQ_INELIGIBLE_NOTE || MCQ_INELIGIBLE_NOTE_FALLBACK;
+}
+
+function getCachedUniversities() {
+  return Array.isArray(state.universities) ? state.universities : [];
+}
+
+function getUniversityById(universityId) {
+  const id = normalizeUniversityIdValue(universityId);
+  return id ? getCachedUniversities().find((entry) => entry.id === id) || null : null;
+}
+
+function getUniversityDisplayName(universityId) {
+  const university = getUniversityById(universityId);
+  if (university) return university.name;
+  if (!normalizeUniversityIdValue(universityId)) return "";
+  // A student's university can be hidden from the public list after they chose it.
+  return state.universitiesLoadedAt ? "Unlisted university" : "Loading...";
+}
+
+// true / false when known, null when this browser cannot tell yet.
+function resolveUserMcqEligibility(user) {
+  if (!user) return null;
+  const utils = getUniversitiesUtils();
+  if (!utils) return null;
+  return utils.resolveMcqEligibility({
+    role: user.role,
+    universityId: user.universityId,
+    college: user.college,
+  }, getCachedUniversities());
+}
+
+function isStudentUniversityCollegeMissing(user) {
+  return Boolean(
+    user
+    && user.role === "student"
+    && (user.universityId === null || user.college === null),
+  );
+}
+
+let universitiesLoadPromise = null;
+
+// RLS decides what comes back: signed-out visitors and students see the
+// active (public) list, admins see every row. The pickers filter hidden rows
+// out themselves. Never merged: each load replaces the cached list with what
+// the server returned.
+async function loadUniversities(options = {}) {
+  if (universitiesLoadPromise && !options.force) {
+    return universitiesLoadPromise;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    state.universitiesError = "Universities could not be loaded. Check your connection and try again.";
+    return false;
+  }
+  state.universitiesLoading = true;
+  state.universitiesError = "";
+  universitiesLoadPromise = (async () => {
+    try {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("universities").select(UNIVERSITIES_SELECT).order("sort_order", { ascending: true }).order("name", { ascending: true }),
+        "Universities query timed out.",
+      );
+      const utils = getUniversitiesUtils();
+      state.universities = utils ? utils.sortUniversities(rows || []) : [];
+      state.universitiesLoadedAt = Date.now();
+      return true;
+    } catch (error) {
+      console.warn("Could not load universities.", error?.message || error);
+      state.universitiesError = getUniversitiesUtils()?.describeUniversityError(
+        error,
+        "Universities could not be loaded. Check your connection and try again.",
+      ) || "Universities could not be loaded.";
+      return false;
+    } finally {
+      state.universitiesLoading = false;
+      universitiesLoadPromise = null;
+    }
+  })();
+  return universitiesLoadPromise;
+}
+
+// Loads the list once per page view for screens that only display names.
+function ensureUniversitiesLoaded(onLoaded = null) {
+  if (state.universitiesLoadedAt || state.universitiesLoading || state.universitiesError) {
+    return;
+  }
+  loadUniversities().then((ok) => {
+    if (ok && typeof onLoaded === "function") onLoaded();
+  });
+}
+
+function renderUniversitySelectOptions(selectedId = null, options = {}) {
+  const selected = normalizeUniversityIdValue(selectedId);
+  const rows = getCachedUniversities().filter((entry) => options.includeInactive || entry.is_active || entry.id === selected);
+  if (!rows.length) {
+    const placeholder = state.universitiesLoading || (!state.universitiesLoadedAt && !state.universitiesError)
+      ? "Loading universities..."
+      : "No universities available";
+    return `<option value="" selected>${escapeHtml(placeholder)}</option>`;
+  }
+  return `<option value="" ${selected ? "" : "selected"}>Select university</option>${rows
+    .map((entry) => `<option value="${escapeHtml(entry.id)}" ${entry.id === selected ? "selected" : ""}>${escapeHtml(entry.name)}${entry.is_active ? "" : " (hidden)"}</option>`)
+    .join("")}${selected && !rows.some((entry) => entry.id === selected)
+    ? `<option value="${escapeHtml(selected)}" selected>Unlisted university</option>`
+    : ""}`;
+}
+
+function renderCollegeSelectOptions(selected = null) {
+  const college = normalizeCollegeValue(selected);
+  return `<option value="" ${college ? "" : "selected"}>Select college</option>${getCollegeOptions()
+    .map((entry) => `<option value="${escapeHtml(entry.value)}" ${entry.value === college ? "selected" : ""}>${escapeHtml(entry.label)}</option>`)
+    .join("")}`;
+}
+
+// Shared University + College fields for sign-up, Google onboarding and
+// complete-profile. `wireUniversityCollegeFields` fills the list in place once
+// it loads, so a slow network never wipes what the student already typed.
+function renderUniversityCollegeFields({ idPrefix, universityId = null, college = null } = {}) {
+  const prefix = String(idPrefix || "profile").replace(/[^a-z0-9-]/gi, "");
+  return `
+    <div class="form-row" data-university-college-fields>
+      <label>University
+        <select name="universityId" id="${prefix}-university" required aria-required="true">
+          ${renderUniversitySelectOptions(universityId)}
+        </select>
+      </label>
+      <label>College
+        <select name="college" id="${prefix}-college" required aria-required="true">
+          ${renderCollegeSelectOptions(college)}
+        </select>
+      </label>
+    </div>
+    <p class="subtle university-load-error" data-university-load-error ${state.universitiesError ? "" : "hidden"}>
+      <span>${escapeHtml(state.universitiesError || "")}</span>
+      <button class="btn ghost admin-btn-sm" type="button" data-action="retry-universities">Try again</button>
+    </p>
+    <p class="mcq-eligibility-note" data-mcq-eligibility-note role="status" hidden>${escapeHtml(getMcqIneligibleNote())}</p>
+  `;
+}
+
+function readUniversityCollegeSelection(form) {
+  return {
+    universityId: normalizeUniversityIdValue(form?.querySelector("select[name='universityId']")?.value),
+    college: normalizeCollegeValue(form?.querySelector("select[name='college']")?.value),
+  };
+}
+
+// Returns false only when the chosen combination is known not to include the
+// MCQ Bank; an incomplete choice is not "ineligible" yet.
+function isUniversityCollegeSelectionIneligible(selection) {
+  if (!selection?.universityId || !selection?.college) return false;
+  return resolveUserMcqEligibility({ role: "student", ...selection }) === false;
+}
+
+function wireUniversityCollegeFields(form, { onChange = null } = {}) {
+  if (!form) return;
+  const universitySelect = form.querySelector("select[name='universityId']");
+  const collegeSelect = form.querySelector("select[name='college']");
+  const note = form.querySelector("[data-mcq-eligibility-note]");
+  const errorEl = form.querySelector("[data-university-load-error]");
+  const sync = () => {
+    const selection = readUniversityCollegeSelection(form);
+    const ineligible = isUniversityCollegeSelectionIneligible(selection);
+    if (note) note.hidden = !ineligible;
+    if (typeof onChange === "function") onChange({ ...selection, ineligible });
+  };
+  const refillUniversities = () => {
+    if (!universitySelect || !universitySelect.isConnected) return;
+    const current = universitySelect.value;
+    universitySelect.innerHTML = renderUniversitySelectOptions(current);
+    if (errorEl) {
+      errorEl.hidden = !state.universitiesError;
+      const message = errorEl.querySelector("span");
+      if (message) message.textContent = state.universitiesError || "";
+    }
+    sync();
+  };
+  universitySelect?.addEventListener("change", sync);
+  collegeSelect?.addEventListener("change", sync);
+  errorEl?.querySelector("[data-action='retry-universities']")?.addEventListener("click", () => {
+    state.universitiesError = "";
+    refillUniversities();
+    loadUniversities({ force: true }).then(refillUniversities);
+  });
+  if (!state.universitiesLoadedAt) {
+    loadUniversities().then(refillUniversities);
+  }
+  sync();
+}
+
+// Direct write of the student's own university/college. RLS lets a student set
+// them while unapproved, or fill them once if empty; the trigger then decides
+// mcq_access_enabled. The row the server returns is what the local user keeps.
+async function saveOwnUniversityCollege(user, { universityId, college }) {
+  const client = getRelationalClient();
+  const profileId = getUserProfileId(user);
+  if (!client || !isUuidValue(profileId)) {
+    return { ok: false, message: "Your account is not connected. Please sign in again." };
+  }
+  try {
+    const rows = await runRelationalQueryWithTimeout(
+      client
+        .from("profiles")
+        .update({ university_id: universityId, college })
+        .eq("id", profileId)
+        .select("id,university_id,college,mcq_access_enabled"),
+      "Saving your university timed out.",
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) {
+      return { ok: false, message: "Your university could not be saved. Contact support if this keeps happening." };
+    }
+    applyServerUniversityFieldsToLocalUser(profileId, row);
+    return { ok: true, row };
+  } catch (error) {
+    console.warn("Could not save university/college.", error?.message || error);
+    return {
+      ok: false,
+      message: getUniversitiesUtils()?.describeUniversityError(error, "Your university could not be saved. Please try again.")
+        || "Your university could not be saved. Please try again.",
+    };
+  }
+}
+
+// MCQ subject pickers on the onboarding forms are MCQ UI: hidden when the
+// chosen university/college does not include the MCQ Bank.
+function areMcqSubjectFieldsHidden(form) {
+  return Boolean(form?.querySelector("[data-mcq-subjects-field][hidden]"));
+}
+
+function syncMcqSubjectFieldsForEligibility(form, ineligible) {
+  form?.querySelectorAll("[data-mcq-subjects-field]").forEach((node) => {
+    node.hidden = Boolean(ineligible);
+  });
+}
+
+function applyServerUniversityFieldsToLocalUser(profileId, row) {
+  const users = getUsers();
+  const idx = users.findIndex((entry) => getUserProfileId(entry) === profileId);
+  if (idx < 0) return null;
+  users[idx] = {
+    ...users[idx],
+    ...readProfileUniversityFields(row),
+    ...(users[idx].role === "admin" || typeof row?.mcq_access_enabled !== "boolean"
+      ? {}
+      : { mcqAccessEnabled: row.mcq_access_enabled }),
+  };
+  saveLocalOnly(STORAGE_KEYS.users, users);
+  return users[idx];
 }
 
 function getAuthProviderFromAuthUser(authUser) {
@@ -5453,7 +5782,7 @@ async function revalidateApprovedStudentAccess(user = null, options = {}) {
     const { data, error } = await runWithTimeoutResult(
       client
         .from("profiles")
-        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
         .eq("id", profileId)
         .maybeSingle(),
       PROFILE_LOOKUP_TIMEOUT_MS,
@@ -5498,6 +5827,7 @@ async function revalidateApprovedStudentAccess(user = null, options = {}) {
         isApproved: true,
         mcqAccessEnabled: data.mcq_access_enabled !== false,
         coursesAccessEnabled: data.courses_access_enabled !== false,
+        ...readProfileUniversityFields(data),
         approvedAt: existing?.approvedAt || data.created_at || nowISO(),
         approvedBy: existing?.approvedBy || "admin",
         academicYear: normalizedEnrollment.academicYear,
@@ -6450,6 +6780,8 @@ function buildStudentEnrollmentAuthMetadata(user = {}, options = {}) {
   const phone = String(source.phone || "").trim();
   const name = String(source.name || source.full_name || "").trim();
   const authProvider = normalizeAuthProvider(source.authProvider || options.authProvider || "");
+  const universityId = normalizeUniversityIdValue(source.universityId);
+  const college = normalizeCollegeValue(source.college);
   const metadata = {
     ...(name ? { full_name: name } : {}),
     ...(phone ? { phone, phone_number: phone } : {}),
@@ -6457,6 +6789,9 @@ function buildStudentEnrollmentAuthMetadata(user = {}, options = {}) {
     ...(semester !== null ? { academic_semester: String(semester), academicSemester: String(semester) } : {}),
     ...(courses.length ? { assigned_courses: courses, assignedCourses: courses } : {}),
     ...(authProvider ? { auth_provider: authProvider } : {}),
+    // Copied into profiles.university_id / college by the auth trigger.
+    ...(universityId ? { university_id: universityId } : {}),
+    ...(college ? { college } : {}),
   };
   return Object.keys(metadata).length ? metadata : null;
 }
@@ -6659,7 +6994,10 @@ function isStudentProfileCompletionRequired(user) {
   }
   const missingCoreProfile = !hasCompleteStudentProfile(user);
   const missingCourseSelection = !hasSelectedStudentCourses(user);
-  return missingCoreProfile || missingCourseSelection;
+  // Kept out of hasCompleteStudentProfile on purpose: that predicate feeds
+  // approval, and a missing university must prompt the student, not suspend
+  // an approved account.
+  return missingCoreProfile || missingCourseSelection || isStudentUniversityCollegeMissing(user);
 }
 
 function isStudentProfileDataComplete(user) {
@@ -7009,6 +7347,20 @@ function upsertLocalUserFromAuth(authUser, profileOverrides = {}, options = {}) 
     : hasExplicitCoursesAccessEnabled
       ? Boolean(profileOverrides.coursesAccessEnabled)
       : previous?.coursesAccessEnabled !== false;
+  // university/college: an explicit override (a profile read or the sign-up
+  // form) wins; otherwise keep what this browser already knew. Undefined means
+  // "not read yet" and is deliberately left out of the object.
+  const universityFields = {};
+  if (Object.prototype.hasOwnProperty.call(profileOverrides, "universityId")) {
+    universityFields.universityId = normalizeUniversityIdValue(profileOverrides.universityId);
+  } else if (previous && previous.universityId !== undefined) {
+    universityFields.universityId = normalizeUniversityIdValue(previous.universityId);
+  }
+  if (Object.prototype.hasOwnProperty.call(profileOverrides, "college")) {
+    universityFields.college = normalizeCollegeValue(profileOverrides.college);
+  } else if (previous && previous.college !== undefined) {
+    universityFields.college = normalizeCollegeValue(previous.college);
+  }
   const inferredStudentProfileCompletion = nextRole !== "student"
     ? true
     : !isStudentProfileCompletionRequired({
@@ -7051,6 +7403,7 @@ function upsertLocalUserFromAuth(authUser, profileOverrides = {}, options = {}) 
     isApproved: nextIsApproved,
     mcqAccessEnabled: nextMcqAccessEnabled,
     coursesAccessEnabled: nextCoursesAccessEnabled,
+    ...universityFields,
     approvedAt: nextIsApproved ? profileOverrides.approvedAt || previous?.approvedAt || nowISO() : null,
     approvedBy: nextIsApproved
       ? profileOverrides.approvedBy || previous?.approvedBy || (nextRole === "admin" ? "system" : AUTO_APPROVAL_ACTOR)
@@ -8212,6 +8565,12 @@ function saveStudentOnboardingDraft(nextDraft, user = null, route = null) {
   }
   if (Object.prototype.hasOwnProperty.call(nextDraft, "academicSemester")) {
     merged.academicSemester = normalizeAcademicSemesterOrNull(nextDraft.academicSemester);
+  }
+  if (Object.prototype.hasOwnProperty.call(nextDraft, "universityId")) {
+    merged.universityId = normalizeUniversityIdValue(nextDraft.universityId);
+  }
+  if (Object.prototype.hasOwnProperty.call(nextDraft, "college")) {
+    merged.college = normalizeCollegeValue(nextDraft.college);
   }
   if (Object.prototype.hasOwnProperty.call(nextDraft, "selectedCourses")) {
     merged.selectedCourses = sanitizeCourseAssignments(
@@ -10237,7 +10596,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
     const profilesResult = await fetchRowsPaged((from, to) => (
       client
         .from("profiles")
-        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to)
@@ -10256,7 +10615,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
   } else {
     const { data: profile, error } = await client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
       .eq("id", currentUser.supabaseAuthId)
       .maybeSingle();
     if (error) {
@@ -10503,6 +10862,9 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
       isApproved: serverApproved,
       mcqAccessEnabled: resolvedMcqAccess,
       coursesAccessEnabled: resolvedCoursesAccess,
+      // Server-authoritative: university/college are only ever written directly
+      // to profiles (never through the local-cache sync), so the read wins.
+      ...readProfileUniversityFields(profile),
       approvedAt: resolvedApprovedAt,
       approvedBy: resolvedApprovedBy,
       assignedCourses,
@@ -22247,7 +22609,7 @@ function renderTopbarNotificationMenu(user, unreadNotificationCount, unreadNotif
     const bodyPreview = bodyText.length > 110 ? `${bodyText.slice(0, 107)}...` : bodyText;
     const safeNotificationId = escapeHtml(notification.id);
     const timeAgo = getNotificationTimeAgo(notification.createdAt);
-    const destinationRoute = normalizeNotificationDestinationRoute(notification.targetRoute);
+    const destinationRoute = getVisibleNotificationDestinationRoute(notification, user);
     const openLabel = destinationRoute
       ? `Open ${getNotificationDestinationLabelForRecord(notification)}`
       : "View notification";
@@ -22408,9 +22770,11 @@ function syncTopbar() {
         <button data-action="admin-top-tab" data-tab="video-courses" class="${isCourseAdminPage ? "is-active" : ""}">Video Courses</button>
       `;
       privateNavEl.classList.remove("hidden");
-    } else if (isAppLauncher) {
+    } else if (isAppLauncher || (isMcqRoute && !canOpenMcqBank)) {
+      // Profile and Notifications count as MCQ routes for the nav; a student
+      // without the MCQ Bank gets the launcher nav there instead of MCQ tabs.
       privateNavEl.innerHTML = `
-        <button data-nav="app-launcher" class="is-active">Apps</button>
+        <button data-nav="app-launcher" class="${isAppLauncher ? "is-active" : ""}">Apps</button>
         ${canOpenMcqBank ? '<button data-action="open-mcq-bank">MCQ Bank</button>' : ""}
         <button data-action="courses-home-tab" data-tab="dashboard">Video Courses</button>
       `;
@@ -23959,6 +24323,10 @@ function renderAuth(mode) {
     const defaultPhone = typeof onboardingDraft?.phone === "string"
       ? onboardingDraft.phone
       : String(currentUser?.phone || "");
+    const defaultUniversityId = normalizeUniversityIdValue(onboardingDraft?.universityId)
+      || (isGoogleOnboardingFlow ? normalizeUniversityIdValue(currentUser?.universityId) : null);
+    const defaultCollege = normalizeCollegeValue(onboardingDraft?.college)
+      || (isGoogleOnboardingFlow ? normalizeCollegeValue(currentUser?.college) : null);
 
     if (isGoogleOnboardingFlow) {
       return `
@@ -23984,6 +24352,7 @@ function renderAuth(mode) {
               <div class="form-row">
                 <label>Phone number <input type="tel" name="phone" value="${escapeHtml(defaultPhone)}" autocomplete="tel" inputmode="tel" placeholder="01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode" required aria-required="true" minlength="8" maxlength="20" /></label>
               </div>
+              ${renderUniversityCollegeFields({ idPrefix: "signup", universityId: defaultUniversityId, college: defaultCollege })}
               <div class="form-row">
                 <label>Year
                   <select name="academicYear" id="signup-academic-year" required aria-required="true">
@@ -24003,7 +24372,7 @@ function renderAuth(mode) {
                   </select>
                 </label>
               </div>
-              <div class="signup-course-field">
+              <div class="signup-course-field" data-mcq-subjects-field>
                 <p class="signup-course-label">MCQ Subjects (from selected year and semester)</p>
                 <div id="signup-course-options" class="signup-course-grid">
                   ${defaultCourses
@@ -24019,7 +24388,7 @@ function renderAuth(mode) {
                 </div>
                 <small id="signup-course-help" class="subtle">Choose one or more courses.</small>
               </div>
-              <div class="stack">
+              <div class="stack" data-mcq-subjects-field>
                 <button class="btn ghost" type="button" id="signup-select-all-courses">Select all</button>
                 <button class="btn ghost" type="button" id="signup-clear-courses">Clear</button>
               </div>
@@ -24067,6 +24436,7 @@ function renderAuth(mode) {
             <div class="form-row">
               <label>Phone number <input type="tel" name="phone" autocomplete="tel" inputmode="tel" placeholder="01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode" required aria-required="true" minlength="8" maxlength="20" /></label>
             </div>
+            ${renderUniversityCollegeFields({ idPrefix: "signup" })}
             <div class="form-row">
               <label>Year
                 <select name="academicYear" id="signup-academic-year" required aria-required="true">
@@ -24086,7 +24456,7 @@ function renderAuth(mode) {
                 </select>
               </label>
             </div>
-            <div class="signup-course-field">
+            <div class="signup-course-field" data-mcq-subjects-field>
               <p class="signup-course-label">MCQ Subjects (from selected year and semester)</p>
               <div id="signup-course-options" class="signup-course-grid">
                 ${defaultCourses
@@ -24102,7 +24472,7 @@ function renderAuth(mode) {
               </div>
               <small id="signup-course-help" class="subtle">Choose one or more courses.</small>
             </div>
-            <div class="stack">
+            <div class="stack" data-mcq-subjects-field>
               <button class="btn ghost" type="button" id="signup-select-all-courses">Select all</button>
               <button class="btn ghost" type="button" id="signup-clear-courses">Clear</button>
             </div>
@@ -24512,8 +24882,10 @@ function wireAuth(mode) {
       });
     }
 
+    // A student outside the MCQ Bank never sees the subject picker; they are
+    // enrolled in every subject of their term, as "Select all" would do.
     const getSelectedSignupCourses = () =>
-      Array.from(form?.querySelectorAll("input[name='signupCourses']:checked") || []).map((input) => input.value);
+      Array.from(form?.querySelectorAll(areMcqSubjectFieldsHidden(form) ? "input[name='signupCourses']" : "input[name='signupCourses']:checked") || []).map((input) => input.value);
 
     const persistSignupDraft = () => {
       if (!isGoogleOnboardingFlow) {
@@ -24524,6 +24896,7 @@ function wireAuth(mode) {
         academicYear: yearSelect?.value,
         academicSemester: semesterSelect?.value,
         selectedCourses: getSelectedSignupCourses(),
+        ...readUniversityCollegeSelection(form),
       }, onboardingUser, "signup");
     };
 
@@ -24598,6 +24971,12 @@ function wireAuth(mode) {
     renderSignupCourseOptions(preferredCourses, {
       explicitSelection: Array.isArray(savedDraft?.selectedCourses),
     });
+    wireUniversityCollegeFields(form, {
+      onChange: ({ ineligible }) => {
+        syncMcqSubjectFieldsForEligibility(form, ineligible);
+        persistSignupDraft();
+      },
+    });
 
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -24627,6 +25006,11 @@ function wireAuth(mode) {
       }
       const selectedCourses = getSelectedSignupCourses().filter((course) => availableCourses.includes(course));
       const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      const universitySelection = readUniversityCollegeSelection(form);
+      if (!universitySelection.universityId || !universitySelection.college) {
+        toast("Choose your university and college.");
+        return;
+      }
       if (!selectedCourses.length) {
         toast("Select at least one course for your enrollment.");
         return;
@@ -24659,6 +25043,23 @@ function wireAuth(mode) {
 
         lockAuthForm(form, true, "Creating account...");
         try {
+          const universitySave = await saveOwnUniversityCollege(onboardingUser, universitySelection);
+          if (!universitySave.ok) {
+            toast(universitySave.message);
+            return;
+          }
+          users = getUsers();
+          idx = users.findIndex(
+            (entry) =>
+              entry.id === onboardingUser?.id
+              || (onboardingUser?.supabaseAuthId && entry.supabaseAuthId === onboardingUser.supabaseAuthId)
+              || entry.email.toLowerCase() === email,
+          );
+          if (idx === -1) {
+            toast("Google account profile was not found. Please sign in again.");
+            navigate("login");
+            return;
+          }
           const autoApproved = shouldAutoApproveStudentAccess({
             role: "student",
             phone: normalizedPhone,
@@ -24679,6 +25080,8 @@ function wireAuth(mode) {
           users[idx].academicYear = academicYear;
           users[idx].academicSemester = academicSemester;
           users[idx].assignedCourses = selectedCourses;
+          users[idx].universityId = universitySelection.universityId;
+          users[idx].college = universitySelection.college;
           users[idx].isApproved = nextApproved;
           users[idx].approvedAt = nextApproved ? users[idx].approvedAt || nowISO() : null;
           users[idx].approvedBy = nextApproved ? users[idx].approvedBy || AUTO_APPROVAL_ACTOR : null;
@@ -24803,6 +25206,8 @@ function wireAuth(mode) {
                 academicSemester,
                 assignedCourses: selectedCourses,
                 authProvider: "email",
+                universityId: universitySelection.universityId,
+                college: universitySelection.college,
               }),
             },
           }));
@@ -24838,6 +25243,8 @@ function wireAuth(mode) {
             academicSemester,
             assignedCourses: selectedCourses,
             phone: normalizedPhone,
+            universityId: universitySelection.universityId,
+            college: universitySelection.college,
             verified: Boolean(effectiveAuthData.session),
             isApproved: autoApproved,
             approvedAt: autoApproved ? nowISO() : null,
@@ -24851,6 +25258,14 @@ function wireAuth(mode) {
           }
 
           save(STORAGE_KEYS.currentUserId, user.id);
+          if (effectiveAuthData.session) {
+            // The auth trigger already copied these from the metadata; writing
+            // them directly as well covers a profile row that existed first.
+            const universitySave = await saveOwnUniversityCollege(user, universitySelection);
+            if (!universitySave.ok) {
+              console.warn("Could not confirm university/college after signup.", universitySave.message);
+            }
+          }
           await syncUsersBackupState(getUsers()).catch(() => { });
           await ensureRelationalSyncReady().catch(() => { });
           if (autoApproved) {
@@ -24905,6 +25320,8 @@ function wireAuth(mode) {
           assignedCourses: selectedCourses,
           academicYear,
           academicSemester,
+          universityId: universitySelection.universityId,
+          college: universitySelection.college,
           createdAt: nowISO(),
         };
 
@@ -25100,13 +25517,17 @@ function renderCompleteProfile() {
   const defaultPhone = typeof onboardingDraft?.phone === "string"
     ? onboardingDraft.phone
     : String(user?.phone || "");
+  const defaultUniversityId = normalizeUniversityIdValue(onboardingDraft?.universityId)
+    || normalizeUniversityIdValue(user?.universityId);
+  const defaultCollege = normalizeCollegeValue(onboardingDraft?.college) || normalizeCollegeValue(user?.college);
 
   return `
     <section class="panel" style="max-width: 680px; margin-inline: auto;">
       <h2 class="title">Complete Your Account</h2>
-      <p class="subtle">Add your phone number, choose your year and semester, and pick one or more courses first. Your account stays pending until an admin approves it. Use 01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode.</p>
+      <p class="subtle">Add your phone number, choose your university, college, year and semester, and pick one or more courses first. Your account stays pending until an admin approves it. Use 01XXXXXXXXX, +20XXXXXXXXXX, 0020XXXXXXXXXX, or +countrycode.</p>
       <form id="complete-profile-form" class="auth-form" style="margin-top: 1rem;" method="post" autocomplete="on">
         <label>Phone number <input type="tel" name="phone" value="${escapeHtml(defaultPhone)}" autocomplete="tel" inputmode="tel" placeholder="+20 10 0000 0000" required minlength="8" maxlength="20" /></label>
+        ${renderUniversityCollegeFields({ idPrefix: "complete-profile", universityId: defaultUniversityId, college: defaultCollege })}
         <div class="form-row">
           <label>Year
             <select name="academicYear" id="complete-profile-year" required aria-required="true">
@@ -25124,7 +25545,7 @@ function renderCompleteProfile() {
             </select>
           </label>
         </div>
-        <div class="signup-course-field">
+        <div class="signup-course-field" data-mcq-subjects-field>
           <p class="signup-course-label">MCQ Subjects for selected year/semester</p>
           <div id="complete-profile-course-options" class="signup-course-grid">
             ${courses
@@ -25140,7 +25561,7 @@ function renderCompleteProfile() {
           </div>
           <small id="complete-profile-course-help" class="subtle">${escapeHtml(courses.length ? `${courses.length} course(s) available for this year/semester. Choose one or more.` : "Choose year and semester first.")}</small>
         </div>
-        <div class="stack">
+        <div class="stack" data-mcq-subjects-field>
           <button class="btn ghost" type="button" id="complete-profile-select-all-courses">Select all</button>
           <button class="btn ghost" type="button" id="complete-profile-clear-courses">Clear</button>
         </div>
@@ -25181,7 +25602,7 @@ function wireCompleteProfile() {
   };
 
   const getSelectedCompleteProfileCourses = () =>
-    Array.from(form.querySelectorAll("input[name='completeProfileCourses']:checked")).map((input) => input.value);
+    Array.from(form.querySelectorAll(areMcqSubjectFieldsHidden(form) ? "input[name='completeProfileCourses']" : "input[name='completeProfileCourses']:checked")).map((input) => input.value);
 
   const persistCompleteProfileDraft = () => {
     saveStudentOnboardingDraft({
@@ -25189,6 +25610,7 @@ function wireCompleteProfile() {
       academicYear: yearSelect?.value,
       academicSemester: semesterSelect?.value,
       selectedCourses: getSelectedCompleteProfileCourses(),
+      ...readUniversityCollegeSelection(form),
     }, currentUser, "complete-profile");
   };
 
@@ -25256,6 +25678,12 @@ function wireCompleteProfile() {
   renderCompleteProfileCourseOptions(preferredCourses, {
     explicitSelection: Array.isArray(savedDraft?.selectedCourses),
   });
+  wireUniversityCollegeFields(form, {
+    onChange: ({ ineligible }) => {
+      syncMcqSubjectFieldsForEligibility(form, ineligible);
+      persistCompleteProfileDraft();
+    },
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -25294,10 +25722,13 @@ function wireCompleteProfile() {
       toast("Choose at least one course for your enrollment.");
       return;
     }
+    const universitySelection = readUniversityCollegeSelection(form);
+    if (!universitySelection.universityId || !universitySelection.college) {
+      toast("Choose your university and college.");
+      return;
+    }
 
-    const users = getUsers();
-    const idx = users.findIndex((entry) => entry.id === current.id);
-    if (idx === -1) {
+    if (!getUsers().some((entry) => entry.id === current.id)) {
       toast("Account not found. Please log in again.");
       navigate("login");
       return;
@@ -25305,6 +25736,21 @@ function wireCompleteProfile() {
 
     setSubmitting(true);
     try {
+      // Written first and directly: RLS only lets a student set these while
+      // unapproved (or fill them once), and a refusal must stop the submit
+      // before the rest of the profile moves on without them.
+      const universitySave = await saveOwnUniversityCollege(current, universitySelection);
+      if (!universitySave.ok) {
+        toast(universitySave.message);
+        return;
+      }
+      const users = getUsers();
+      const idx = users.findIndex((entry) => entry.id === current.id);
+      if (idx === -1) {
+        toast("Account not found. Please log in again.");
+        navigate("login");
+        return;
+      }
       const autoApproved = shouldAutoApproveStudentAccess({
         role: "student",
         phone: normalizedPhone,
@@ -25323,6 +25769,8 @@ function wireCompleteProfile() {
       users[idx].academicYear = academicYear;
       users[idx].academicSemester = academicSemester;
       users[idx].assignedCourses = assignedCourses;
+      users[idx].universityId = universitySelection.universityId;
+      users[idx].college = universitySelection.college;
       users[idx].isApproved = nextApproved;
       users[idx].approvedAt = nextApproved ? users[idx].approvedAt || nowISO() : null;
       users[idx].approvedBy = nextApproved ? users[idx].approvedBy || AUTO_APPROVAL_ACTOR : null;
@@ -25405,7 +25853,7 @@ function renderNotifications() {
       const isRead = isNotificationReadByUser(notification, user);
       const bodyHtml = escapeHtml(notification.body || "").replaceAll("\n", "<br />");
       const timeAgo = getNotificationTimeAgo(notification.createdAt);
-      const destinationRoute = normalizeNotificationDestinationRoute(notification.targetRoute);
+      const destinationRoute = getVisibleNotificationDestinationRoute(notification, user);
       const notificationContent = `
         <div class="notification-card-head">
           <div class="notification-card-title-group">
@@ -25444,7 +25892,7 @@ function renderNotifications() {
 
   return `
     <section class="panel notifications-page-panel" id="student-notifications-section">
-      <button class="btn ghost notifications-back-btn" type="button" data-nav="dashboard">
+      <button class="btn ghost notifications-back-btn" type="button" data-nav="${isUserMcqAccessEnabled(user) ? "dashboard" : "app-launcher"}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width: 14px; height: 14px; margin-right: 4px; vertical-align: middle;">
           <line x1="19" y1="12" x2="5" y2="12"></line>
           <polyline points="12 19 5 12 12 5"></polyline>
@@ -29669,6 +30117,18 @@ function renderProfile() {
   const queue = load(STORAGE_KEYS.incorrectQueue, {})[user.id] || [];
   const isGoogleAuthUser = getAuthProviderFromUser(user) === "google";
   const publicUserId = Number(user?.publicUserId || user?.public_user_id) || null;
+  const isStudent = user.role === "student";
+  const canOpenMcqBank = !isStudent || isUserMcqAccessEnabled(user);
+  if (isStudent) {
+    ensureUniversitiesLoaded(() => {
+      if (state.route === "profile") {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+    });
+  }
+  const universityLabel = isStudent ? getUniversityDisplayName(user.universityId) : "";
+  const collegeLabel = isStudent ? getCollegeLabel(user.college) : "";
 
   return `
     <section class="panel">
@@ -29705,15 +30165,21 @@ function renderProfile() {
           <button class="btn" type="submit">Save changes</button>
         </form>
         <article class="card">
+          ${canOpenMcqBank ? `
           <h4>Study Queue</h4>
           <p><b>Incorrect queue size:</b> ${queue.length}</p>
           <p class="subtle">Use source = Incorrect when creating blocks to target weak items.</p>
-          <hr />
+          <hr />` : "<h4>Account details</h4>"}
           <p><b>Role:</b> ${escapeHtml(user.role)}</p>
-          ${user.role === "student" ? `<p><b>Year/Semester:</b> ${normalizeAcademicYearOrNull(user.academicYear) ?? "-"} / ${normalizeAcademicSemesterOrNull(user.academicSemester) ?? "-"}</p>` : ""}
+          ${isStudent ? `<p><b>University:</b> ${escapeHtml(universityLabel || "-")}</p>` : ""}
+          ${isStudent ? `<p><b>College:</b> ${escapeHtml(collegeLabel || "-")}</p>` : ""}
+          ${isStudent ? `<p><b>Year/Semester:</b> ${normalizeAcademicYearOrNull(user.academicYear) ?? "-"} / ${normalizeAcademicSemesterOrNull(user.academicSemester) ?? "-"}</p>` : ""}
           <p><b>Phone:</b> ${escapeHtml(user.phone || "-")}</p>
           <p><b>Access approved:</b> ${isUserAccessApproved(user) ? "Yes" : "Pending admin approval"}</p>
-          <p><b>Assigned MCQ subjects:</b> ${escapeHtml((user.assignedCourses || []).join(", "))}</p>
+          ${canOpenMcqBank
+    ? `<p><b>Assigned MCQ subjects:</b> ${escapeHtml((user.assignedCourses || []).join(", "))}</p>`
+    : `<p class="subtle">${escapeHtml(getMcqAccessBlockedMessage(user))}</p>`}
+          ${isStudent ? '<p class="subtle">To change your university or college, contact the admin.</p>' : ""}
           <p><b>Email verified:</b> ${user.verified ? "Yes" : "No"}</p>
         </article>
       </div>
@@ -30726,7 +31192,7 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
   const mcqAccessButton = row.querySelector("[data-action='toggle-user-mcq-access']");
   if (mcqAccessButton) {
     const isBusy = mcqAccessButton.dataset.busy === "1";
-    mcqAccessButton.disabled = isBusy || account.role === "admin";
+    mcqAccessButton.disabled = isBusy || account.role === "admin" || isAdminUserMcqIneligible(account);
     mcqAccessButton.setAttribute("aria-checked", mcqAccessEnabled ? "true" : "false");
     if (!isBusy) {
       mcqAccessButton.innerHTML = renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled);
@@ -31103,6 +31569,235 @@ function renderAdminAgentsSection() {
   `;
 }
 
+// University administration. The list students pick from at sign-up, and the
+// switch that decides whether a university offers the MCQ Bank. Every write
+// goes straight to public.universities (admin-only RLS) and is followed by a
+// fresh read; nothing is merged into the cached list locally.
+function newAdminUniversityDraft() {
+  return { id: "", name: "", name_ar: "", sort_order: 100, is_active: true, mcq_bank_available: false };
+}
+
+function refreshAdminUniversitiesView() {
+  if (state.route === "admin" && state.adminPage === "universities") {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+function countStudentsAtUniversity(universityId) {
+  return getUsers().filter((entry) => entry?.role === "student" && entry.universityId === universityId).length;
+}
+
+function confirmUniversityMcqChange(university, nextAvailable) {
+  const name = String(university?.name || "this university");
+  return window.confirm(nextAvailable
+    ? `Offer the MCQ Bank at ${name}?\n\nEvery Medicine student at ${name} gets MCQ Bank access straight away. Students in other colleges are not affected.`
+    : `Turn off the MCQ Bank at ${name}?\n\nEvery student at ${name} loses MCQ Bank access straight away. They keep Video Courses.`);
+}
+
+function renderAdminUniversitiesSection() {
+  if (!state.universitiesLoadedAt && !state.universitiesLoading && !state.universitiesError) {
+    loadUniversities().then(refreshAdminUniversitiesView);
+  }
+  const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving);
+  const draft = state.adminUniversityDraft;
+  const rows = getCachedUniversities().map((university) => {
+    const students = countStudentsAtUniversity(university.id);
+    return `<tr data-university-id="${escapeHtml(university.id)}">
+      <td><b>${escapeHtml(university.name)}</b>${university.name_ar ? `<br><small dir="rtl" lang="ar">${escapeHtml(university.name_ar)}</small>` : ""}</td>
+      <td>${escapeHtml(String(university.sort_order))}</td>
+      <td><span class="badge ${university.is_active ? "good" : "neutral"}">${university.is_active ? "Shown" : "Hidden"}</span></td>
+      <td><span class="badge ${university.mcq_bank_available ? "good" : "neutral"}">${university.mcq_bank_available ? "Available" : "Not offered"}</span></td>
+      <td>${escapeHtml(String(students))}</td>
+      <td><div class="admin-popup-actions">
+        <button type="button" class="btn ghost admin-btn-sm" data-university-edit="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>Edit</button>
+        <button type="button" class="btn ghost admin-btn-sm" data-university-toggle-active="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>${university.is_active ? "Hide from sign-up" : "Show at sign-up"}</button>
+        <button type="button" class="btn ghost admin-btn-sm" data-university-toggle-mcq="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>${university.mcq_bank_available ? "Turn off MCQ Bank" : "Offer MCQ Bank"}</button>
+        <button type="button" class="btn danger admin-btn-sm" data-university-delete="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>Delete</button>
+      </div></td>
+    </tr>`;
+  }).join("");
+  const emptyRow = state.universitiesLoading
+    ? "Loading universities…"
+    : state.universitiesError ? "Universities could not be loaded." : "No universities yet. Add the first one.";
+  return `<section class="card admin-section" id="admin-universities-section">
+    <div class="flex-between"><div><h3>Universities</h3>
+      <p class="subtle">The list students choose from when they create an account. The MCQ Bank is only offered to <b>Medicine</b> students at universities where it is available; everyone else gets Video Courses only. The database applies this automatically.</p></div>
+      <div class="admin-popup-actions">
+        <button type="button" class="btn ghost" data-university-refresh ${busy ? "disabled" : ""}>${state.universitiesLoading ? "Loading…" : "Refresh"}</button>
+        <button type="button" class="btn" data-university-new ${busy ? "disabled" : ""}>Add university</button>
+      </div></div>
+    ${state.universitiesError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.universitiesError)}</div>` : ""}
+    <div class="table-wrap"><table><thead><tr><th>University</th><th>Sort</th><th>Sign-up</th><th>MCQ Bank</th><th>Students</th><th>Actions</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="6">${escapeHtml(emptyRow)}</td></tr>`}</tbody></table></div>
+    <p class="subtle">Hidden universities disappear from sign-up but keep their students. A university that still has students cannot be deleted; hide it instead.</p>
+    ${draft ? `<form id="admin-university-form" class="admin-university-editor"><h3>${draft.id ? "Edit university" : "Add university"}</h3>
+      <fieldset ${busy ? "disabled" : ""}>
+      <div class="form-row">
+        <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" /></label>
+        <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
+      </div>
+      <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
+      <p class="subtle">Lower numbers appear first in the sign-up list.</p>
+      <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
+      <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
+      <div class="admin-popup-actions"><button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save university"}</button>
+      <button class="btn ghost" type="button" data-university-cancel>Close editor</button></div>
+      </fieldset></form>` : ""}
+  </section>`;
+}
+
+function captureAdminUniversityDraft(form) {
+  const draft = state.adminUniversityDraft;
+  if (!draft || !form) return;
+  draft.name = form.elements.name.value;
+  draft.name_ar = form.elements.name_ar.value;
+  draft.sort_order = form.elements.sort_order.value;
+  draft.is_active = form.elements.is_active.checked;
+  draft.mcq_bank_available = form.elements.mcq_bank_available.checked;
+}
+
+// Runs one write, then re-reads the list (and, when MCQ availability moved,
+// every profile, since the database re-decided mcq_access_enabled for them).
+async function runAdminUniversityMutation(action, options = {}) {
+  if (state.adminUniversitySaving) return false;
+  const client = getRelationalClient();
+  if (!client || getCurrentUser()?.role !== "admin") {
+    toast("An active admin session is required.");
+    return false;
+  }
+  state.adminUniversitySaving = true;
+  refreshAdminUniversitiesView();
+  let ok = false;
+  try {
+    await action(client);
+    ok = true;
+  } catch (error) {
+    console.warn("University change failed.", error?.message || error);
+    toast(getUniversitiesUtils()?.describeUniversityError(error) || "Could not save the university.");
+  } finally {
+    await loadUniversities({ force: true });
+    if (ok && options.refreshProfiles) {
+      await hydrateRelationalProfiles(getCurrentUser()).catch((error) => {
+        console.warn("Could not refresh profiles after an MCQ availability change.", error?.message || error);
+      });
+    }
+    state.adminUniversitySaving = false;
+    refreshAdminUniversitiesView();
+  }
+  return ok;
+}
+
+function wireAdminUniversities() {
+  const section = appEl.querySelector("#admin-universities-section");
+  if (!section) return;
+  const form = section.querySelector("#admin-university-form");
+  const capture = () => captureAdminUniversityDraft(form);
+  const findUniversity = (id) => getCachedUniversities().find((entry) => entry.id === id) || null;
+  section.querySelector("[data-university-refresh]")?.addEventListener("click", async () => {
+    capture();
+    const loading = loadUniversities({ force: true });
+    refreshAdminUniversitiesView();
+    await loading;
+    refreshAdminUniversitiesView();
+  });
+  section.querySelector("[data-university-new]")?.addEventListener("click", () => {
+    if (state.adminUniversityDraft && !window.confirm("Discard the unsaved changes in the editor?")) return;
+    state.adminUniversityDraft = newAdminUniversityDraft();
+    refreshAdminUniversitiesView();
+  });
+  section.querySelector("[data-university-cancel]")?.addEventListener("click", () => {
+    state.adminUniversityDraft = null;
+    refreshAdminUniversitiesView();
+  });
+  section.querySelectorAll("[data-university-edit]").forEach((button) => button.addEventListener("click", () => {
+    const university = findUniversity(button.getAttribute("data-university-edit"));
+    if (!university) return;
+    if (state.adminUniversityDraft && !window.confirm("Discard the unsaved changes in the editor?")) return;
+    state.adminUniversityDraft = {
+      id: university.id,
+      name: university.name,
+      name_ar: university.name_ar || "",
+      sort_order: university.sort_order,
+      is_active: university.is_active,
+      mcq_bank_available: university.mcq_bank_available,
+    };
+    refreshAdminUniversitiesView();
+  }));
+  section.querySelectorAll("[data-university-toggle-active]").forEach((button) => button.addEventListener("click", () => {
+    capture();
+    const university = findUniversity(button.getAttribute("data-university-toggle-active"));
+    if (!university) return;
+    runAdminUniversityMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("universities").update({ is_active: !university.is_active }).eq("id", university.id).select("id"),
+        "University update timed out.",
+      );
+      if (!rows?.length) throw new Error("University was not changed");
+      toast(university.is_active ? `${university.name} is hidden from sign-up.` : `${university.name} is shown at sign-up.`);
+    });
+  }));
+  section.querySelectorAll("[data-university-toggle-mcq]").forEach((button) => button.addEventListener("click", () => {
+    capture();
+    const university = findUniversity(button.getAttribute("data-university-toggle-mcq"));
+    if (!university) return;
+    const nextAvailable = !university.mcq_bank_available;
+    if (!confirmUniversityMcqChange(university, nextAvailable)) return;
+    runAdminUniversityMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("universities").update({ mcq_bank_available: nextAvailable }).eq("id", university.id).select("id"),
+        "University update timed out.",
+      );
+      if (!rows?.length) throw new Error("University was not changed");
+      toast(nextAvailable ? `MCQ Bank offered at ${university.name}.` : `MCQ Bank turned off at ${university.name}.`);
+    }, { refreshProfiles: true });
+  }));
+  section.querySelectorAll("[data-university-delete]").forEach((button) => button.addEventListener("click", () => {
+    capture();
+    const university = findUniversity(button.getAttribute("data-university-delete"));
+    if (!university) return;
+    if (!window.confirm(`Delete ${university.name}?\n\nThis cannot be undone. A university that still has students cannot be deleted; hide it from sign-up instead.`)) return;
+    runAdminUniversityMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("universities").delete().eq("id", university.id).select("id"),
+        "University delete timed out.",
+      );
+      if (!rows?.length) throw new Error("University was not deleted");
+      if (state.adminUniversityDraft?.id === university.id) state.adminUniversityDraft = null;
+      toast(`${university.name} deleted.`);
+    });
+  }));
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    capture();
+    const draft = state.adminUniversityDraft;
+    const utils = getUniversitiesUtils();
+    if (!draft || !utils || state.adminUniversitySaving) return;
+    const validation = utils.validateUniversityDraft(draft);
+    if (!validation.ok) {
+      toast(validation.errors.join(" "));
+      return;
+    }
+    const existing = draft.id ? findUniversity(draft.id) : null;
+    const mcqChanged = existing
+      ? existing.mcq_bank_available !== validation.payload.mcq_bank_available
+      : validation.payload.mcq_bank_available;
+    if (existing && mcqChanged && !confirmUniversityMcqChange(existing, validation.payload.mcq_bank_available)) return;
+    const saved = await runAdminUniversityMutation(async (client) => {
+      const query = existing
+        ? client.from("universities").update(validation.payload).eq("id", existing.id)
+        : client.from("universities").insert(validation.payload);
+      const rows = await runRelationalQueryWithTimeout(query.select("id"), "University save timed out.");
+      if (!rows?.length) throw new Error("University was not saved");
+      toast(existing ? "University saved." : "University added.");
+    }, { refreshProfiles: Boolean(existing && mcqChanged) });
+    if (saved) {
+      state.adminUniversityDraft = null;
+      refreshAdminUniversitiesView();
+    }
+  });
+}
+
 // Mobile pop-up administration. All writes use the authenticated browser client.
 function getAppPopupsUtils() {
   return typeof globalThis !== "undefined" ? globalThis.MedBankAppPopups : null;
@@ -31435,6 +32130,7 @@ function renderAdminDataSidebarNav(activeAdminPage) {
   const items = [
     ["dashboard", "Dashboard"],
     ["users", "Users"],
+    ["universities", "Universities"],
     ["mcq-subjects", "MCQ Subjects"],
     ["questions", "Questions"],
     ["bulk-import", "Bulk Import"],
@@ -31549,6 +32245,14 @@ function renderAdmin() {
   const activeCoursePlatformSection = getAdminCoursePlatformSection();
   if (activeAdminPage === "users" || activeAdminPage === "mcq-subjects" || activeAdminPage === "notifications") {
     syncUsersWithCurriculum();
+  }
+  if (activeAdminPage === "users") {
+    ensureUniversitiesLoaded(() => {
+      if (state.route === "admin" && state.adminPage === "users") {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+    });
   }
 
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
@@ -31924,6 +32628,7 @@ function renderAdmin() {
                   ${authProviderIcon}
                 </small><br />
                 <small class="admin-account-public-id">MedBank ID: <b>${escapeHtml(String(account.publicUserId || account.public_user_id || "Pending"))}</b></small><br />
+                ${account.role === "student" ? `${renderAdminUserUniversitySummary(account)}<br />` : ""}
                 ${missingApprovalFields.length ? `<small class="admin-account-approval-gap" title="Auto-approval and Approve all pending both skip this account until these are filled in.">Not auto-approved &mdash; needs ${escapeHtml(formatMissingApprovalFieldList(missingApprovalFields))}</small><br />` : ""}
                 <label class="admin-inline-phone-field">
                   <input
@@ -31976,10 +32681,11 @@ function renderAdmin() {
                 <button class="btn ghost admin-btn-sm ${saveBusy ? "is-loading" : ""}" data-action="save-user-enrollment" ${saveBusy ? "disabled" : ""}>${renderAdminUserEnrollmentSaveButtonContent({ busy: saveBusy, mode: saveMode || "manual" })}</button>
                 ${resetPasswordAction}
                 ${account.role === "student" ? '<button class="btn ghost admin-btn-sm" type="button" data-action="view-user-device">Device</button>' : ""}
+                ${account.role === "student" ? '<button class="btn ghost admin-btn-sm" type="button" data-action="edit-user-university">University</button>' : ""}
                 <button class="btn ghost admin-btn-sm" data-action="toggle-user-approval" ${account.role === "admin" ? "disabled" : ""}>
                   ${isApproved ? "Suspend" : "Approve"}
                 </button>
-                <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-mcq-access" role="switch" aria-checked="${mcqAccessEnabled ? "true" : "false"}" ${account.role === "admin" ? "disabled" : ""}>
+                <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-mcq-access" role="switch" aria-checked="${mcqAccessEnabled ? "true" : "false"}" ${account.role === "admin" || isAdminUserMcqIneligible(account) ? "disabled" : ""} ${isAdminUserMcqIneligible(account) ? 'title="Not MCQ-eligible: set a Medicine college at a university that offers the MCQ Bank first."' : ""}>
                   ${renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled)}
                 </button>
                 <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-courses-access" role="switch" aria-checked="${coursesAccessEnabled ? "true" : "false"}" ${account.role === "admin" ? "disabled" : ""}>
@@ -33079,6 +33785,10 @@ function renderAdmin() {
     pageContent = renderAdminPopupsSection();
   }
 
+  if (activeAdminPage === "universities") {
+    pageContent = renderAdminUniversitiesSection();
+  }
+
   if (activeAdminPage === "ai-agents") {
     pageContent = renderAdminAgentsSection();
   }
@@ -33457,6 +34167,7 @@ function renderAdminCourseTopicControls(course) {
 
 function wireAdmin() {
   wireAdminPopups();
+  wireAdminUniversities();
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
 
   appEl.querySelectorAll("[data-action='admin-page']").forEach((button) => {
@@ -36704,6 +37415,18 @@ function wireAdmin() {
     });
   });
 
+  appEl.querySelectorAll("[data-action='edit-user-university']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.closest("tr[data-user-id]")?.getAttribute("data-user-id");
+      const target = userId ? getUsers().find((entry) => entry.id === userId) : null;
+      if (!target) {
+        toast("Account not found.");
+        return;
+      }
+      openAdminUserUniversityDialog(target);
+    });
+  });
+
   appEl.querySelectorAll("[data-action='view-user-device']").forEach((button) => {
     button.addEventListener("click", () => {
       const userId = button.closest("tr[data-user-id]")?.getAttribute("data-user-id");
@@ -39419,8 +40142,25 @@ function getNotificationById(notificationId) {
   )) || null;
 }
 
+// MCQ destinations are MCQ UI: a student without the MCQ Bank sees the
+// notification without an "Open MCQ ..." link, and opening it stays put.
+const MCQ_NOTIFICATION_DESTINATION_ROUTES = new Set(["dashboard", "create-test", "analytics"]);
+
+function getVisibleNotificationDestinationRoute(notification, user = getCurrentUser()) {
+  const route = normalizeNotificationDestinationRoute(notification?.targetRoute);
+  if (route && MCQ_NOTIFICATION_DESTINATION_ROUTES.has(route) && user?.role === "student" && !isUserMcqAccessEnabled(user)) {
+    return "";
+  }
+  return route;
+}
+
 async function openNotificationDestination(notification, user = getCurrentUser()) {
-  const targetRoute = normalizeNotificationDestinationRoute(notification?.targetRoute) || "notifications";
+  const rawTargetRoute = normalizeNotificationDestinationRoute(notification?.targetRoute);
+  if (rawTargetRoute && !getVisibleNotificationDestinationRoute(notification, user)) {
+    navigate("notifications");
+    return;
+  }
+  const targetRoute = rawTargetRoute || "notifications";
   if (targetRoute === "create-test") {
     if (!user || user.role !== "student" || !isUserMcqAccessEnabled(user)) {
       toast(getMcqAccessBlockedMessage());
@@ -48705,10 +49445,10 @@ function renderCoursesComingSoonPage() {
         <span class="maintenance-badge">Coming soon</span>
         <h2 class="title" style="margin-bottom: 0.4rem;">Video Courses are coming soon</h2>
         <p class="subtle" style="max-width: 560px; margin-left: auto; margin-right: auto;">
-          The Video Courses portal is being prepared by the admin team. MCQ Bank practice is still available.
+          The Video Courses portal is being prepared by the admin team.${isUserMcqAccessEnabled(getCurrentUser()) ? " MCQ Bank practice is still available." : ""}
         </p>
         <div class="stack" style="justify-content: center;">
-          <button class="btn" type="button" data-action="open-mcq-bank">Open MCQ Bank</button>
+          ${isUserMcqAccessEnabled(getCurrentUser()) ? '<button class="btn" type="button" data-action="open-mcq-bank">Open MCQ Bank</button>' : ""}
           <button class="btn ghost" type="button" data-nav="app-launcher">Back to Apps</button>
         </div>
       </div>
@@ -53355,6 +54095,226 @@ function openAdminUserDeviceDialog(account) {
   loadAdminUserDeviceIntoDialog(context);
 }
 
+// Admin: a student's university and college. Same shape as the device dialog
+// above - appended to body so the Users poll cannot close it, guarded by a
+// token, and always re-read from Supabase after a save. The row that comes back
+// (including the mcq_access_enabled the trigger decided) replaces the cached
+// fields; nothing is merged.
+let adminUserUniversityDialogToken = 0;
+
+function isAdminUserMcqIneligible(account) {
+  return account?.role === "student" && resolveUserMcqEligibility(account) === false;
+}
+
+function describeUniversityCollegePair(universityId, college) {
+  const universityName = getUniversityDisplayName(universityId) || "No university";
+  const collegeName = getCollegeLabel(college) || "No college";
+  return `${universityName} · ${collegeName}`;
+}
+
+function renderAdminUserUniversitySummary(account) {
+  const eligibility = resolveUserMcqEligibility(account);
+  const badge = eligibility === null
+    ? ""
+    : `<span class="badge ${eligibility ? "good" : "neutral"}" data-user-mcq-eligibility>${eligibility ? "MCQ-eligible" : "Not MCQ-eligible"}</span>`;
+  return `<small class="admin-account-university">${escapeHtml(describeUniversityCollegePair(account.universityId, account.college))} ${badge}</small>`;
+}
+
+function handleAdminUserUniversityDialogKeydown(event) {
+  if (event.key === "Escape") {
+    closeAdminUserUniversityDialog();
+  }
+}
+
+function closeAdminUserUniversityDialog() {
+  adminUserUniversityDialogToken += 1;
+  document.querySelectorAll("[data-admin-user-university-dialog='true']").forEach((node) => node.remove());
+  document.removeEventListener("keydown", handleAdminUserUniversityDialogKeydown);
+}
+
+function renderAdminUserUniversityForm(profile) {
+  const universityId = normalizeUniversityIdValue(profile?.university_id);
+  const college = normalizeCollegeValue(profile?.college);
+  const eligibility = resolveUserMcqEligibility({ role: "student", universityId, college });
+  const eligibilityText = eligibility === true
+    ? "Eligible for the MCQ Bank."
+    : eligibility === false
+      ? "Not eligible for the MCQ Bank. Video Courses only."
+      : "Eligibility could not be checked (the university list did not load).";
+  return `
+    <form class="admin-user-university-form" data-admin-user-university-form>
+      <label>University
+        <select name="universityId" required>${renderUniversitySelectOptions(universityId, { includeInactive: true })}</select>
+      </label>
+      <label>College
+        <select name="college" required>${renderCollegeSelectOptions(college)}</select>
+      </label>
+      <p class="admin-user-device-count">${escapeHtml(eligibilityText)}</p>
+      <p class="subtle">MCQ Bank access right now: <b>${profile?.mcq_access_enabled === true ? "on" : "off"}</b>. Moving a student to an eligible university and college turns it on; moving them out turns it off.</p>
+      <div class="admin-user-device-release">
+        <button class="btn admin-btn-sm" type="submit">Save</button>
+      </div>
+    </form>
+  `;
+}
+
+async function loadAdminUserUniversityIntoDialog(context) {
+  const token = adminUserUniversityDialogToken;
+  const body = document.querySelector("[data-admin-user-university-dialog='true'] [data-university-dialog-body]");
+  if (!body) return;
+  body.innerHTML = `<p class="subtle">Loading...</p>`;
+  const client = getRelationalClient();
+  if (!client || !isUuidValue(context.profileId)) {
+    body.innerHTML = `<p class="subtle">University details are only available for accounts stored in Supabase.</p>`;
+    return;
+  }
+  let profile = null;
+  let errorMessage = "";
+  try {
+    const [profileResult] = await Promise.all([
+      client.from("profiles").select("id,role,university_id,college,mcq_access_enabled").eq("id", context.profileId).maybeSingle(),
+      state.universitiesLoadedAt ? Promise.resolve(true) : loadUniversities(),
+    ]);
+    if (profileResult.error) {
+      errorMessage = profileResult.error.message || "Could not load this student's university.";
+    } else {
+      profile = profileResult.data || null;
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not load this student's university.";
+  }
+  if (token !== adminUserUniversityDialogToken) return;
+  if (errorMessage || !profile) {
+    body.innerHTML = `
+      <p class="subtle">${escapeHtml(errorMessage || "This account's profile was not found.")}</p>
+      <div class="admin-user-device-release">
+        <button class="btn ghost admin-btn-sm" type="button" data-action="retry-user-university">Try again</button>
+      </div>
+    `;
+    body.querySelector("[data-action='retry-user-university']")?.addEventListener("click", () => {
+      loadAdminUserUniversityIntoDialog(context);
+    });
+    return;
+  }
+  // Keep the Users table in step with what the server just said.
+  applyServerUniversityFieldsToLocalUser(context.profileId, profile);
+  refreshAdminUsersRowForProfile(context.profileId);
+  body.innerHTML = renderAdminUserUniversityForm(profile);
+  const form = body.querySelector("[data-admin-user-university-form]");
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveAdminUserUniversity(context, profile, form);
+  });
+}
+
+async function saveAdminUserUniversity(context, profile, form) {
+  const selection = readUniversityCollegeSelection(form);
+  if (!selection.universityId || !selection.college) {
+    toast("Choose a university and a college.");
+    return;
+  }
+  const wasEligible = resolveUserMcqEligibility({
+    role: "student",
+    universityId: normalizeUniversityIdValue(profile?.university_id),
+    college: normalizeCollegeValue(profile?.college),
+  });
+  const willBeEligible = resolveUserMcqEligibility({ role: "student", ...selection });
+  if (wasEligible === true && willBeEligible === false
+    && !window.confirm(`${context.name} will lose MCQ Bank access and keep Video Courses only. Continue?`)) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    toast("Supabase is not connected.");
+    return;
+  }
+  const token = adminUserUniversityDialogToken;
+  const submit = form.querySelector("button[type='submit']");
+  if (submit) {
+    submit.disabled = true;
+    submit.classList.add("is-loading");
+  }
+  let errorMessage = "";
+  try {
+    const rows = await runRelationalQueryWithTimeout(
+      client
+        .from("profiles")
+        .update({ university_id: selection.universityId, college: selection.college })
+        .eq("id", context.profileId)
+        .select("id"),
+      "Saving the university timed out.",
+    );
+    if (!rows?.length) {
+      errorMessage = "The profile was not changed.";
+    }
+  } catch (error) {
+    errorMessage = getUniversitiesUtils()?.describeUniversityError(error, "Could not save the university.")
+      || "Could not save the university.";
+  }
+  if (errorMessage) {
+    toast(errorMessage);
+    if (token === adminUserUniversityDialogToken && submit) {
+      submit.disabled = false;
+      submit.classList.remove("is-loading");
+    }
+    return;
+  }
+  toast("University and college saved.");
+  if (token === adminUserUniversityDialogToken) {
+    loadAdminUserUniversityIntoDialog(context);
+  }
+}
+
+function refreshAdminUsersRowForProfile(profileId) {
+  if (state.route !== "admin" || state.adminPage !== "users") return;
+  const account = getUsers().find((entry) => getUserProfileId(entry) === profileId);
+  const row = account ? appEl.querySelector(`tr[data-user-id="${CSS.escape(String(account.id))}"]`) : null;
+  if (!row) return;
+  const summary = row.querySelector(".admin-account-university");
+  if (summary) {
+    summary.outerHTML = renderAdminUserUniversitySummary(account);
+  }
+  patchAdminUserRowUi(row, account, getCurrentUser());
+}
+
+function openAdminUserUniversityDialog(account) {
+  closeAdminUserUniversityDialog();
+  const context = {
+    profileId: String(getUserProfileId(account) || "").trim(),
+    name: String(account.name || account.email || "This student").trim(),
+  };
+  const wrapper = document.createElement("div");
+  wrapper.className = "admin-enrollment-picker-modal admin-user-device-modal";
+  wrapper.dataset.adminUserUniversityDialog = "true";
+  wrapper.innerHTML = `
+    <button class="admin-enrollment-picker-backdrop" type="button" data-university-dialog-close aria-label="Close university"></button>
+    <section class="admin-enrollment-picker-card admin-user-device-card" role="dialog" aria-modal="true" aria-labelledby="admin-user-university-title">
+      <div class="admin-enrollment-picker-head">
+        <div>
+          <h4 id="admin-user-university-title">University and college</h4>
+          <p class="subtle">${escapeHtml(context.name)}</p>
+        </div>
+        <button class="icon-btn" type="button" data-university-dialog-close aria-label="Close university">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="admin-user-device-body" data-university-dialog-body aria-live="polite"></div>
+    </section>
+  `;
+  wrapper.addEventListener("click", (event) => {
+    if (event.target.closest("[data-university-dialog-close]")) {
+      closeAdminUserUniversityDialog();
+    }
+  });
+  document.body.appendChild(wrapper);
+  document.addEventListener("keydown", handleAdminUserUniversityDialogKeydown);
+  wrapper.querySelector(".icon-btn")?.focus();
+  loadAdminUserUniversityIntoDialog(context);
+}
+
 function removeAdminCourseEnrollmentPickerPortal() {
   document.querySelectorAll("[data-admin-course-enrollment-picker-portal='true']").forEach((node) => node.remove());
   document.body.classList.remove("is-admin-course-enrollment-picker-open");
@@ -54974,14 +55934,23 @@ function renderNativeStudentHome(user) {
   const sessionProgress = totalQuestions ? Math.round((currentQuestion / totalQuestions) * 100) : 0;
   const continueLearning = canOpenCourses ? loadContinueLearning() : null;
 
-  let continueCard = `
+  // MCQ UI is hidden, not disabled, for students without the MCQ Bank.
+  let continueCard = canOpenMcqBank ? `
     <article class="native-home-continue is-empty">
       <div class="native-home-continue-copy">
         <span class="native-home-overline">Ready when you are</span>
         <h3>Start a focused practice block</h3>
         <p>Choose a course, topic, and mode that fits today’s study goal.</p>
       </div>
-      <button class="btn" type="button" data-nav="create-test" ${canOpenMcqBank ? "" : "disabled"}>Start a test</button>
+      <button class="btn" type="button" data-nav="create-test">Start a test</button>
+    </article>` : `
+    <article class="native-home-continue is-empty">
+      <div class="native-home-continue-copy">
+        <span class="native-home-overline">Ready when you are</span>
+        <h3>Start learning</h3>
+        <p>Browse your Video Courses and pick up a lesson.</p>
+      </div>
+      ${canOpenCourses ? '<button class="btn" type="button" data-action="courses-home-tab" data-tab="dashboard">Browse courses</button>' : ""}
     </article>`;
 
   if (activeSession && totalQuestions) {
@@ -55026,7 +55995,7 @@ function renderNativeStudentHome(user) {
 
       ${continueCard}
 
-      <section class="native-home-streak" aria-label="Study progress">
+      ${canOpenMcqBank ? `<section class="native-home-streak" aria-label="Study progress">
         <div class="native-home-ring" style="--native-ring-value:${Math.max(0, Math.min(100, Number(stats.accuracy || 0)))}">
           <strong>${Math.max(0, Math.round(Number(stats.accuracy || 0)))}%</strong>
           <span>accuracy</span>
@@ -55036,17 +56005,17 @@ function renderNativeStudentHome(user) {
           <h3>${Math.max(0, Number(stats.streak || 0))} perfect-test streak</h3>
           <p>${Math.max(0, Number(stats.totalAnswered || 0))} questions answered</p>
         </div>
-      </section>
+      </section>` : ""}
 
       <section class="native-home-section">
         <div class="native-section-heading"><h2>Quick actions</h2></div>
         <div class="native-quick-grid">
-          <button type="button" data-nav="create-test" ${canOpenMcqBank ? "" : "disabled"}>
+          ${canOpenMcqBank ? `<button type="button" data-nav="create-test">
             <span class="is-primary">${studentSvgIcon("create")}</span><b>Start Test</b><small>Build a practice block</small>
           </button>
           <button type="button" data-action="dash-review-incorrect" ${incorrectCount ? "" : "disabled"}>
             <span class="is-danger">${studentSvgIcon("review")}</span><b>Review Incorrect</b><small>${incorrectCount ? `${incorrectCount} ready to retry` : "No saved questions"}</small>
-          </button>
+          </button>` : ""}
           <button type="button" data-action="courses-home-tab" data-tab="dashboard" ${canOpenCourses ? "" : "disabled"}>
             <span class="is-course">${studentSvgIcon("bank")}</span><b>Browse Courses</b><small>Continue your lessons</small>
           </button>
@@ -55084,8 +56053,8 @@ function renderAppLauncher() {
           <p class="subtle">Select a portal to begin your learning session</p>
         </div>
         
-        <div class="app-launcher-grid">
-          <button class="card app-launcher-card ${canOpenMcqBank ? "" : "is-disabled"}" type="button" ${canOpenMcqBank ? 'data-action="open-mcq-bank"' : 'data-action="open-mcq-bank" aria-disabled="true"'}>
+        <div class="app-launcher-grid ${canOpenMcqBank ? "" : "is-single"}">
+          ${canOpenMcqBank ? `<button class="card app-launcher-card" type="button" data-action="open-mcq-bank">
             <div class="app-launcher-icon-wrapper is-mcq">
               <div class="icon-pulse-ring"></div>
               <svg class="launcher-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -55094,9 +56063,9 @@ function renderAppLauncher() {
               </svg>
             </div>
             <h3>MCQ Bank</h3>
-            <p>${canOpenMcqBank ? "Practice questions, customize mock tests, and track your performance trends." : "MCQ Bank is disabled for this account. Video Courses access is managed separately."}</p>
-            <span class="app-launcher-badge">${canOpenMcqBank ? 'Practice Portal <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>' : "No MCQ access"}</span>
-          </button>
+            <p>Practice questions, customize mock tests, and track your performance trends.</p>
+            <span class="app-launcher-badge">Practice Portal <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </button>` : ""}
           
           <button class="card app-launcher-card ${coursesBlocked ? "is-disabled" : ""}" ${coursesBlocked ? 'data-action="courses-coming-soon-notice" aria-disabled="true"' : 'data-action="courses-home-tab" data-tab="dashboard"'} type="button">
             <div class="app-launcher-icon-wrapper is-courses">
@@ -55107,7 +56076,7 @@ function renderAppLauncher() {
               </svg>
             </div>
             <h3>Video Courses</h3>
-            <p>${coursesBlocked ? (coursesBlockedByAccess ? "Video Courses access is disabled for this account. Contact the admin if you need this portal enabled." : "The Video Courses portal is being prepared. MCQ Bank remains available.") : "Browse interactive syllabus modules, access lessons, and view learning resources."}</p>
+            <p>${coursesBlocked ? (coursesBlockedByAccess ? "Video Courses access is disabled for this account. Contact the admin if you need this portal enabled." : `The Video Courses portal is being prepared.${canOpenMcqBank ? " MCQ Bank remains available." : ""}`) : "Browse interactive syllabus modules, access lessons, and view learning resources."}</p>
             <span class="app-launcher-badge">${coursesBlocked ? (coursesBlockedByAccess ? "No Video Courses access" : "Coming soon") : "Learning Portal"} ${coursesBlocked ? "" : '<svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>'}</span>
           </button>
         </div>

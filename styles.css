@@ -20579,3 +20579,68 @@ small.admin-account-approval-gap {
   border-color: var(--brand);
   color: #fff;
 }
+
+/* University + college (MCQ Bank eligibility). The note sits inside
+   .auth-public-card, which stays light in every theme, so like .auth-notice it
+   uses fixed light-surface colours rather than theme tokens. */
+.mcq-eligibility-note {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(16, 42, 67, 0.16);
+  border-left: 3px solid #177e89;
+  border-radius: var(--radius-md);
+  background: rgba(23, 126, 137, 0.08);
+  color: #102a43;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.university-load-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+/* `hidden` must win over the flex/grid display these blocks otherwise get. */
+.mcq-eligibility-note[hidden],
+.university-load-error[hidden],
+[data-mcq-subjects-field][hidden] {
+  display: none !important;
+}
+
+.app-launcher-grid.is-single {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 560px;
+  margin-inline: auto;
+}
+
+.admin-account-university {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+}
+
+.admin-university-editor {
+  margin-top: 2rem;
+  max-width: 720px;
+}
+
+.admin-university-editor fieldset,
+.admin-user-university-form {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.admin-university-editor fieldset:disabled { opacity: 0.65; }
+.admin-university-editor label,
+.admin-user-university-form label { display: grid; gap: 0.4rem; }
+.admin-university-editor label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 0.5rem; }
+.admin-university-editor input[type="checkbox"] { width: auto; }

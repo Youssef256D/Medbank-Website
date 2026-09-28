@@ -189,6 +189,68 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-28 — University + college decide MCQ Bank access
+Backend: migration `20260928083023_universities_and_college_mcq_eligibility.sql`
+(authored with the Flutter app; already live — **do not re-apply**). Only students
+whose university has `mcq_bank_available` AND whose college is `medicine` may use
+the MCQ Bank; a trigger keeps `profiles.mcq_access_enabled` false for everyone
+else, and re-decides a university's students when its flag changes. Static
+cache bust: `2026-09-28.03-local`.
+
+1. **New served file `universities-utils.js`** (UMD, `window.MedBankUniversities`,
+   loaded by `bootstrap.js` before `main.js`, precached in `sw.js`, linted, tested
+   in `tests/universities-utils.test.js`): college vocabulary (must equal the
+   `profiles_college_ck` list — a test parses the migration), eligibility,
+   draft validation, friendly error mapping (23503 → "hide it instead", 23505,
+   `UNIVERSITY_NOT_AVAILABLE`, 42501).
+2. **Local user fields `universityId` / `college`** are read from every profile
+   select (all five now include `university_id,college`). `null` = read and
+   empty; absent = not read yet. Only a known null makes
+   `isStudentProfileCompletionRequired` send the student to complete-profile
+   (or the Google onboarding form). This is deliberately **not** part of
+   `hasCompleteStudentProfile`, which feeds approval — a missing university
+   must prompt, never suspend. They are never written through the local-cache
+   profile sync; only direct `profiles.update` calls write them, and the
+   returned row replaces the cached values.
+3. **Sign-up / onboarding / complete-profile** require University + College.
+   Metadata carries `university_id` + `college` for the auth trigger; the Google
+   onboarding and complete-profile forms also write them directly first (a
+   refusal stops the submit). When the chosen pair is not eligible the note
+   "The MCQ Bank is available for Medicine students at October 6 University…"
+   appears and the MCQ subject picker is hidden (all term subjects are enrolled,
+   as "Select all" would).
+4. **MCQ UI is hidden, not disabled** for ineligible students:
+   `isUserMcqAccessEnabled` also returns false when eligibility is *known* false
+   (unknown defers to the server flag). Web launcher drops the MCQ card; native
+   home drops Start test / Review incorrect / accuracy ring; the top nav on
+   Profile/Notifications shows Apps + Video Courses instead of MCQ tabs; MCQ
+   notification destinations lose their "Open …" link; the courses coming-soon
+   page drops "Open MCQ Bank". Profile shows University and College.
+5. **Admin → Universities** page (`renderAdminUniversitiesSection` /
+   `wireAdminUniversities`, placed just above the pop-up admin): add, edit
+   name / Arabic name / sort order, show/hide at sign-up, offer/turn off MCQ Bank
+   (confirm explains the effect), delete (FK error → friendly message). Every
+   write re-reads the list; an MCQ availability change also re-runs
+   `hydrateRelationalProfiles` because the database changed many profiles.
+6. **Admin → Users**: student rows show "University · College" and an
+   MCQ-eligible badge; a **University** button opens a dialog (same pattern as
+   the Device dialog: body-level, token-guarded, re-read after save). The MCQ
+   switch is disabled for known-ineligible students, since the trigger would
+   refuse it anyway.
+7. **Known backend gap (not fixed here — no DB changes in this task):** the
+   `universities_select` policy is `is_active or (select private.is_admin_user())`.
+   The initplan runs for signed-out visitors too, and `anon` cannot execute
+   `private.is_admin_user`, so an anonymous read fails with
+   `42501 permission denied for function is_admin_user` and the sign-up list
+   shows "No universities available" plus a retry. Needs a separate
+   `for select to anon using (is_active)` policy (or an execute grant).
+8. Admin-created users (Add new user) get no university/college; they are
+   prompted on first sign-in, or an admin sets it from the Users row.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `bootstrap.js`, `sw.js`,
+`package.json`, `universities-utils.js` (new), `tests/universities-utils.test.js`
+(new), `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-28 — Video Course lessons published by default; drafts visible
 Reported as "a new lesson doesn't appear" and "I forget to tick Publish".
 Students only see a lesson when the lesson **and** its module are
