@@ -14,7 +14,7 @@ hosted Supabase is the source of truth.
   exemption) from the same **Device** dialog. Exempt students get the same
   "allowed, no limit" answer admins and creators already get, so the mobile app
   needs no update. `teststudent@medbank.com` is exempted by the migration.
-- Migration `20260928120000_user_device_exemptions.sql` (rollback provided):
+- Migration `20260928010154_user_device_exemptions.sql` (rollback provided):
   new admin-only `user_device_exemptions` table + the device gate checks it.
 
 ### 2026-09-28 — Admin Users: registered device

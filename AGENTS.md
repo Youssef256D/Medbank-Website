@@ -211,9 +211,15 @@ Follow-up to the registered-device entry below. Static cache bust:
    exemption read is shown as an error with no toggle, never as "not exempt".
    A duplicate insert (23505) counts as success.
 5. `teststudent@medbank.com` is exempted by the migration itself.
+6. **Applied to production 2026-09-28** (version `20260928010154`) after
+   confirming the live gate body was byte-identical to `20260927145744`.
+   Verified in a rollback-only block: the test student claiming a brand-new
+   device gets `allowed` / limit null; a normal student's first device is
+   `allowed` and a second is `another_device_active`; a student reads 0
+   exemption rows and cannot insert one (RLS); the admin reads 1.
 
 **Files touched:** `main.js`, `styles.css`, `index.html`,
-`supabase/migrations/20260928120000_user_device_exemptions.sql`, its rollback,
+`supabase/migrations/20260928010154_user_device_exemptions.sql`, its rollback,
 `CHANGELOG.md`, `AGENTS.md`.
 
 ### 2026-09-28 — Admin Users: registered device (one device per student)

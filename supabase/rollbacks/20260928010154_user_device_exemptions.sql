@@ -1,4 +1,4 @@
--- Rollback for 20260928120000_user_device_exemptions.sql:
+-- Rollback for 20260928010154_user_device_exemptions.sql:
 -- restores the gate exactly as shipped in 20260927145744, then drops the table.
 
 create or replace function private.user_device_gate(
