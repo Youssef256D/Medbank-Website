@@ -31975,6 +31975,7 @@ function renderAdmin() {
               <div class="admin-user-actions">
                 <button class="btn ghost admin-btn-sm ${saveBusy ? "is-loading" : ""}" data-action="save-user-enrollment" ${saveBusy ? "disabled" : ""}>${renderAdminUserEnrollmentSaveButtonContent({ busy: saveBusy, mode: saveMode || "manual" })}</button>
                 ${resetPasswordAction}
+                ${account.role === "student" ? '<button class="btn ghost admin-btn-sm" type="button" data-action="view-user-device">Device</button>' : ""}
                 <button class="btn ghost admin-btn-sm" data-action="toggle-user-approval" ${account.role === "admin" ? "disabled" : ""}>
                   ${isApproved ? "Suspend" : "Approve"}
                 </button>
@@ -36700,6 +36701,18 @@ function wireAdmin() {
           button.textContent = nextEnabled ? "Video Courses Off" : "Video Courses On";
         }
       }
+    });
+  });
+
+  appEl.querySelectorAll("[data-action='view-user-device']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.closest("tr[data-user-id]")?.getAttribute("data-user-id");
+      const target = userId ? getUsers().find((entry) => entry.id === userId) : null;
+      if (!target) {
+        toast("Account not found.");
+        return;
+      }
+      openAdminUserDeviceDialog(target);
     });
   });
 
@@ -53052,6 +53065,181 @@ function getAdminCourseEnrollmentPickerPortalCourseId() {
   }
   const selectedCourseId = String(state.adminCourseBuilderCourseId || "").trim();
   return isUuidValue(selectedCourseId) ? selectedCourseId : "";
+}
+
+// Registered device: one app installation per student account (migration
+// 20260927145744, enforced by the mobile app's claim/check RPCs, which the
+// website must never call). Admins may only read and release. The dialog lives
+// outside render() on purpose: the Users page re-renders on every admin poll,
+// and the device row is always re-read from Supabase, never cached in state.
+let adminUserDeviceDialogToken = 0;
+
+function handleAdminUserDeviceDialogKeydown(event) {
+  if (event.key === "Escape") {
+    closeAdminUserDeviceDialog();
+  }
+}
+
+function closeAdminUserDeviceDialog() {
+  adminUserDeviceDialogToken += 1;
+  document.querySelectorAll("[data-admin-user-device-dialog='true']").forEach((node) => node.remove());
+  document.removeEventListener("keydown", handleAdminUserDeviceDialogKeydown);
+}
+
+function getAdminUserDeviceLabel(device) {
+  return String(device?.device_name || "").trim() || "another device";
+}
+
+function renderAdminUserDeviceDetails(device) {
+  if (!device) {
+    return `
+      <p class="admin-user-device-count">Devices used: <b>0 of 1</b></p>
+      <p class="subtle">No device registered. The next device this student signs in on becomes their device.</p>
+    `;
+  }
+  const platform = String(device.platform || "").trim();
+  const fields = [
+    ["Device", getAdminUserDeviceLabel(device)],
+    platform ? ["Platform", platform] : null,
+    ["Registered", formatReportDateTime(device.registered_at)],
+    ["Last seen", formatReportDateTime(device.last_seen_at)]
+  ].filter(Boolean);
+  return `
+    <p class="admin-user-device-count">Devices used: <b>1 of 1</b></p>
+    <dl class="admin-user-device-fields">
+      ${fields.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+    </dl>
+    <div class="admin-user-device-release">
+      <button class="btn danger admin-btn-sm" type="button" data-action="release-user-device">Release device</button>
+      <p class="subtle">Lets the student sign in on a new device. The current device is signed out of MedBank within a minute.</p>
+    </div>
+  `;
+}
+
+async function loadAdminUserDeviceIntoDialog(context) {
+  const token = adminUserDeviceDialogToken;
+  const body = document.querySelector("[data-admin-user-device-dialog='true'] [data-device-dialog-body]");
+  if (!body) {
+    return;
+  }
+  body.innerHTML = `<p class="subtle">Loading...</p>`;
+  const client = getSupabaseAuthClient();
+  if (!client || !isUuidValue(context.profileId)) {
+    body.innerHTML = `<p class="subtle">Registered devices are only available for accounts stored in Supabase.</p>`;
+    return;
+  }
+  let device = null;
+  let errorMessage = "";
+  try {
+    const { data, error } = await client
+      .from("user_devices")
+      .select("device_name, platform, registered_at, last_seen_at")
+      .eq("user_id", context.profileId)
+      .maybeSingle();
+    if (error) {
+      errorMessage = error.message || "Could not load the registered device.";
+    } else {
+      device = data || null;
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not load the registered device.";
+  }
+  if (token !== adminUserDeviceDialogToken) {
+    return;
+  }
+  if (errorMessage) {
+    body.innerHTML = `
+      <p class="subtle">${escapeHtml(errorMessage)}</p>
+      <div class="admin-user-device-release">
+        <button class="btn ghost admin-btn-sm" type="button" data-action="retry-user-device">Try again</button>
+      </div>
+    `;
+    body.querySelector("[data-action='retry-user-device']")?.addEventListener("click", () => {
+      loadAdminUserDeviceIntoDialog(context);
+    });
+    return;
+  }
+  body.innerHTML = renderAdminUserDeviceDetails(device);
+  const releaseButton = body.querySelector("[data-action='release-user-device']");
+  releaseButton?.addEventListener("click", () => {
+    releaseAdminUserDevice(context, device, releaseButton);
+  });
+}
+
+async function releaseAdminUserDevice(context, device, button) {
+  const confirmed = window.confirm(
+    `Release this device?\n\n${context.name} will no longer be able to use MedBank on ${getAdminUserDeviceLabel(device)}. The next device they sign in on becomes their registered device.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    toast("Supabase is not connected.");
+    return;
+  }
+  const token = adminUserDeviceDialogToken;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  let errorMessage = "";
+  try {
+    const { error } = await client.from("user_devices").delete().eq("user_id", context.profileId);
+    if (error) {
+      errorMessage = error.message || "Could not release the device.";
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not release the device.";
+  }
+  if (errorMessage) {
+    toast(errorMessage);
+    if (token === adminUserDeviceDialogToken) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+    }
+    return;
+  }
+  toast("Device released.");
+  if (token === adminUserDeviceDialogToken) {
+    loadAdminUserDeviceIntoDialog(context);
+  }
+}
+
+function openAdminUserDeviceDialog(account) {
+  closeAdminUserDeviceDialog();
+  const context = {
+    profileId: String(getUserProfileId(account) || "").trim(),
+    name: String(account.name || account.email || "This student").trim()
+  };
+  const wrapper = document.createElement("div");
+  wrapper.className = "admin-enrollment-picker-modal admin-user-device-modal";
+  wrapper.dataset.adminUserDeviceDialog = "true";
+  wrapper.innerHTML = `
+    <button class="admin-enrollment-picker-backdrop" type="button" data-device-dialog-close aria-label="Close registered device"></button>
+    <section class="admin-enrollment-picker-card admin-user-device-card" role="dialog" aria-modal="true" aria-labelledby="admin-user-device-title">
+      <div class="admin-enrollment-picker-head">
+        <div>
+          <h4 id="admin-user-device-title">Registered device</h4>
+          <p class="subtle">${escapeHtml(context.name)}</p>
+        </div>
+        <button class="icon-btn" type="button" data-device-dialog-close aria-label="Close registered device">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="admin-user-device-body" data-device-dialog-body aria-live="polite"></div>
+    </section>
+  `;
+  wrapper.addEventListener("click", (event) => {
+    if (event.target.closest("[data-device-dialog-close]")) {
+      closeAdminUserDeviceDialog();
+    }
+  });
+  document.body.appendChild(wrapper);
+  document.addEventListener("keydown", handleAdminUserDeviceDialogKeydown);
+  wrapper.querySelector(".icon-btn")?.focus();
+  loadAdminUserDeviceIntoDialog(context);
 }
 
 function removeAdminCourseEnrollmentPickerPortal() {

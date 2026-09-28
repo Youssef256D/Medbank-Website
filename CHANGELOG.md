@@ -9,6 +9,16 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-28 — Admin Users: registered device
+- Student rows on the admin Users page have a **Device** button showing the one
+  app installation the account is bound to ("Devices used: 0/1 of 1", device
+  name, platform, registered, last seen) with a **Release device** action.
+  Admins and creators get no button. The website only reads and deletes
+  `user_devices`; it never calls `claim_user_device` / `check_user_device`.
+- `20260927145744_one_device_per_student.sql` was copied from `Medbank-App` so
+  the repo history matches production. It was already applied there; not
+  re-applied.
+
 ### 2026-09-19 — Video Courses with module coupons can be deleted
 - Deleting a Video Course whose coupons grant module access failed with
   `platform_course_coupon_modules_module_id_fkey`. The 2026-08-09 cascade fix

@@ -20494,3 +20494,52 @@ small.admin-account-approval-gap {
     margin-left: 0;
   }
 }
+
+/* Admin Users: registered-device dialog (reuses the enrollment picker shell). */
+.admin-enrollment-picker-card.admin-user-device-card {
+  width: min(480px, calc(100vw - 2rem));
+  height: auto;
+  max-height: calc(100vh - 2rem);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.admin-user-device-body {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem 1.15rem 1.2rem;
+  overflow: auto;
+  color: var(--ink);
+}
+
+.admin-user-device-body p {
+  margin: 0;
+}
+
+.admin-user-device-fields {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.admin-user-device-fields > div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, auto) 1fr;
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-user-device-fields dt {
+  color: var(--muted);
+}
+
+.admin-user-device-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-user-device-release {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+}

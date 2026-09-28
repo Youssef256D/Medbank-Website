@@ -189,6 +189,48 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-28 — Admin Users: registered device (one device per student)
+One-device-per-student is **live again**, via the Flutter app: migration
+`20260927145744_one_device_per_student.sql` (authored in `Medbank-App`, applied
+to production there, copied here verbatim so the history matches — **do not
+re-apply or `db push` it**). This supersedes the 2026-07-22 "rolled back" entry
+below: `public.user_devices` exists again, with a different design (one row per
+account; the primary key *is* the limit). Static cache bust:
+`2026-09-28.01-local`.
+
+1. **The website is read/release only, and must stay that way.** It selects
+   `device_name, platform, registered_at, last_seen_at` (never `device_id`) and
+   deletes the row to release. It must **never** call `claim_user_device` /
+   `check_user_device`: the limit applies to the app only, and website sign-ins
+   are not device-limited. RLS allows admins SELECT/DELETE only; students cannot
+   read the table.
+2. **Where it lives.** There is no admin user-detail page on the website, so the
+   section is a dialog opened by a **Device** button on student rows of the
+   Users table (`openAdminUserDeviceDialog`, next to the enrollment-picker
+   portal helpers). Admin and creator rows have no button.
+3. **Rendered outside `render()` on purpose.** The Users page re-renders on the
+   admin poll; the dialog is appended to `body` so a poll cannot close it, and a
+   token discards responses from a dialog that was closed or reopened. The row
+   is never stored in `state` or merged into the users cache — after a release it
+   is re-read from Supabase, per the spec. It reuses the enrollment-picker modal
+   shell classes plus a size modifier; no new colours.
+4. **English only.** The Flutter spec includes Arabic strings, but the website
+   has no localisation layer; the English copy matches the app's. The
+   confirmation uses `window.confirm`, like every other admin destructive action
+   here, so its buttons read OK/Cancel rather than Cancel/Release device.
+5. **Verified** in the preview with a stubbed client (device shown and escaped,
+   empty name → "another device", empty platform hidden, local times, confirm
+   copy, delete → toast → re-read → "0 of 1", server error shown as-is, Escape
+   closes, button absent on the admin row), and on production RLS in a
+   rollback-only block: a student reads/deletes 0 rows; the admin reads 1,
+   deletes 1, re-reads 0. The live row was untouched. Not verified end-to-end as
+   a signed-in Supabase admin in the browser (no session available to the agent).
+   `node --check` and `npm run lint` clean.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`supabase/migrations/20260927145744_one_device_per_student.sql` (copy),
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-19 — Coupon module links no longer block Video Course deletion
 Follow-up to the 2026-08-09 entry below, which cascaded the course -> coupon
 edges but missed `platform_course_coupon_modules.module_id`. That edge was still
