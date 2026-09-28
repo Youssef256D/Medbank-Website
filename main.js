@@ -580,6 +580,17 @@ const state = {
   studentAutoApprovalSaving: false,
   studentAutoApprovalLoadedAt: 0,
   studentAutoApprovalError: "",
+  // Auto MCQ access for new students (app_feature_flags.student_auto_mcq_access).
+  // Enabled is null until the first successful read; the held count is the
+  // server's exact count, null until read.
+  studentAutoMcqAccessEnabled: null,
+  studentAutoMcqAccessLoading: false,
+  studentAutoMcqAccessSaving: false,
+  studentAutoMcqAccessLoadedAt: 0,
+  studentAutoMcqAccessError: "",
+  mcqAccessHeldCount: null,
+  mcqAccessHeldCountLoading: false,
+  adminUserFilterMcqHeld: false,
   adminQuestionCountSnapshot: null,
   adminQuestionCountLoading: false,
   adminQuestionCountError: "",
@@ -4534,7 +4545,7 @@ async function bootstrapRelationalProfileFromAuth(authUser, fallbackUser = null)
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
       .eq("id", profileRow.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -4631,7 +4642,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
       .eq("id", authUser.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -4845,6 +4856,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
     mcqAccessEnabled: role === "admin" ? true : profile.mcq_access_enabled !== false,
     coursesAccessEnabled: role === "admin" ? true : profile.courses_access_enabled !== false,
     ...readProfileUniversityFields(profile),
+    ...readProfileMcqHoldFields(profile),
     approvedAt: resolvedApproval ? localUser?.approvedAt || profile.created_at || nowISO() : null,
     approvedBy: resolvedApproval ? localUser?.approvedBy || "admin" : null,
     authProvider,
@@ -5049,6 +5061,33 @@ function readProfileUniversityFields(profile) {
     fields.college = normalizeCollegeValue(profile.college);
   }
   return fields;
+}
+
+// `profiles.mcq_access_held_at` (migration 20260928125817): set while a new
+// student waits for an admin to activate MCQ access. Same null/undefined rule as
+// above. Server-authoritative and never written by the website — enabling MCQ
+// access clears it in the database.
+function readProfileMcqHoldFields(profile) {
+  if (!profile || !Object.prototype.hasOwnProperty.call(profile, "mcq_access_held_at")) {
+    return {};
+  }
+  const utils = getUniversitiesUtils();
+  const raw = profile.mcq_access_held_at;
+  let heldAt = null;
+  if (utils?.normalizeMcqAccessHeldAt) {
+    heldAt = utils.normalizeMcqAccessHeldAt(raw);
+  } else if (raw && !Number.isNaN(new Date(raw).getTime())) {
+    heldAt = new Date(raw).toISOString();
+  }
+  return { mcqAccessHeldAt: heldAt };
+}
+
+function isUserMcqAccessHeld(account) {
+  const utils = getUniversitiesUtils();
+  if (utils?.isMcqAccessHeld) {
+    return utils.isMcqAccessHeld(account);
+  }
+  return account?.role === "student" && account?.mcqAccessEnabled === false && Boolean(account?.mcqAccessHeldAt);
 }
 
 function getMcqIneligibleNote() {
@@ -5258,7 +5297,7 @@ async function saveOwnUniversityCollege(user, { universityId, college }) {
         .from("profiles")
         .update({ university_id: universityId, college })
         .eq("id", profileId)
-        .select("id,university_id,college,mcq_access_enabled"),
+        .select("id,university_id,college,mcq_access_enabled,mcq_access_held_at"),
       "Saving your university timed out.",
     );
     const row = Array.isArray(rows) ? rows[0] : null;
@@ -5296,6 +5335,7 @@ function applyServerUniversityFieldsToLocalUser(profileId, row) {
   users[idx] = {
     ...users[idx],
     ...readProfileUniversityFields(row),
+    ...readProfileMcqHoldFields(row),
     ...(users[idx].role === "admin" || typeof row?.mcq_access_enabled !== "boolean"
       ? {}
       : { mcqAccessEnabled: row.mcq_access_enabled }),
@@ -5782,7 +5822,7 @@ async function revalidateApprovedStudentAccess(user = null, options = {}) {
     const { data, error } = await runWithTimeoutResult(
       client
         .from("profiles")
-        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
         .eq("id", profileId)
         .maybeSingle(),
       PROFILE_LOOKUP_TIMEOUT_MS,
@@ -5828,6 +5868,7 @@ async function revalidateApprovedStudentAccess(user = null, options = {}) {
         mcqAccessEnabled: data.mcq_access_enabled !== false,
         coursesAccessEnabled: data.courses_access_enabled !== false,
         ...readProfileUniversityFields(data),
+        ...readProfileMcqHoldFields(data),
         approvedAt: existing?.approvedAt || data.created_at || nowISO(),
         approvedBy: existing?.approvedBy || "admin",
         academicYear: normalizedEnrollment.academicYear,
@@ -6584,6 +6625,9 @@ function matchesAdminUserFilters(account, filters = {}) {
     return false;
   }
   if (!matchesAdminUserProviderFilter(account, filters?.provider)) {
+    return false;
+  }
+  if (filters?.mcqHeld === true && !isUserMcqAccessHeld(account)) {
     return false;
   }
   if (!searchTerms.length) {
@@ -10596,7 +10640,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
     const profilesResult = await fetchRowsPaged((from, to) => (
       client
         .from("profiles")
-        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to)
@@ -10615,7 +10659,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
   } else {
     const { data: profile, error } = await client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
       .eq("id", currentUser.supabaseAuthId)
       .maybeSingle();
     if (error) {
@@ -10865,6 +10909,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
       // Server-authoritative: university/college are only ever written directly
       // to profiles (never through the local-cache sync), so the read wins.
       ...readProfileUniversityFields(profile),
+      ...readProfileMcqHoldFields(profile),
       approvedAt: resolvedApprovedAt,
       approvedBy: resolvedApprovedBy,
       assignedCourses,
@@ -21864,6 +21909,10 @@ async function refreshAdminDataSnapshot(user, options = {}) {
     hydrateTasks.push(hydrateRelationalNotifications(user));
     hydrateTasks.push(loadCoursesComingSoonFlag({ force }).catch(() => false));
     hydrateTasks.push(loadStudentAutoApprovalFlag({ force }).catch(() => false));
+    hydrateTasks.push(loadStudentAutoMcqAccessFlag({ force }).catch(() => false));
+    if (activeAdminPage === "users") {
+      hydrateTasks.push(loadMcqAccessHeldCount().catch(() => null));
+    }
     hydrateTasks.push(hydrateSupabaseSyncKeys([STORAGE_KEYS.siteMaintenance]).catch(() => ({ hadRemoteData: false })));
     await Promise.all(hydrateTasks);
 
@@ -31189,6 +31238,11 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
     }
   }
 
+  const mcqHold = row.querySelector("[data-user-mcq-hold]");
+  if (mcqHold && mcqHold.querySelector("[data-action='activate-user-mcq']")?.dataset.busy !== "1") {
+    mcqHold.outerHTML = renderAdminUserMcqHold(account);
+  }
+
   const mcqAccessButton = row.querySelector("[data-action='toggle-user-mcq-access']");
   if (mcqAccessButton) {
     const isBusy = mcqAccessButton.dataset.busy === "1";
@@ -31567,6 +31621,344 @@ function renderAdminAgentsSection() {
       </div>
     </section>
   `;
+}
+
+// Auto MCQ access for new students. Migration 20260928125817 (live):
+// `app_feature_flags.student_auto_mcq_access` decides whether a new eligible
+// student gets the MCQ Bank at once (on) or is created with MCQ off and
+// `profiles.mcq_access_held_at` stamped (off). Enabling a student's MCQ access
+// clears their hold in the database; turning the switch back on activates every
+// student still held, also in the database. So every write here is followed by
+// a re-read of the flag, the profiles and the held count - nothing is applied
+// locally on the assumption that the write did what we meant.
+const STUDENT_AUTO_MCQ_ACCESS_FEATURE_KEY_FALLBACK = "student_auto_mcq_access";
+let mcqAccessHeldCountAttemptedAt = 0;
+const MCQ_ACCESS_HELD_COUNT_RETRY_MS = 30000;
+
+function getStudentAutoMcqAccessFeatureKey() {
+  return getUniversitiesUtils()?.AUTO_MCQ_ACCESS_FEATURE_KEY || STUDENT_AUTO_MCQ_ACCESS_FEATURE_KEY_FALLBACK;
+}
+
+function isStudentAutoMcqAccessKnown() {
+  return typeof state.studentAutoMcqAccessEnabled === "boolean";
+}
+
+async function loadStudentAutoMcqAccessFlag(options = {}) {
+  const force = Boolean(options?.force);
+  if (state.studentAutoMcqAccessLoading && !force) {
+    return !state.studentAutoMcqAccessError;
+  }
+  if (!force && state.studentAutoMcqAccessLoadedAt) {
+    return true;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return false;
+  }
+  state.studentAutoMcqAccessLoading = true;
+  try {
+    const row = await runRelationalQueryWithTimeout(
+      client
+        .from("app_feature_flags")
+        .select("feature_key,enabled")
+        .eq("feature_key", getStudentAutoMcqAccessFeatureKey())
+        .maybeSingle(),
+      "Auto MCQ access status check timed out.",
+    );
+    // A missing row reads as off, exactly as private.is_app_feature_enabled does.
+    state.studentAutoMcqAccessEnabled = row?.enabled === true;
+    state.studentAutoMcqAccessLoadedAt = Date.now();
+    state.studentAutoMcqAccessError = "";
+    return true;
+  } catch (error) {
+    // Keep the last known value; a failed read is never a guess.
+    state.studentAutoMcqAccessError = getErrorMessage(error, "Could not check auto MCQ access.");
+    return false;
+  } finally {
+    state.studentAutoMcqAccessLoading = false;
+  }
+}
+
+// Server count of students waiting for MCQ activation. null = unknown.
+async function loadMcqAccessHeldCount() {
+  const client = getRelationalClient();
+  if (!client) {
+    return state.mcqAccessHeldCount;
+  }
+  mcqAccessHeldCountAttemptedAt = Date.now();
+  state.mcqAccessHeldCountLoading = true;
+  try {
+    const result = await runWithTimeoutResult(
+      client
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .not("mcq_access_held_at", "is", null)
+        .eq("role", "student"),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Counting students waiting for MCQ activation timed out.",
+    );
+    if (result?.error) {
+      throw result.error;
+    }
+    state.mcqAccessHeldCount = Number.isInteger(result?.count) ? result.count : null;
+  } catch (error) {
+    console.warn("Could not count students waiting for MCQ activation.", error?.message || error);
+    state.mcqAccessHeldCount = null;
+  } finally {
+    state.mcqAccessHeldCountLoading = false;
+  }
+  return state.mcqAccessHeldCount;
+}
+
+async function saveStudentAutoMcqAccessFlag(enabled) {
+  const client = getRelationalClient();
+  const currentUser = getCurrentUser();
+  if (!client || currentUser?.role !== "admin") {
+    throw new Error("Only admins can change auto MCQ access.");
+  }
+  const profileId = getUserProfileId(currentUser);
+  const utils = getUniversitiesUtils();
+  const payload = {
+    feature_key: getStudentAutoMcqAccessFeatureKey(),
+    enabled: Boolean(enabled),
+    updated_by: isUuidValue(profileId) ? profileId : null,
+  };
+  if (utils?.AUTO_MCQ_ACCESS_FEATURE_DESCRIPTION) {
+    payload.description = utils.AUTO_MCQ_ACCESS_FEATURE_DESCRIPTION;
+  }
+  // An update of `enabled` from false to true fires the database trigger that
+  // activates every held student; the upsert's conflict path is that update.
+  await runRelationalQueryWithTimeout(
+    client.from("app_feature_flags").upsert(payload, { onConflict: "feature_key", defaultToNull: false }),
+    "Auto MCQ access update timed out.",
+  );
+  return true;
+}
+
+async function refreshAutoMcqAccessFromServer() {
+  await Promise.all([
+    loadStudentAutoMcqAccessFlag({ force: true }),
+    hydrateRelationalProfiles(getCurrentUser()).catch((error) => {
+      console.warn("Could not refresh profiles after an auto MCQ access change.", error?.message || error);
+    }),
+    loadMcqAccessHeldCount(),
+  ]);
+}
+
+function rerenderAdminUsersPage() {
+  if (state.route === "admin" && String(state.adminPage || "").trim() === "users") {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+// Called from the admin Users render, which must stay synchronous.
+function ensureStudentAutoMcqAccessLoaded() {
+  if (getCurrentUser()?.role !== "admin") {
+    return;
+  }
+  const tasks = [];
+  if (!state.studentAutoMcqAccessLoadedAt && !state.studentAutoMcqAccessLoading) {
+    tasks.push(loadStudentAutoMcqAccessFlag());
+  }
+  if (state.mcqAccessHeldCount === null && !state.mcqAccessHeldCountLoading
+    && Date.now() - mcqAccessHeldCountAttemptedAt > MCQ_ACCESS_HELD_COUNT_RETRY_MS) {
+    tasks.push(loadMcqAccessHeldCount().then((count) => count !== null));
+  }
+  if (!tasks.length) {
+    return;
+  }
+  Promise.all(tasks).then((results) => {
+    if (!results.some(Boolean) || shouldDeferAdminUsersAutoRender()) {
+      return;
+    }
+    rerenderAdminUsersPage();
+  });
+}
+
+async function toggleStudentAutoMcqAccess() {
+  if (state.studentAutoMcqAccessSaving) {
+    return false;
+  }
+  if (!isStudentAutoMcqAccessKnown()) {
+    toast("Auto MCQ access is still loading. Try again in a moment.");
+    return false;
+  }
+  const utils = getUniversitiesUtils();
+  const nextEnabled = !state.studentAutoMcqAccessEnabled;
+  const heldCount = nextEnabled ? await loadMcqAccessHeldCount() : null;
+  const message = utils?.buildAutoMcqAccessConfirmMessage
+    ? utils.buildAutoMcqAccessConfirmMessage(nextEnabled, heldCount)
+    : (nextEnabled ? "Turn on auto MCQ access for new students?" : "Turn off auto MCQ access for new students?");
+  if (!window.confirm(message)) {
+    return false;
+  }
+  state.studentAutoMcqAccessSaving = true;
+  rerenderAdminUsersPage();
+  let saveError = "";
+  try {
+    await saveStudentAutoMcqAccessFlag(nextEnabled);
+  } catch (error) {
+    saveError = getErrorMessage(error, "Could not update auto MCQ access.");
+  }
+  try {
+    await refreshAutoMcqAccessFromServer();
+  } finally {
+    state.studentAutoMcqAccessSaving = false;
+  }
+  if (saveError) {
+    state.studentAutoMcqAccessError = saveError;
+    toast(saveError);
+  } else if (nextEnabled) {
+    toast("Auto MCQ access is on. Students who were waiting now have MCQ access.");
+  } else {
+    toast("Auto MCQ access is off. New students will wait for you to activate MCQ access.");
+  }
+  rerenderAdminUsersPage();
+  return !saveError;
+}
+
+function renderAdminAutoMcqAccessPanel(users = getUsers()) {
+  ensureStudentAutoMcqAccessLoaded();
+  const utils = getUniversitiesUtils();
+  const label = utils?.AUTO_MCQ_ACCESS_LABEL || "Auto MCQ access for new students";
+  const known = isStudentAutoMcqAccessKnown();
+  const enabled = state.studentAutoMcqAccessEnabled === true;
+  const saving = Boolean(state.studentAutoMcqAccessSaving);
+  const heldCount = state.mcqAccessHeldCount;
+  const localHeldCount = (Array.isArray(users) ? users : []).filter(isUserMcqAccessHeld).length;
+  const describe = utils?.describeAutoMcqAccessState
+    ? utils.describeAutoMcqAccessState(known ? enabled : null, heldCount)
+    : "";
+  const filterOn = Boolean(state.adminUserFilterMcqHeld);
+  const showFilterButton = filterOn || localHeldCount > 0;
+  return `
+    <div class="admin-auto-mcq-panel" data-admin-auto-mcq-panel>
+      <div class="admin-auto-mcq-head">
+        <button class="admin-access-switch" type="button" data-action="toggle-student-auto-mcq-access" role="switch" aria-checked="${enabled ? "true" : "false"}" aria-describedby="admin-auto-mcq-state" ${!known || saving ? "disabled" : ""}>
+          ${renderAdminAccessSwitchContent(saving ? `${label}...` : label, enabled)}
+        </button>
+        ${showFilterButton
+          ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-toggle-mcq-held-filter" aria-pressed="${filterOn ? "true" : "false"}">${filterOn ? "Show all users" : `Show waiting for MCQ (${localHeldCount})`}</button>`
+          : ""}
+      </div>
+      <p class="subtle admin-auto-mcq-state" id="admin-auto-mcq-state">${escapeHtml(describe)}</p>
+      ${state.studentAutoMcqAccessError
+        ? `<p class="subtle admin-auto-mcq-error">${escapeHtml(state.studentAutoMcqAccessError)}</p>`
+        : ""}
+    </div>
+  `;
+}
+
+// The per-row hold marker. Always rendered for students (hidden when not held)
+// so patchAdminUserRowUi can swap it after a write without a full render.
+function renderAdminUserMcqHold(account) {
+  if (account?.role !== "student") {
+    return "";
+  }
+  const held = isUserMcqAccessHeld(account);
+  const utils = getUniversitiesUtils();
+  const since = held && utils?.formatMcqHeldSince ? utils.formatMcqHeldSince(account.mcqAccessHeldAt) : "";
+  const badge = utils?.MCQ_HELD_BADGE_LABEL || "Waiting for MCQ";
+  return `<span class="admin-account-mcq-hold" data-user-mcq-hold ${held ? "" : "hidden"}>${held
+    ? `<span class="badge waiting" data-user-mcq-held-badge>${escapeHtml(badge)}</span>
+       ${since ? `<small>waiting since ${escapeHtml(since)}</small>` : ""}
+       <button class="btn admin-btn-sm" type="button" data-action="activate-user-mcq">Activate MCQ</button>`
+    : ""}</span>`;
+}
+
+// Re-reads one profile's MCQ fields after a write and replaces the cached
+// values with the server's (the trigger clears the hold when access is on).
+async function rereadAdminUserMcqAccessFields(profileId) {
+  const client = getRelationalClient();
+  if (!client || !profileId) {
+    return null;
+  }
+  const row = await runRelationalQueryWithTimeout(
+    client
+      .from("profiles")
+      .select("id,mcq_access_enabled,mcq_access_held_at")
+      .eq("id", profileId)
+      .maybeSingle(),
+    "Refreshing MCQ access timed out.",
+  );
+  if (!row) {
+    return null;
+  }
+  applyServerUniversityFieldsToLocalUser(profileId, row);
+  return row;
+}
+
+// The MCQ switch on a Users row, and the "Activate MCQ" action on a held
+// student: one write path for both (profiles.mcq_access_enabled through the
+// admin user sync), followed by a re-read of that profile and the held count.
+async function setAdminUserMcqAccessFromRow(row, button, nextEnabledOverride = null) {
+  if (!row || !button || button.dataset.busy === "1") {
+    return false;
+  }
+  const userId = row.getAttribute("data-user-id");
+  if (!userId) {
+    return false;
+  }
+  const users = getUsers();
+  const idx = users.findIndex((entry) => entry.id === userId);
+  if (idx === -1) {
+    toast("Account not found.");
+    return false;
+  }
+  if (users[idx].role === "admin") {
+    toast("Admin accounts always keep MCQ Bank access.");
+    return false;
+  }
+
+  const nextEnabled = typeof nextEnabledOverride === "boolean"
+    ? nextEnabledOverride
+    : users[idx].mcqAccessEnabled === false;
+  const wasHeld = isUserMcqAccessHeld(users[idx]);
+  const profileId = String(getUserProfileId(users[idx]) || "").trim();
+  button.dataset.busy = "1";
+  button.disabled = true;
+  button.classList.add("is-loading");
+  button.textContent = nextEnabled ? "Enabling..." : "Disabling...";
+  let ok = false;
+  try {
+    users[idx].mcqAccessEnabled = nextEnabled;
+    save(STORAGE_KEYS.users, users, {
+      userSyncScope: USER_RELATIONAL_SYNC_SCOPE_ADMIN,
+      profileSyncIds: [profileId],
+    });
+    await flushAdminUserAccountSyncNow();
+    patchAdminUserRowUi(row, users[idx], getCurrentUser());
+    ok = true;
+    toast(nextEnabled ? "MCQ Bank access enabled." : "MCQ Bank access disabled. Video Courses access is unchanged.");
+  } catch (error) {
+    users[idx].mcqAccessEnabled = !nextEnabled;
+    saveLocalOnly(STORAGE_KEYS.users, users);
+    toast(`Could not update MCQ Bank access: ${getErrorMessage(error, "Action failed.")}`);
+  } finally {
+    button.dataset.busy = "0";
+    button.classList.remove("is-loading");
+    const refreshedUser = getUsers().find((entry) => entry.id === userId);
+    if (refreshedUser) {
+      patchAdminUserRowUi(row, refreshedUser, getCurrentUser());
+    } else {
+      button.disabled = false;
+      button.textContent = nextEnabled ? "MCQ Off" : "MCQ On";
+    }
+  }
+  if (ok && (wasHeld || nextEnabled)) {
+    // The database cleared (or kept) the hold; read what it decided.
+    await rereadAdminUserMcqAccessFields(profileId).catch((error) => {
+      console.warn("Could not re-read MCQ access after the switch.", error?.message || error);
+    });
+    await loadMcqAccessHeldCount();
+    if (shouldDeferAdminUsersAutoRender()) {
+      refreshAdminUsersRowForProfile(profileId);
+    } else {
+      rerenderAdminUsersPage();
+    }
+  }
+  return ok;
 }
 
 // University administration. The list students pick from at sign-up, and the
@@ -32499,12 +32891,15 @@ function renderAdmin() {
     const userFilterSemester = normalizeAcademicSemesterOrNull(state.adminUserFilterSemester);
     const userFilterApproval = normalizeAdminUserApprovalFilter(state.adminUserFilterApproval);
     const userFilterProvider = normalizeAdminUserProviderFilter(state.adminUserFilterProvider);
+    const userFilterMcqHeld = state.adminUserFilterMcqHeld === true;
+    const mcqHeldLocalCount = users.filter(isUserMcqAccessHeld).length;
     const filteredUsers = users.filter((account) => matchesAdminUserFilters(account, {
       search: userSearchQuery,
       year: userFilterYear,
       semester: userFilterSemester,
       approval: userFilterApproval,
       provider: userFilterProvider,
+      mcqHeld: userFilterMcqHeld,
     }));
     const providerFilterCounts = users.reduce((acc, entry) => {
       if (getAuthProviderFromUser(entry) === "google") {
@@ -32537,7 +32932,8 @@ function renderAdmin() {
       && userFilterYear === null
       && userFilterSemester === null
       && !userFilterApproval
-      && !userFilterProvider;
+      && !userFilterProvider
+      && !userFilterMcqHeld;
     const addUserDraft = normalizeAdminAddUserDraft(state.adminAddUserDraft);
     const pendingCount = users.filter((entry) => entry.role === "student" && !isUserAccessApproved(entry)).length;
     const approvalFilterCounts = users.reduce((acc, entry) => {
@@ -32629,6 +33025,7 @@ function renderAdmin() {
                 </small><br />
                 <small class="admin-account-public-id">MedBank ID: <b>${escapeHtml(String(account.publicUserId || account.public_user_id || "Pending"))}</b></small><br />
                 ${account.role === "student" ? `${renderAdminUserUniversitySummary(account)}<br />` : ""}
+                ${renderAdminUserMcqHold(account)}
                 ${missingApprovalFields.length ? `<small class="admin-account-approval-gap" title="Auto-approval and Approve all pending both skip this account until these are filled in.">Not auto-approved &mdash; needs ${escapeHtml(formatMissingApprovalFieldList(missingApprovalFields))}</small><br />` : ""}
                 <label class="admin-inline-phone-field">
                   <input
@@ -32732,6 +33129,7 @@ function renderAdmin() {
               : ""}
           </div>
         </div>
+        ${renderAdminAutoMcqAccessPanel(users)}
         <details id="admin-add-user-disclosure" class="admin-user-create-panel" style="margin-top: 0.85rem;" ${state.adminAddUserPanelOpen ? "open" : ""}>
           <summary class="admin-user-create-toggle">
             <span class="admin-user-create-toggle-main">
@@ -32816,6 +33214,12 @@ function renderAdmin() {
                 <option value="pending" ${userFilterApproval === "pending" ? "selected" : ""}>Not approved (${approvalFilterCounts.pending})</option>
                 <option value="incomplete" ${userFilterApproval === "incomplete" ? "selected" : ""}>Not approved · missing details (${approvalFilterCounts.incomplete})</option>
                 <option value="approved" ${userFilterApproval === "approved" ? "selected" : ""}>Approved (${approvalFilterCounts.approved})</option>
+              </select>
+            </label>
+            <label>MCQ activation
+              <select id="admin-user-filter-mcq-held" name="mcqHeld">
+                <option value="" ${!userFilterMcqHeld ? "selected" : ""}>All accounts</option>
+                <option value="held" ${userFilterMcqHeld ? "selected" : ""}>Waiting for MCQ (${mcqHeldLocalCount})</option>
               </select>
             </label>
             <label>Sign-in method
@@ -36151,6 +36555,7 @@ function wireAdmin() {
   const adminUserFilterSemester = document.getElementById("admin-user-filter-semester");
   const adminUserFilterApproval = document.getElementById("admin-user-filter-approval");
   const adminUserFilterProvider = document.getElementById("admin-user-filter-provider");
+  const adminUserFilterMcqHeld = document.getElementById("admin-user-filter-mcq-held");
   const selectAllUsersInput = appEl.querySelector("[data-action='admin-select-all-users']");
   if (selectAllUsersInput instanceof HTMLInputElement) {
     selectAllUsersInput.indeterminate = selectAllUsersInput.dataset.indeterminate === "true";
@@ -36192,6 +36597,7 @@ function wireAdmin() {
     state.adminUserFilterSemester = String(adminUserFilterSemester?.value || "");
     state.adminUserFilterApproval = normalizeAdminUserApprovalFilter(adminUserFilterApproval?.value);
     state.adminUserFilterProvider = normalizeAdminUserProviderFilter(adminUserFilterProvider?.value);
+    state.adminUserFilterMcqHeld = adminUserFilterMcqHeld?.value === "held";
     state.skipNextRouteAnimation = true;
     render();
   };
@@ -36199,6 +36605,7 @@ function wireAdmin() {
   adminUserFilterSemester?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterApproval?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterProvider?.addEventListener("change", syncAdminUserFilters);
+  adminUserFilterMcqHeld?.addEventListener("change", syncAdminUserFilters);
 
   adminUserSearchInput?.addEventListener("input", () => {
     const nextValue = String(adminUserSearchInput.value || "");
@@ -36225,6 +36632,7 @@ function wireAdmin() {
     state.adminUserFilterSemester = "";
     state.adminUserFilterApproval = "";
     state.adminUserFilterProvider = "";
+    state.adminUserFilterMcqHeld = false;
     state.adminSelectedUserIds = [];
     if (adminUserSearchDebounce) {
       window.clearTimeout(adminUserSearchDebounce);
@@ -37303,58 +37711,28 @@ function wireAdmin() {
   });
 
   appEl.querySelectorAll("[data-action='toggle-user-mcq-access']").forEach((button) => {
-    button.addEventListener("click", async () => {
-      if (button.dataset.busy === "1") {
-        return;
-      }
-      const row = button.closest("tr[data-user-id]");
-      const userId = row?.getAttribute("data-user-id");
-      if (!userId) {
-        return;
-      }
-
-      const users = getUsers();
-      const idx = users.findIndex((entry) => entry.id === userId);
-      if (idx === -1) {
-        toast("Account not found.");
-        return;
-      }
-      if (users[idx].role === "admin") {
-        toast("Admin accounts always keep MCQ Bank access.");
-        return;
-      }
-
-      const nextEnabled = users[idx].mcqAccessEnabled === false;
-      button.dataset.busy = "1";
-      button.disabled = true;
-      button.classList.add("is-loading");
-      button.textContent = nextEnabled ? "Enabling..." : "Disabling...";
-      try {
-        users[idx].mcqAccessEnabled = nextEnabled;
-        save(STORAGE_KEYS.users, users, {
-          userSyncScope: USER_RELATIONAL_SYNC_SCOPE_ADMIN,
-          profileSyncIds: [getUserProfileId(users[idx])],
-        });
-        await flushAdminUserAccountSyncNow();
-        patchAdminUserRowUi(row, users[idx], getCurrentUser());
-        toast(nextEnabled ? "MCQ Bank access enabled." : "MCQ Bank access disabled. Video Courses access is unchanged.");
-      } catch (error) {
-        users[idx].mcqAccessEnabled = !nextEnabled;
-        saveLocalOnly(STORAGE_KEYS.users, users);
-        toast(`Could not update MCQ Bank access: ${getErrorMessage(error, "Action failed.")}`);
-      } finally {
-        button.dataset.busy = "0";
-        button.classList.remove("is-loading");
-        const refreshedUsers = getUsers();
-        const refreshedUser = refreshedUsers.find((entry) => entry.id === userId);
-        if (refreshedUser) {
-          patchAdminUserRowUi(row, refreshedUser, getCurrentUser());
-        } else {
-          button.disabled = false;
-          button.textContent = nextEnabled ? "MCQ Off" : "MCQ On";
-        }
-      }
+    button.addEventListener("click", () => {
+      setAdminUserMcqAccessFromRow(button.closest("tr[data-user-id]"), button).catch(() => null);
     });
+  });
+
+  // "Activate MCQ" on a student waiting for MCQ activation. Delegated, because
+  // patchAdminUserRowUi re-renders the hold marker that holds the button.
+  appEl.querySelector("#admin-users-section")?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-action='activate-user-mcq']") : null;
+    if (!button) {
+      return;
+    }
+    setAdminUserMcqAccessFromRow(button.closest("tr[data-user-id]"), button, true).catch(() => null);
+  });
+
+  appEl.querySelector("[data-action='toggle-student-auto-mcq-access']")?.addEventListener("click", () => {
+    toggleStudentAutoMcqAccess().catch(() => null);
+  });
+
+  appEl.querySelector("[data-action='admin-users-toggle-mcq-held-filter']")?.addEventListener("click", () => {
+    state.adminUserFilterMcqHeld = !state.adminUserFilterMcqHeld;
+    rerenderAdminUsersPage();
   });
 
   appEl.querySelectorAll("[data-action='toggle-user-courses-access']").forEach((button) => {
@@ -54172,7 +54550,7 @@ async function loadAdminUserUniversityIntoDialog(context) {
   let errorMessage = "";
   try {
     const [profileResult] = await Promise.all([
-      client.from("profiles").select("id,role,university_id,college,mcq_access_enabled").eq("id", context.profileId).maybeSingle(),
+      client.from("profiles").select("id,role,university_id,college,mcq_access_enabled,mcq_access_held_at").eq("id", context.profileId).maybeSingle(),
       state.universitiesLoadedAt ? Promise.resolve(true) : loadUniversities(),
     ]);
     if (profileResult.error) {

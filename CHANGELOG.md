@@ -9,6 +9,18 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-28 — Auto MCQ access switch on Admin → Users
+- New **Auto MCQ access for new students** switch at the top of Admin → Users,
+  with a one-line explanation of the current state. Off: new Medicine students
+  at a university with the MCQ Bank get Video Courses only and wait for an admin
+  ("Waiting for MCQ"). Turning it back on activates everyone still waiting; the
+  confirmation shows how many (server count).
+- Held students show a **Waiting for MCQ** badge, "waiting since <date>" and an
+  **Activate MCQ** button (same write as the row's MCQ switch). New
+  **MCQ activation** filter and a "Show waiting for MCQ" quick filter.
+- Backend: migration `20260928125817_student_auto_mcq_access.sql` (already live;
+  not re-applied). Static cache bust: `2026-09-28.04`.
+
 ### 2026-09-28 — University and college at sign-up; MCQ Bank for eligible students only
 - Sign-up, Google onboarding and Complete profile ask for **University** and
   **College**. Only Medicine students at a university that offers the MCQ Bank

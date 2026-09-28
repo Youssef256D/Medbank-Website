@@ -189,6 +189,57 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-28 — Auto MCQ access for new students (admin switch)
+Backend: migration `20260928125817_student_auto_mcq_access.sql` (authored with
+the Flutter app; already live — **do not re-apply**). Flag
+`app_feature_flags.student_auto_mcq_access` (missing row = off, as
+`private.is_app_feature_enabled` reads it). Off: a new eligible student is
+created with `mcq_access_enabled = false` and `profiles.mcq_access_held_at`
+stamped. Setting `mcq_access_enabled = true` clears the hold (trigger); flipping
+the flag false → true activates every held student (trigger on the flag row).
+Static cache bust: `2026-09-28.04`.
+
+1. **Pure helpers in `universities-utils.js`**: flag key/description (a test
+   checks both against the migration), `FEATURE_FLAG_LABELS` /
+   `getFeatureFlagLabel`, `normalizeMcqAccessHeldAt`, `isMcqAccessHeld` (student
+   + stamp + access still off, so a just-activated row never shows the badge),
+   `formatMcqHeldSince`, `describeAutoMcqAccessState`,
+   `buildAutoMcqAccessConfirmMessage`. There is no generic flags list on the
+   website to add the label to; the map exists for when there is one.
+2. **Local user field `mcqAccessHeldAt`**, read by `readProfileMcqHoldFields`
+   (null = read and empty, absent = not read) wherever
+   `readProfileUniversityFields` is used. All five full profile selects plus the
+   university save/dialog selects now include `mcq_access_held_at`. The website
+   never writes the column.
+3. **Main.js section "Auto MCQ access for new students"** (just above University
+   administration): `loadStudentAutoMcqAccessFlag`, `loadMcqAccessHeldCount`
+   (`count: 'exact', head: true`, `role = student`, held not null),
+   `saveStudentAutoMcqAccessFlag` (upsert; its conflict path is the UPDATE the
+   release trigger listens for), `toggleStudentAutoMcqAccess`. **Nothing is
+   applied locally after a write** — the flag, `hydrateRelationalProfiles` and
+   the count are all re-read, and the switch shows what the server says. A failed
+   flag read keeps the last value and the switch stays disabled until one read
+   succeeds.
+4. **Per-row**: `renderAdminUserMcqHold` (badge, "waiting since", Activate MCQ),
+   always emitted for students (hidden when not held) so `patchAdminUserRowUi`
+   can swap it. The MCQ switch and Activate MCQ share
+   `setAdminUserMcqAccessFromRow` (the old inline handler, moved verbatim), which
+   after an enable re-reads that profile's `mcq_access_enabled` /
+   `mcq_access_held_at` into the cache via `applyServerUniversityFieldsToLocalUser`
+   and re-counts. Activate is wired by delegation on `#admin-users-section`.
+5. **Filter**: `state.adminUserFilterMcqHeld` → `matchesAdminUserFilters({ mcqHeld })`,
+   an "MCQ activation" select and a quick-filter button in the switch panel; Reset
+   filters clears it. Filtering happens before `ADMIN_USER_RENDER_LIMIT`.
+6. The admin poll re-reads the flag with the other flags and the held count while
+   the Users page is open.
+7. **Not verified end-to-end** as a signed-in admin (no session available to the
+   agent). Tests (`tests/auto-mcq-access.test.js`) run the real main.js functions
+   against a fake server that mimics both triggers; the panel/row markup was
+   rendered in the served page for a visual check.
+
+**Files touched:** `main.js`, `universities-utils.js`, `styles.css`, `index.html`,
+`tests/auto-mcq-access.test.js` (new), `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-28 — University + college decide MCQ Bank access
 Backend: migration `20260928083023_universities_and_college_mcq_eligibility.sql`
 (authored with the Flutter app; already live — **do not re-apply**). Only students
