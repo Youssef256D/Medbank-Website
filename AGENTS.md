@@ -189,6 +189,33 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-28 — Device limit exemptions
+Follow-up to the registered-device entry below. Static cache bust:
+`2026-09-28.02-local`.
+
+1. **Separate table, not a profiles column.** `public.user_device_exemptions`
+   (`user_id` PK -> `auth.users` on delete cascade, `created_at`, `created_by`)
+   with admin-only SELECT/INSERT/DELETE via `private.is_admin_user()`. Keeping it
+   off `profiles` leaves the access-gating table and its policies untouched.
+2. **The gate returns the admin/creator answer for exempt accounts**
+   (`status: allowed`, `devices_used: 0`, `device_limit: null`), checked right
+   after the role check and before any claim. The Flutter `DeviceAccess` model
+   already parses a null limit, so no app release is needed. An exempt account
+   claims nothing; a row registered before the exemption is kept and applies
+   again once the exemption is removed.
+3. **`private.user_device_gate` is now defined by this migration.** Its body is
+   the `20260927145744` body plus one block. If the Flutter repo ever changes
+   the gate, it must keep that block, or exemptions silently stop working.
+   The rollback restores the original body verbatim and drops the table.
+4. **UI:** the Device dialog reads the exemption alongside the device. A failed
+   exemption read is shown as an error with no toggle, never as "not exempt".
+   A duplicate insert (23505) counts as success.
+5. `teststudent@medbank.com` is exempted by the migration itself.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`supabase/migrations/20260928120000_user_device_exemptions.sql`, its rollback,
+`CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-28 — Admin Users: registered device (one device per student)
 One-device-per-student is **live again**, via the Flutter app: migration
 `20260927145744_one_device_per_student.sql` (authored in `Medbank-App`, applied

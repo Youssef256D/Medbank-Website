@@ -53090,11 +53090,35 @@ function getAdminUserDeviceLabel(device) {
   return String(device?.device_name || "").trim() || "another device";
 }
 
-function renderAdminUserDeviceDetails(device) {
+function renderAdminUserDeviceExemption(exemption) {
+  if (exemption.error) {
+    return `<p class="subtle">Device limit exemptions are unavailable: ${escapeHtml(exemption.error)}</p>`;
+  }
+  return `
+    <div class="admin-user-device-release admin-user-device-exemption">
+      <button class="btn ghost admin-btn-sm" type="button" data-action="toggle-user-device-exemption">
+        ${exemption.exempt ? "Remove exemption" : "Exempt from device limit"}
+      </button>
+      <p class="subtle">${exemption.exempt
+        ? "Removing the exemption puts the one-device limit back. The next device this student signs in on becomes their device."
+        : "Lets this student use the app on any number of devices."}</p>
+    </div>
+  `;
+}
+
+function renderAdminUserDeviceDetails(device, exemption) {
+  if (exemption.exempt) {
+    return `
+      <p class="admin-user-device-count">Device limit: <b>exempt</b></p>
+      <p class="subtle">This student can use the app on any number of devices.</p>
+      ${renderAdminUserDeviceExemption(exemption)}
+    `;
+  }
   if (!device) {
     return `
       <p class="admin-user-device-count">Devices used: <b>0 of 1</b></p>
       <p class="subtle">No device registered. The next device this student signs in on becomes their device.</p>
+      ${renderAdminUserDeviceExemption(exemption)}
     `;
   }
   const platform = String(device.platform || "").trim();
@@ -53113,6 +53137,7 @@ function renderAdminUserDeviceDetails(device) {
       <button class="btn danger admin-btn-sm" type="button" data-action="release-user-device">Release device</button>
       <p class="subtle">Lets the student sign in on a new device. The current device is signed out of MedBank within a minute.</p>
     </div>
+    ${renderAdminUserDeviceExemption(exemption)}
   `;
 }
 
@@ -53129,17 +53154,32 @@ async function loadAdminUserDeviceIntoDialog(context) {
     return;
   }
   let device = null;
+  const exemption = { exempt: false, error: "" };
   let errorMessage = "";
   try {
-    const { data, error } = await client
-      .from("user_devices")
-      .select("device_name, platform, registered_at, last_seen_at")
-      .eq("user_id", context.profileId)
-      .maybeSingle();
-    if (error) {
-      errorMessage = error.message || "Could not load the registered device.";
+    const [deviceResult, exemptionResult] = await Promise.all([
+      client
+        .from("user_devices")
+        .select("device_name, platform, registered_at, last_seen_at")
+        .eq("user_id", context.profileId)
+        .maybeSingle(),
+      client
+        .from("user_device_exemptions")
+        .select("user_id")
+        .eq("user_id", context.profileId)
+        .maybeSingle()
+    ]);
+    if (deviceResult.error) {
+      errorMessage = deviceResult.error.message || "Could not load the registered device.";
     } else {
-      device = data || null;
+      device = deviceResult.data || null;
+    }
+    // A failed exemption read must not hide the device, and must not be shown
+    // as "not exempt" either: surface it and offer no toggle.
+    if (exemptionResult.error) {
+      exemption.error = exemptionResult.error.message || "Could not load the exemption.";
+    } else {
+      exemption.exempt = Boolean(exemptionResult.data);
     }
   } catch (error) {
     errorMessage = error?.message || "Could not load the registered device.";
@@ -53159,11 +53199,59 @@ async function loadAdminUserDeviceIntoDialog(context) {
     });
     return;
   }
-  body.innerHTML = renderAdminUserDeviceDetails(device);
+  body.innerHTML = renderAdminUserDeviceDetails(device, exemption);
   const releaseButton = body.querySelector("[data-action='release-user-device']");
   releaseButton?.addEventListener("click", () => {
     releaseAdminUserDevice(context, device, releaseButton);
   });
+  const exemptionButton = body.querySelector("[data-action='toggle-user-device-exemption']");
+  exemptionButton?.addEventListener("click", () => {
+    toggleAdminUserDeviceExemption(context, exemption.exempt, exemptionButton);
+  });
+}
+
+async function toggleAdminUserDeviceExemption(context, currentlyExempt, button) {
+  const confirmed = window.confirm(
+    currentlyExempt
+      ? `Remove the device limit exemption?\n\n${context.name} will be limited to one device again. The next device they sign in on becomes their registered device.`
+      : `Exempt from the device limit?\n\n${context.name} will be able to use MedBank on any number of devices until you remove the exemption.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    toast("Supabase is not connected.");
+    return;
+  }
+  const token = adminUserDeviceDialogToken;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  let errorMessage = "";
+  try {
+    const table = client.from("user_device_exemptions");
+    const { error } = currentlyExempt
+      ? await table.delete().eq("user_id", context.profileId)
+      : await table.insert({ user_id: context.profileId });
+    // 23505: already exempt (e.g. another admin got there first) - the goal holds.
+    if (error && error.code !== "23505") {
+      errorMessage = error.message || "Could not update the exemption.";
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not update the exemption.";
+  }
+  if (errorMessage) {
+    toast(errorMessage);
+    if (token === adminUserDeviceDialogToken) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+    }
+    return;
+  }
+  toast(currentlyExempt ? "Exemption removed." : "Student exempted from the device limit.");
+  if (token === adminUserDeviceDialogToken) {
+    loadAdminUserDeviceIntoDialog(context);
+  }
 }
 
 async function releaseAdminUserDevice(context, device, button) {

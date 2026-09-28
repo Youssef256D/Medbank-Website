@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-28 — Device limit exemptions
+- Admins can exempt a student from the one-device limit (and remove the
+  exemption) from the same **Device** dialog. Exempt students get the same
+  "allowed, no limit" answer admins and creators already get, so the mobile app
+  needs no update. `teststudent@medbank.com` is exempted by the migration.
+- Migration `20260928120000_user_device_exemptions.sql` (rollback provided):
+  new admin-only `user_device_exemptions` table + the device gate checks it.
+
 ### 2026-09-28 — Admin Users: registered device
 - Student rows on the admin Users page have a **Device** button showing the one
   app installation the account is bound to ("Devices used: 0/1 of 1", device
