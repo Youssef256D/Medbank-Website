@@ -20908,3 +20908,345 @@ small.admin-account-approval-gap {
 .admin-user-university-form label { display: grid; gap: 0.4rem; }
 .admin-university-editor label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 0.5rem; }
 .admin-university-editor input[type="checkbox"] { width: auto; }
+
+/* Shared admin UI pieces */
+
+.admin-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.admin-page-header-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.admin-page-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.admin-page-header-title h3 {
+  margin: 0;
+}
+
+.admin-page-header-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.admin-page-header-help {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 999px;
+}
+
+.admin-page-header-help:hover,
+.admin-page-header-help:focus-visible {
+  color: var(--brand-strong);
+}
+
+.admin-page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.admin-help-note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+  padding: 0.65rem 0.85rem;
+}
+
+.admin-help-note-title {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-help-note ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.admin-icon-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  flex: 0 0 auto;
+}
+
+.admin-icon-btn:hover {
+  border-color: var(--brand);
+  color: var(--brand-strong);
+}
+
+.admin-icon-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.admin-icon-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-icon-btn.is-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.admin-icon-btn.is-primary:hover {
+  background: var(--brand-strong);
+  border-color: var(--brand-strong);
+  color: #fff;
+}
+
+.admin-icon-btn.is-active {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-strong);
+}
+
+.admin-icon-btn-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.admin-icon-btn-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
+body.is-admin-dialog-open {
+  overflow: hidden;
+}
+
+.admin-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  height: 100vh;
+  padding: clamp(0.75rem, 2vw, 1.5rem);
+}
+
+.admin-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.58);
+  cursor: pointer;
+}
+
+.admin-dialog-panel {
+  position: relative;
+  z-index: 1;
+  width: min(560px, calc(100vw - 2rem));
+  max-height: min(720px, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-strong);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.34);
+}
+
+.admin-dialog-panel:focus-visible,
+.admin-dialog-panel:focus {
+  outline: none;
+}
+
+.admin-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.1rem 1.2rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.admin-dialog-head h3 {
+  margin: 0;
+}
+
+.admin-dialog-head .subtle {
+  margin: 0.25rem 0 0;
+}
+
+.admin-dialog-body {
+  padding: 1.1rem 1.2rem;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.admin-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 0.9rem 1.2rem 1.1rem;
+  border-top: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+  .admin-dialog {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .admin-dialog-panel {
+    width: 100%;
+    max-width: 100%;
+    max-height: min(88vh, calc(100vh - 1rem));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .admin-icon-btn,
+  .admin-users-filter-chip button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Admin Users toolbar (page header actions, pending chip, filter chips) */
+
+.admin-users-toolbar-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 260px;
+  max-width: 100%;
+}
+
+.admin-users-toolbar-search-icon {
+  position: absolute;
+  left: 0.65rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.admin-users-toolbar-search input {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  padding: 0 0.75rem 0 2.15rem;
+}
+
+.admin-users-pending-chip {
+  border: 0;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.7rem;
+}
+
+.admin-users-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.admin-users-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.35rem 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 0.78rem;
+}
+
+.admin-users-filter-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.admin-users-filter-chip button:hover,
+.admin-users-filter-chip button:focus-visible {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.admin-users-filter-chips-clear {
+  margin-left: 0.2rem;
+}
+
+.admin-users-settings-block {
+  display: grid;
+  gap: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .admin-page-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .admin-users-toolbar-search {
+    width: 100%;
+    order: -1;
+  }
+}
