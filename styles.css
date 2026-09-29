@@ -21997,3 +21997,12 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
     flex-wrap: wrap;
   }
 }
+
+/* An open .admin-dialog inside the blurred admin shell was positioned
+   against the shell (backdrop-filter creates a containing block for
+   position: fixed), so it slid under the top bar when the page was
+   scrolled. Drop the blur while a dialog is open. */
+.panel.admin-shell:has(.admin-dialog) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
