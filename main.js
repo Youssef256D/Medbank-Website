@@ -32461,8 +32461,20 @@ function positionAdminRowMenu(menu) {
   const belowTop = toggleBox.bottom + gap;
   const aboveTop = toggleBox.top - menuBox.height - gap;
   const top = belowTop + menuBox.height <= viewportHeight - gutter || aboveTop < gutter ? belowTop : aboveTop;
-  list.style.left = `${Math.round(left)}px`;
-  list.style.top = `${Math.round(Math.max(gutter, top))}px`;
+  const targetLeft = Math.round(left);
+  const targetTop = Math.round(Math.max(gutter, top));
+  list.style.left = `${targetLeft}px`;
+  list.style.top = `${targetTop}px`;
+  // An ancestor with backdrop-filter/transform/filter (e.g. .panel.admin-shell)
+  // becomes the containing block for position: fixed, so the list lands offset
+  // by that ancestor's position. Measure where it really went and cancel it.
+  const placed = list.getBoundingClientRect();
+  const offsetX = Math.round(placed.left) - targetLeft;
+  const offsetY = Math.round(placed.top) - targetTop;
+  if (offsetX || offsetY) {
+    list.style.left = `${targetLeft - offsetX}px`;
+    list.style.top = `${targetTop - offsetY}px`;
+  }
 }
 
 function openAdminRowMenu(menu, focusEdge = "") {
