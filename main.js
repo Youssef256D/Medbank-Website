@@ -32681,42 +32681,48 @@ function renderAdminUniversitiesSection() {
       "Hiding a university removes it from sign-up but keeps its students. A university with students can't be deleted — hide it instead.",
     ],
   });
-  const dialogTitle = draft ? (draft.id ? `Edit ${String(draft.name || "university")}` : "Add university") : "";
-  const dialogSubtitle = draft?.id ? `<p class="admin-dialog-subtitle">
-    <span>${escapeHtml(draft.name || "University")}</span>
-    ${draft.name_ar ? `<span dir="rtl" lang="ar">${escapeHtml(draft.name_ar)}</span>` : ""}
-  </p>` : "";
   return `<section class="card admin-section" id="admin-universities-section">
     ${pageHeader}
     ${state.universitiesError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.universitiesError)}</div>` : ""}
     <div class="table-wrap"><table><thead><tr><th>University</th><th>Sort</th><th>Sign-up</th><th>MCQ Bank</th><th>Students</th><th>Actions</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="6">${escapeHtml(emptyRow)}</td></tr>`}</tbody></table></div>
-    ${draft ? `<div class="admin-dialog" data-admin-dialog="university">
-      <button type="button" class="admin-dialog-backdrop" data-university-cancel aria-label="Close university editor" ${state.adminUniversitySaving ? "disabled" : ""}></button>
-      <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="admin-university-dialog-title">
-        <div class="admin-dialog-head">
-          <div><h3 id="admin-university-dialog-title">${escapeHtml(dialogTitle)}</h3>${dialogSubtitle}</div>
-          <button type="button" class="admin-dialog-close" data-university-cancel aria-label="Close university editor" title="Close" ${state.adminUniversitySaving ? "disabled" : ""}>×</button>
-        </div>
-        <form id="admin-university-form" class="admin-university-editor">
-          <fieldset ${busy ? "disabled" : ""}>
-            <div class="form-row">
-              <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" /></label>
-              <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
-            </div>
-            <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
-            <p class="subtle admin-university-sort-hint">Lower numbers appear first.</p>
-            <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
-            <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
-            <div class="admin-dialog-actions">
-              <button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save"}</button>
-              <button class="btn ghost" type="button" data-university-cancel>Cancel</button>
-            </div>
-          </fieldset>
-        </form>
-      </section>
-    </div>` : ""}
   </section>`;
+}
+
+function renderAdminUniversityDialog() {
+  const draft = state.adminUniversityDraft;
+  if (!draft) return "";
+  const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving);
+  const dialogTitle = draft.id ? `Edit ${String(draft.name || "university")}` : "Add university";
+  const dialogSubtitle = draft.id ? `<p class="admin-dialog-subtitle">
+    <span>${escapeHtml(draft.name || "University")}</span>
+    ${draft.name_ar ? `<span dir="rtl" lang="ar">${escapeHtml(draft.name_ar)}</span>` : ""}
+  </p>` : "";
+  return `<div class="admin-dialog" data-admin-dialog="university">
+    <button type="button" class="admin-dialog-backdrop" data-university-cancel aria-label="Close university editor" ${state.adminUniversitySaving ? "disabled" : ""}></button>
+    <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="admin-university-dialog-title">
+      <div class="admin-dialog-head">
+        <div><h3 id="admin-university-dialog-title">${escapeHtml(dialogTitle)}</h3>${dialogSubtitle}</div>
+        <button type="button" class="admin-dialog-close" data-university-cancel aria-label="Close university editor" title="Close" ${state.adminUniversitySaving ? "disabled" : ""}>×</button>
+      </div>
+      <form id="admin-university-form" class="admin-university-editor">
+        <fieldset ${busy ? "disabled" : ""}>
+          <div class="form-row">
+            <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" /></label>
+            <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
+          </div>
+          <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
+          <p class="subtle admin-university-sort-hint">Lower numbers appear first.</p>
+          <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
+          <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
+          <div class="admin-dialog-actions">
+            <button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save"}</button>
+            <button class="btn ghost" type="button" data-university-cancel>Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+  </div>`;
 }
 
 function captureAdminUniversityDraft(form) {
@@ -32817,8 +32823,8 @@ async function runAdminUniversityMutation(action, options = {}) {
 function wireAdminUniversities() {
   const section = appEl.querySelector("#admin-universities-section");
   if (!section) return;
-  const form = section.querySelector("#admin-university-form");
-  const dialog = section.querySelector("[data-admin-dialog='university']");
+  const form = appEl.querySelector("#admin-university-form");
+  const dialog = appEl.querySelector("[data-admin-dialog='university']");
   const capture = () => captureAdminUniversityDraft(form);
   const findUniversity = (id) => getCachedUniversities().find((entry) => entry.id === id) || null;
   form?.addEventListener("input", capture);
@@ -32860,7 +32866,7 @@ function wireAdminUniversities() {
     if (state.adminUniversityDraftDirty && !window.confirm("Discard your changes to this university?")) return;
     beginAdminUniversityEditor(newAdminUniversityDraft(), "new");
   });
-  section.querySelectorAll("[data-university-cancel]").forEach((button) => button.addEventListener("click", () => {
+  appEl.querySelectorAll("[data-university-cancel]").forEach((button) => button.addEventListener("click", () => {
     requestAdminUniversityEditorClose(form);
   }));
   section.querySelectorAll("[data-university-edit]").forEach((button) => button.addEventListener("click", () => {
@@ -35165,6 +35171,9 @@ function renderAdmin() {
 
   if (activeAdminPage === "universities") {
     pageContent = renderAdminUniversitiesSection();
+    // Rendered outside the admin shell/card: a hovered card gets a
+    // transform, which would trap a position: fixed dialog inside it.
+    adminGlobalOverlay = renderAdminUniversityDialog();
   }
 
   if (activeAdminPage === "ai-agents") {

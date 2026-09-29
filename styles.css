@@ -22090,6 +22090,33 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
   margin: 0;
   font-size: 0.82rem;
 }
+
+/* Switches: track sits right next to ON/OFF, and every switch ends at the
+   same right edge so the three rows line up. */
+.admin-settings-section .admin-access-switch {
+  min-width: 0;
+  min-height: 32px;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+.admin-settings-section .admin-access-switch .admin-access-switch-state {
+  min-width: 2.2em;
+  text-align: left;
+}
+.admin-settings-section .admin-auto-mcq-head .admin-access-switch {
+  width: 100%;
+  justify-content: flex-start;
+}
+.admin-settings-section .admin-auto-mcq-head .admin-access-switch .admin-access-switch-text {
+  flex: 1 1 auto;
+  text-align: left;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.admin-settings-section .admin-access-switch:not(:disabled):hover {
+  transform: none;
+  box-shadow: none;
+}
 @media (max-width: 640px) {
   .admin-settings-row {
     flex-wrap: wrap;

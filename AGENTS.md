@@ -204,6 +204,14 @@ Frontend only; no schema, RLS, auth or access change. Static cache bust:
    implementations were merged into one: never add a second
    `admin-help-toggle` listener — two listeners toggle the note twice and it
    never opens.
+1a. **Render every admin dialog through `adminGlobalOverlay`, never inside the
+   page content.** `.panel.admin-shell` has `backdrop-filter`, and a hovered
+   `.card` gets a GSAP `transform: translateY(-2px)` — either one becomes the
+   containing block for `position: fixed`, so a dialog inside them only covers
+   that card and slides under the top bar. Universities was moved out for this
+   (`renderAdminUniversityDialog`); its wiring therefore looks the dialog up via
+   `appEl`, not the section. A `:has(.admin-dialog)` rule also drops the shell
+   blur while a dialog is open, as a backstop.
 2. **Row menu inside the blurred panel.** `.panel.admin-shell` has
    `backdrop-filter`, which makes it the containing block for
    `position: fixed`; `positionAdminRowMenu` measures where the list landed and
