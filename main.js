@@ -205,10 +205,13 @@ const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approva
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
 const ADMIN_NAV_GROUPS = [
   {
+    id: "overview",
     label: "Overview",
+    collapsible: false,
     items: [{ page: "dashboard", label: "Dashboard" }],
   },
   {
+    id: "people",
     label: "People",
     items: [
       { page: "users", label: "Users" },
@@ -217,6 +220,7 @@ const ADMIN_NAV_GROUPS = [
     ],
   },
   {
+    id: "mcq",
     label: "MCQ Bank",
     items: [
       { page: "mcq-subjects", label: "Subjects" },
@@ -225,6 +229,7 @@ const ADMIN_NAV_GROUPS = [
     ],
   },
   {
+    id: "video-courses",
     label: "Video Courses",
     items: [
       { section: "overview", label: "Catalog" },
@@ -238,6 +243,7 @@ const ADMIN_NAV_GROUPS = [
     ],
   },
   {
+    id: "messaging",
     label: "Messaging",
     items: [
       { page: "notifications", label: "Notifications" },
@@ -245,6 +251,7 @@ const ADMIN_NAV_GROUPS = [
     ],
   },
   {
+    id: "system",
     label: "System",
     items: [
       { page: "site-access", label: "Site Access" },
@@ -32571,34 +32578,103 @@ function renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection) {
   const pendingApprovalCount = (state.adminCoursesPlatformCourses || []).filter(
     (course) => String(course?.review_status || "").trim() === "pending",
   ).length;
-  return ADMIN_NAV_GROUPS.map((group) => `
-    <div class="admin-nav-group" role="group" aria-label="${escapeHtml(group.label)}">
-      <p class="admin-nav-group-label">${escapeHtml(group.label)}</p>
-      ${group.items.map((item) => {
-        const isSection = Boolean(item.section);
-        const isActive = isSection
-          ? activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE && activeCoursePlatformSection === item.section
-          : activeAdminPage === item.page;
-        const badgeCount = item.section === "requests"
-          ? pendingRequestCount
-          : item.section === "approvals"
-            ? pendingApprovalCount
-            : 0;
-        const navBadge = badgeCount
-          ? `<span class="nav-badge">${badgeCount > 99 ? "99+" : badgeCount}</span>`
-          : "";
-        const dataAttributes = isSection
-          ? `data-action="admin-course-platform-section" data-section="${escapeHtml(item.section)}"`
-          : `data-action="admin-page" data-page="${escapeHtml(item.page)}"`;
-        return `
-          <button class="btn ghost ${isActive ? "is-active" : ""}" type="button" ${dataAttributes}${isActive ? ' aria-current="page"' : ""}>
-            <span>${escapeHtml(item.label)}</span>
-            ${navBadge}
-          </button>
-        `;
-      }).join("")}
-    </div>
-  `).join("");
+  const badgeFor = (item) => (item.section === "requests"
+    ? pendingRequestCount
+    : item.section === "approvals"
+      ? pendingApprovalCount
+      : 0);
+  const badgeHtml = (count) => (count
+    ? `<span class="nav-badge">${count > 99 ? "99+" : count}</span>`
+    : "");
+
+  // Whenever the current page changes (sidebar, in-page links, first load),
+  // open the group that holds it. Afterwards the admin may collapse it again,
+  // and polling re-renders keep that choice because the page did not change.
+  const activeKey = activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE
+    ? `${activeAdminPage}:${activeCoursePlatformSection}`
+    : activeAdminPage;
+  const activeGroup = ADMIN_NAV_GROUPS.find((group) => group.items.some(
+    (item) => isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection),
+  ));
+  if (activeGroup && state.adminNavLastActiveKey !== activeKey) {
+    state.adminNavLastActiveKey = activeKey;
+    if (activeGroup.collapsible !== false && getAdminNavOpenGroups()[activeGroup.id] !== true) {
+      setAdminNavGroupOpen(activeGroup.id, true);
+    }
+  }
+  const openGroups = getAdminNavOpenGroups();
+
+  return ADMIN_NAV_GROUPS.map((group) => {
+    const itemsHtml = group.items.map((item) => {
+      const isActive = isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection);
+      const dataAttributes = item.section
+        ? `data-action="admin-course-platform-section" data-section="${escapeHtml(item.section)}"`
+        : `data-action="admin-page" data-page="${escapeHtml(item.page)}"`;
+      return `
+        <button class="btn ghost ${isActive ? "is-active" : ""}" type="button" ${dataAttributes}${isActive ? ' aria-current="page"' : ""}>
+          <span>${escapeHtml(item.label)}</span>
+          ${badgeHtml(badgeFor(item))}
+        </button>
+      `;
+    }).join("");
+    if (group.collapsible === false) {
+      return `<div class="admin-nav-group is-static" role="group" aria-label="${escapeHtml(group.label)}">${itemsHtml}</div>`;
+    }
+    const isOpen = openGroups[group.id] === true;
+    const groupBadgeCount = group.items.reduce((sum, item) => sum + badgeFor(item), 0);
+    const containsActive = group === activeGroup;
+    const itemsId = `admin-nav-group-items-${escapeHtml(group.id)}`;
+    return `
+      <div class="admin-nav-group ${isOpen ? "is-open" : "is-collapsed"} ${containsActive ? "has-active" : ""}" data-nav-group="${escapeHtml(group.id)}">
+        <button class="admin-nav-group-toggle" type="button" data-action="admin-nav-group-toggle" data-group="${escapeHtml(group.id)}" aria-expanded="${isOpen ? "true" : "false"}" aria-controls="${itemsId}">
+          <svg class="admin-nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
+          <span class="admin-nav-group-label">${escapeHtml(group.label)}</span>
+          <span class="admin-nav-group-count">${group.items.length}</span>
+          <span class="admin-nav-group-badge">${badgeHtml(groupBadgeCount)}</span>
+        </button>
+        <div class="admin-nav-group-items" id="${itemsId}" role="group" aria-label="${escapeHtml(group.label)}">
+          ${itemsHtml}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// Which sidebar groups are open. Per-browser UI preference only, so it lives in
+// localStorage (wrapped: private windows can throw) rather than any synced key.
+const ADMIN_NAV_OPEN_GROUPS_STORAGE_KEY = "medbank_admin_nav_open_groups_v1";
+
+function getAdminNavOpenGroups() {
+  if (state.adminNavOpenGroups && typeof state.adminNavOpenGroups === "object") {
+    return state.adminNavOpenGroups;
+  }
+  let stored = {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(ADMIN_NAV_OPEN_GROUPS_STORAGE_KEY) || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      stored = parsed;
+    }
+  } catch (_error) {
+    stored = {};
+  }
+  state.adminNavOpenGroups = stored;
+  return stored;
+}
+
+function setAdminNavGroupOpen(groupId, open) {
+  const openGroups = { ...getAdminNavOpenGroups(), [groupId]: Boolean(open) };
+  state.adminNavOpenGroups = openGroups;
+  try {
+    window.localStorage.setItem(ADMIN_NAV_OPEN_GROUPS_STORAGE_KEY, JSON.stringify(openGroups));
+  } catch (_error) {
+    // Not persisted; the in-memory state still applies for this session.
+  }
+}
+
+function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection) {
+  return item.section
+    ? activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE && activeCoursePlatformSection === item.section
+    : activeAdminPage === item.page;
 }
 
 function renderAdmin() {
@@ -34588,6 +34664,34 @@ function applyAdminPageTransition(previousPage, nextPage) {
 function wireAdmin() {
   wireAdminPopups();
   wireAdminUniversities();
+
+  // In the phone/tablet rail, bring the current page into view. scrollLeft,
+  // not scrollIntoView, so the page itself never jumps.
+  const adminNavRail = appEl.querySelector(".admin-sidebar-nav");
+  const adminNavActive = adminNavRail?.querySelector("[aria-current='page']");
+  if (adminNavRail && adminNavActive && adminNavRail.scrollWidth > adminNavRail.clientWidth) {
+    const railBox = adminNavRail.getBoundingClientRect();
+    const activeBox = adminNavActive.getBoundingClientRect();
+    if (activeBox.left < railBox.left || activeBox.right > railBox.right) {
+      adminNavRail.scrollLeft += activeBox.left - railBox.left - 16;
+    }
+  }
+
+  // Collapse/expand is DOM-only so it never re-renders (and resets) the page.
+  appEl.querySelectorAll("[data-action='admin-nav-group-toggle']").forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const groupId = String(toggle.getAttribute("data-group") || "").trim();
+      const groupEl = toggle.closest(".admin-nav-group");
+      if (!groupId || !groupEl) {
+        return;
+      }
+      const open = !groupEl.classList.contains("is-open");
+      groupEl.classList.toggle("is-open", open);
+      groupEl.classList.toggle("is-collapsed", !open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      setAdminNavGroupOpen(groupId, open);
+    });
+  });
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
 
   appEl.querySelectorAll("[data-action='admin-page']").forEach((button) => {

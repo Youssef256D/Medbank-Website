@@ -4452,22 +4452,105 @@ body.theme-comfort .btn {
   margin-top: 0.7rem;
 }
 
-.admin-nav-group {
-  display: grid;
-  gap: 0.42rem;
+.admin-sidebar-nav {
+  gap: 0.3rem;
 }
 
 .admin-nav-group + .admin-nav-group {
-  margin-top: 0.9rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.3rem;
+}
+
+.admin-nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.5rem 0.4rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-nav-group-toggle:hover {
+  background: var(--brand-soft);
+}
+
+.admin-nav-group-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.admin-nav-group-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+
+.admin-nav-group.is-open .admin-nav-group-chevron {
+  transform: rotate(90deg);
 }
 
 .admin-nav-group-label {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.7rem;
-  letter-spacing: 0.09em;
+  flex: 1 1 auto;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
   line-height: 1.2;
   text-transform: uppercase;
+}
+
+.admin-nav-group.has-active .admin-nav-group-label {
+  color: var(--brand-strong);
+}
+
+.admin-nav-group-count {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+/* A collapsed group still surfaces its pending counts. */
+.admin-nav-group-badge:empty,
+.admin-nav-group.is-open .admin-nav-group-badge {
+  display: none;
+}
+
+.admin-nav-group-badge .nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--brand-strong);
+  color: #fff;
+  font-size: 0.68rem;
+}
+
+.admin-nav-group-items {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.1rem 0 0.4rem 0.95rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--line);
+}
+
+.admin-nav-group.is-collapsed .admin-nav-group-items {
+  display: none;
+}
+
+.admin-nav-group.is-static {
+  display: grid;
+  margin-bottom: 0.2rem;
+}
+
+.admin-nav-group-items .btn {
+  min-height: 34px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.88rem;
 }
 
 .admin-sidebar-nav .btn {
@@ -10894,19 +10977,38 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
     display: none;
   }
 
-  .admin-nav-group {
+  /* Rail mode: each group is a chip; opening it shows its pages inline. */
+  .admin-nav-group,
+  .admin-nav-group.is-static,
+  .admin-nav-group.is-open .admin-nav-group-items {
     display: contents;
+  }
+
+  .admin-nav-group + .admin-nav-group {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .admin-nav-group-toggle {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 42px;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .admin-nav-group.is-open .admin-nav-group-toggle {
+    border-color: color-mix(in srgb, var(--brand) 55%, transparent);
   }
 
   .admin-nav-group-label {
     flex: 0 0 auto;
-    align-self: center;
-    padding-left: 0.55rem;
-    white-space: nowrap;
   }
 
-  .admin-nav-group:first-child .admin-nav-group-label {
-    padding-left: 0;
+  .admin-nav-group-items .btn {
+    min-height: 42px;
   }
 
   .admin-sidebar-nav .btn {
@@ -12365,19 +12467,38 @@ html body :is(.exam-choice .exam-choice-text,
     white-space: nowrap;
   }
 
-  .admin-nav-group {
+  /* Rail mode: each group is a chip; opening it shows its pages inline. */
+  .admin-nav-group,
+  .admin-nav-group.is-static,
+  .admin-nav-group.is-open .admin-nav-group-items {
     display: contents;
+  }
+
+  .admin-nav-group + .admin-nav-group {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .admin-nav-group-toggle {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 42px;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .admin-nav-group.is-open .admin-nav-group-toggle {
+    border-color: color-mix(in srgb, var(--brand) 55%, transparent);
   }
 
   .admin-nav-group-label {
     flex: 0 0 auto;
-    align-self: center;
-    padding-left: 0.48rem;
-    white-space: nowrap;
   }
 
-  .admin-nav-group:first-child .admin-nav-group-label {
-    padding-left: 0;
+  .admin-nav-group-items .btn {
+    min-height: 42px;
   }
 
   #admin-cloud-sync-slot .cloud-sync-pill {

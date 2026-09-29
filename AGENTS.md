@@ -191,7 +191,7 @@ can reactivate them.
 
 ### 2026-09-29 — Admin panel: one grouped sidebar (step 1 of the admin split)
 Navigation only; no data, sync, Supabase, auth or access behaviour changed.
-Static cache bust: `2026-09-29.01-local`.
+Static cache bust: `2026-09-29.03-local`.
 
 1. **`ADMIN_NAV_GROUPS`** (next to `ADMIN_DATA_PAGES`) is the single nav
    definition. An item is `{ page }` (a data page, `data-action="admin-page"`)
@@ -228,6 +228,25 @@ Static cache bust: `2026-09-29.01-local`.
    already had its own guards). Group labels render inline in the rail via
    `.admin-nav-group { display: contents }`.
 7. Desktop sidebar scrolls internally (`max-height: calc(100vh - 2rem)`).
+7a. **Collapsible groups.** Each group except Overview (`collapsible: false`,
+   rendered as a plain item) has a header button
+   (`data-action="admin-nav-group-toggle"`). Toggling is **DOM-only** — it flips
+   `is-open`/`is-collapsed` + `aria-expanded` and saves; it never calls
+   `render()`, so it cannot reset a half-filled admin form. Open state lives in
+   `state.adminNavOpenGroups`, persisted to `localStorage`
+   `medbank_admin_nav_open_groups_v1` (try/catch; a UI preference, not synced).
+   Missing key = collapsed. `renderAdminSidebarNav` opens the group holding the
+   current page **only when the current page changed** (tracked in
+   `state.adminNavLastActiveKey`), so every navigation path (sidebar, in-page
+   "Open in builder" links, first load) reveals the active item, while the
+   30 s admin poll re-render does not undo an admin's deliberate collapse. A
+   collapsed group shows the summed requests/approvals badge on its header.
+   In rail mode (≤960px) groups are chips; an open group's items render inline
+   (`display: contents`), and `wireAdmin` scrolls the rail (`scrollLeft`, not
+   `scrollIntoView`, so the page does not jump) to the current page.
+   The helpers (`getAdminNavOpenGroups`, `setAdminNavGroupOpen`,
+   `isAdminNavItemActive`) are placed **after** `renderAdminSidebarNav` on
+   purpose — `tests/app-popups-utils.test.js` slices main.js up to that function.
 8. **Verified** in the preview as the local demo admin: 6 groups / 21 buttons;
    Users → Catalog → Enrollment Requests → Activity → Course Builder → Users
    each opens the right page with exactly one `aria-current`; top tabs hidden;

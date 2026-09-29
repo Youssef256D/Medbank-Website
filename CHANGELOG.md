@@ -19,6 +19,12 @@ hosted Supabase is the source of truth.
 - The current page is now actually highlighted (it never was — see AGENTS.md).
 - The sync help text is folded under **About sync**.
 - Tablet widths (641–960px) use the same one-row scrolling menu as phones.
+- **Collapsible groups.** Each group has a header (arrow, name, page count)
+  that opens and closes it. Only the group holding the current page starts
+  open, so the sidebar fits on screen. A collapsed group still shows its
+  pending count. Open/closed choices are remembered in this browser. On phones
+  and tablets each group is a chip in the scrolling row, and the row scrolls to
+  the current page.
 
 ### 2026-09-28 — Auto MCQ access switch on Admin → Users
 - New **Auto MCQ access for new students** switch at the top of Admin → Users,
