@@ -22006,3 +22006,99 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
+
+/* Users > Approval settings dialog */
+.admin-settings-section {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--line);
+}
+.admin-settings-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.admin-settings-section-title {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.admin-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+}
+.admin-settings-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.admin-settings-row-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.admin-settings-row-desc {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.admin-settings-row-control {
+  flex: 0 0 auto;
+}
+.admin-settings-row .admin-access-switch .admin-access-switch-text {
+  display: none;
+}
+.admin-settings-row .admin-access-switch {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+.admin-settings-section .admin-auto-mcq-panel {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  margin: 0;
+}
+.admin-settings-section .admin-auto-mcq-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.admin-settings-section .admin-auto-mcq-head .admin-access-switch {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  flex: 1 1 auto;
+  justify-content: space-between;
+}
+.admin-settings-section .admin-auto-mcq-state {
+  margin: 0;
+  font-size: 0.82rem;
+}
+@media (max-width: 640px) {
+  .admin-settings-row {
+    flex-wrap: wrap;
+  }
+  .admin-settings-row-control {
+    width: 100%;
+  }
+  .admin-settings-row-control .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}

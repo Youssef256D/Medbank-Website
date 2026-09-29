@@ -33921,11 +33921,6 @@ function renderAdmin() {
         ${activeUserFilterCount ? `<span class="admin-icon-btn-badge">${activeUserFilterCount}</span>` : ""}
       </span>
     `;
-    const usersToolbarExportButtonHtml = renderAdminIconButton({
-      icon: "download",
-      label: `Export ${filteredUsers.length} users as CSV`,
-      attrs: `data-action="admin-users-export-csv" ${filteredUsers.length ? "" : "disabled"}`,
-    });
     const usersToolbarAddButtonHtml = renderAdminIconButton({
       icon: "plus",
       label: "Add user",
@@ -33941,7 +33936,6 @@ function renderAdmin() {
       ${usersToolbarSearchHtml}
       ${usersToolbarPendingChipHtml}
       ${usersToolbarFiltersButtonHtml}
-      ${usersToolbarExportButtonHtml}
       ${usersToolbarAddButtonHtml}
       ${usersToolbarSettingsButtonHtml}
     `;
@@ -34087,25 +34081,54 @@ function renderAdmin() {
         title: "Approval settings",
         closeAction: "admin-users-close-settings",
         body: `
-          <div class="admin-users-settings-block">
-            <button class="admin-access-switch" type="button" data-action="toggle-student-auto-approval" role="switch" aria-checked="${autoApprovalEnabled ? "true" : "false"}" ${autoApprovalBusy ? "disabled" : ""} title="Approve pending students automatically once their profile is complete">
-              ${renderAdminAccessSwitchContent(autoApprovalBusy ? "Auto-approve..." : "Auto-approve", autoApprovalEnabled)}
-            </button>
-            <p class="subtle">
-              ${autoApprovalEnabled
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Approvals</h4>
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">Auto-approve new students</p>
+                <p class="admin-settings-row-desc">
+                  ${autoApprovalEnabled
             ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. This runs in the database, so it keeps working when no admin is signed in.`
             : "New student accounts require admin approval."}
-            </p>
+                </p>
+              </div>
+              <div class="admin-settings-row-control">
+                <button class="admin-access-switch" type="button" data-action="toggle-student-auto-approval" role="switch" aria-checked="${autoApprovalEnabled ? "true" : "false"}" ${autoApprovalBusy ? "disabled" : ""} title="Approve pending students automatically once their profile is complete">
+                  ${renderAdminAccessSwitchContent(autoApprovalBusy ? "Auto-approve..." : "Auto-approve", autoApprovalEnabled)}
+                </button>
+              </div>
+            </div>
             ${state.studentAutoApprovalError
             ? `<p class="subtle" style="color: var(--danger);">${escapeHtml(state.studentAutoApprovalError)}</p>`
             : ""}
-          </div>
-          ${renderAdminAutoMcqAccessPanel(users)}
-          <div class="admin-users-settings-block">
-            <button class="btn ${approveAllPendingRunning ? "is-loading" : ""}" type="button" data-action="approve-all-pending" ${pendingCount && !approveAllPendingRunning ? "" : "disabled"}>
-              ${approveAllPendingRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : `Approve all pending (${pendingCount})`}
-            </button>
-          </div>
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">Approve all pending</p>
+                <p class="admin-settings-row-desc">${pendingCount ? `${pendingCount} student${pendingCount === 1 ? "" : "s"} waiting for approval` : "Nobody is waiting for approval."}</p>
+              </div>
+              <div class="admin-settings-row-control">
+                <button class="btn ghost admin-btn-sm ${approveAllPendingRunning ? "is-loading" : ""}" type="button" data-action="approve-all-pending" ${pendingCount && !approveAllPendingRunning ? "" : "disabled"}>
+                  ${approveAllPendingRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : `Approve all (${pendingCount})`}
+                </button>
+              </div>
+            </div>
+          </section>
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">MCQ access</h4>
+            ${renderAdminAutoMcqAccessPanel(users)}
+          </section>
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Export</h4>
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">Export users</p>
+                <p class="admin-settings-row-desc">Download ${filteredUsers.length} user${filteredUsers.length === 1 ? "" : "s"} matching the current filters as a CSV file.</p>
+              </div>
+              <div class="admin-settings-row-control">
+                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-export-csv" ${filteredUsers.length ? "" : "disabled"}>Export CSV</button>
+              </div>
+            </div>
+          </section>
         `,
       })
       : "";
