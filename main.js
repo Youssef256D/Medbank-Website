@@ -293,6 +293,7 @@ const SUPABASE_BACKUP_RETRY_MAX_MS = 60000;
 const SESSION_SYNC_FLUSH_MS = 600;
 const SESSION_BROWSER_PERSIST_THROTTLE_MS = 10000;
 const ADMIN_DATA_REFRESH_MS = 30000;
+const ADMIN_DASHBOARD_COUNTS_TTL_MS = 60000;
 const BACKGROUND_SYNC_INTERVAL_MS = 15000;
 const ADMIN_QUESTION_BACKGROUND_REFRESH_MS = 180000;
 const ADMIN_BACKUP_RESTORE_CHECK_COOLDOWN_MS = 5 * 60 * 1000;
@@ -653,6 +654,9 @@ const state = {
   adminQuestionCountLoading: false,
   adminQuestionCountError: "",
   adminQuestionCountLastSyncAt: 0,
+  adminDashboardCounts: null,
+  adminDashboardCountsLoading: false,
+  adminDashboardCountsLoadedAt: 0,
   adminCourseQuestionCountCache: null,
   adminCourseQuestionCountCacheRevision: 0,
   questionsRevision: 0,
@@ -4056,6 +4060,9 @@ async function handleSupabaseAuthStateChange(event, session) {
     state.adminQuestionCountLoading = false;
     state.adminQuestionCountError = "";
     state.adminQuestionCountLastSyncAt = 0;
+    state.adminDashboardCounts = null;
+    state.adminDashboardCountsLoading = false;
+    state.adminDashboardCountsLoadedAt = 0;
     state.adminPresenceLoading = false;
     state.adminPresenceError = "";
     state.adminPresenceRows = [];
@@ -6185,6 +6192,16 @@ function matchesAdminUserApprovalFilter(account, approvalFilter) {
   return !approved && !hasCompleteStudentApprovalProfile(account);
 }
 
+function resetAdminUserFilters() {
+  state.adminUserSearch = "";
+  state.adminUserFilterYear = "";
+  state.adminUserFilterSemester = "";
+  state.adminUserFilterApproval = "";
+  state.adminUserFilterProvider = "";
+  state.adminUserFilterMcqHeld = false;
+  state.adminSelectedUserIds = [];
+}
+
 // Names the specific fields blocking approval for one pending student.
 //
 // This decomposes the exact checks inside `hasCompleteStudentProfile` and
@@ -7010,6 +7027,89 @@ function formatAuthProviderLabel(provider) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+// Admin dashboard summary helpers. Keep these argument-driven so the dashboard
+// can render from cached data immediately and the counting rules can be tested
+// without a browser or Supabase client.
+function formatAdminCount(value, options = {}) {
+  if (value === null || value === undefined) {
+    return options?.loading === true ? "…" : "—";
+  }
+  const count = Number(value);
+  if (!Number.isFinite(count)) {
+    return "—";
+  }
+  return Math.max(0, Math.trunc(count)).toLocaleString();
+}
+
+function sumAdminDashboardCounts(...values) {
+  if (!values.every((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))) {
+    return null;
+  }
+  return values.reduce((sum, value) => sum + Math.max(0, Math.trunc(Number(value))), 0);
+}
+
+function buildAdminDashboardUserSnapshot(users = [], nowMs = Date.now(), options = {}) {
+  const accounts = Array.isArray(users) ? users : [];
+  const currentMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  const weekStartMs = currentMs - (7 * 24 * 60 * 60 * 1000);
+  const approvalPredicate = typeof options?.isApproved === "function"
+    ? options.isApproved
+    : isUserAccessApproved;
+  const missingFieldsFor = typeof options?.getMissingFields === "function"
+    ? options.getMissingFields
+    : describeMissingStudentApprovalFields;
+  const createdAtFor = typeof options?.getCreatedAtMs === "function"
+    ? options.getCreatedAtMs
+    : getUserCreatedAtMs;
+  const normalizeYear = typeof options?.normalizeAcademicYear === "function"
+    ? options.normalizeAcademicYear
+    : normalizeAcademicYearOrNull;
+  const academicYearCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let totalStudents = 0;
+  let newStudentsLast7Days = 0;
+  let pendingApprovalCount = 0;
+  let pendingMissingPhoneCount = 0;
+  let oldestPendingCreatedAtMs = null;
+
+  accounts.forEach((account) => {
+    if (account?.role !== "student") {
+      return;
+    }
+    totalStudents += 1;
+    const academicYear = normalizeYear(account?.academicYear);
+    if (academicYear !== null && Object.hasOwn(academicYearCounts, academicYear)) {
+      academicYearCounts[academicYear] += 1;
+    }
+    const createdAtMs = Number(createdAtFor(account));
+    if (Number.isFinite(createdAtMs) && createdAtMs > 0 && createdAtMs >= weekStartMs && createdAtMs <= currentMs) {
+      newStudentsLast7Days += 1;
+    }
+    if (approvalPredicate(account)) {
+      return;
+    }
+    pendingApprovalCount += 1;
+    if (missingFieldsFor(account).includes("phone number")) {
+      pendingMissingPhoneCount += 1;
+    }
+    if (
+      Number.isFinite(createdAtMs)
+      && createdAtMs > 0
+      && (oldestPendingCreatedAtMs === null || createdAtMs < oldestPendingCreatedAtMs)
+    ) {
+      oldestPendingCreatedAtMs = createdAtMs;
+    }
+  });
+
+  return {
+    totalStudents,
+    newStudentsLast7Days,
+    pendingApprovalCount,
+    pendingMissingPhoneCount,
+    oldestPendingCreatedAtMs,
+    academicYearCounts,
+  };
 }
 
 function buildAdminUserStatistics(users = []) {
@@ -22267,6 +22367,9 @@ function render() {
     state.adminQuestionCountLoading = false;
     state.adminQuestionCountError = "";
     state.adminQuestionCountLastSyncAt = 0;
+    state.adminDashboardCounts = null;
+    state.adminDashboardCountsLoading = false;
+    state.adminDashboardCountsLoadedAt = 0;
     state.adminPresenceLoading = false;
     state.adminPresenceError = "";
     state.adminPresenceRows = [];
@@ -31676,6 +31779,170 @@ function renderAdminAgentsSection() {
   `;
 }
 
+// Lightweight counts used only by the admin Dashboard. Each read is isolated:
+// a slow or refused table leaves one dash in the UI instead of blocking the
+// rest of the page.
+const ADMIN_DASHBOARD_COUNT_KEYS = [
+  "testsLast7Days",
+  "activeStudentsLast7Days",
+  "onlineNow",
+  "videoCourses",
+  "videoCoursesPublished",
+  "videoCoursesPendingReview",
+  "videoEnrollmentRequestsPending",
+  "videoEnrolledStudents",
+  "couponRedemptionsLast7Days",
+];
+
+function createEmptyAdminDashboardCounts() {
+  return Object.fromEntries(ADMIN_DASHBOARD_COUNT_KEYS.map((key) => [key, null]));
+}
+
+async function readAdminDashboardHeadCount(query, timeoutMessage) {
+  const result = await runWithTimeoutResult(
+    query,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    timeoutMessage,
+  );
+  if (result?.error) {
+    throw result.error;
+  }
+  if (!Number.isInteger(result?.count)) {
+    throw new Error("Count was not returned.");
+  }
+  return result.count;
+}
+
+async function loadAdminDashboardCounts(options = {}) {
+  const force = Boolean(options?.force);
+  const nowMs = Date.now();
+  if (state.adminDashboardCountsLoading) {
+    return state.adminDashboardCounts;
+  }
+  if (
+    !force
+    && state.adminDashboardCountsLoadedAt
+    && (nowMs - state.adminDashboardCountsLoadedAt) < ADMIN_DASHBOARD_COUNTS_TTL_MS
+  ) {
+    return state.adminDashboardCounts;
+  }
+
+  const counts = createEmptyAdminDashboardCounts();
+  const client = getRelationalClient();
+  if (!client) {
+    state.adminDashboardCounts = counts;
+    state.adminDashboardCountsLoadedAt = nowMs;
+    return counts;
+  }
+
+  const weekStartIso = new Date(nowMs - (7 * 24 * 60 * 60 * 1000)).toISOString();
+  const onlineCutoffIso = new Date(nowMs - PRESENCE_ONLINE_STALE_MS).toISOString();
+  const tasks = [
+    {
+      key: "testsLast7Days",
+      load: () => readAdminDashboardHeadCount(
+        client.from("test_blocks").select("user_id", { count: "exact", head: true }).gte("created_at", weekStartIso),
+        "Counting tests from the last 7 days timed out.",
+      ),
+    },
+    {
+      key: "activeStudentsLast7Days",
+      load: async () => {
+        const result = await runWithTimeoutResult(
+          client.from("test_blocks").select("user_id").gte("created_at", weekStartIso).limit(5000),
+          SUPABASE_QUERY_TIMEOUT_MS,
+          "Counting active students from the last 7 days timed out.",
+        );
+        if (result?.error) {
+          throw result.error;
+        }
+        if (!Array.isArray(result?.data)) {
+          throw new Error("Active student rows were not returned.");
+        }
+        return new Set(result.data.map((row) => String(row?.user_id || "").trim()).filter(Boolean)).size;
+      },
+    },
+    {
+      key: "onlineNow",
+      load: () => readAdminDashboardHeadCount(
+        client
+          .from("user_presence")
+          .select("user_id", { count: "exact", head: true })
+          .eq("role", "student")
+          .eq("is_online", true)
+          .gte("last_seen_at", onlineCutoffIso),
+        "Counting online students timed out.",
+      ),
+    },
+    {
+      key: "videoCourses",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_courses").select("id", { count: "exact", head: true }),
+        "Counting video courses timed out.",
+      ),
+    },
+    {
+      key: "videoCoursesPublished",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_courses").select("id", { count: "exact", head: true }).eq("is_published", true),
+        "Counting published video courses timed out.",
+      ),
+    },
+    {
+      key: "videoCoursesPendingReview",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_courses").select("id", { count: "exact", head: true }).eq("review_status", "pending"),
+        "Counting courses awaiting review timed out.",
+      ),
+    },
+    {
+      key: "videoEnrollmentRequestsPending",
+      load: () => readAdminDashboardHeadCount(
+        client
+          .from("platform_course_enrollment_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending"),
+        "Counting pending course enrollment requests timed out.",
+      ),
+    },
+    {
+      key: "videoEnrolledStudents",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_course_enrollments").select("user_id", { count: "exact", head: true }),
+        "Counting video course enrollments timed out.",
+      ),
+    },
+    {
+      key: "couponRedemptionsLast7Days",
+      load: () => readAdminDashboardHeadCount(
+        client
+          .from("platform_course_coupon_redemptions")
+          .select("redeemed_at", { count: "exact", head: true })
+          .gte("redeemed_at", weekStartIso),
+        "Counting recent coupon redemptions timed out.",
+      ),
+    },
+  ];
+
+  state.adminDashboardCountsLoading = true;
+  try {
+    const results = await Promise.allSettled(tasks.map((task) => Promise.resolve().then(task.load)));
+    results.forEach((result, index) => {
+      const key = tasks[index].key;
+      if (result.status === "fulfilled") {
+        counts[key] = result.value;
+        return;
+      }
+      console.warn(`Could not load admin dashboard count (${key}).`, result.reason?.message || result.reason);
+    });
+    state.adminDashboardCounts = counts;
+    state.adminDashboardCountsLoadedAt = Date.now();
+    return counts;
+  } finally {
+    state.adminDashboardCountsLoading = false;
+  }
+}
+
 // Auto MCQ access for new students. Migration 20260928125817 (live):
 // `app_feature_flags.student_auto_mcq_access` decides whether a new eligible
 // student gets the MCQ Bank at once (on) or is created with MCQ off and
@@ -32697,6 +32964,26 @@ function renderAdmin() {
       }
     });
   }
+  if (activeAdminPage === "dashboard") {
+    const dashboardCountsStale = !state.adminDashboardCountsLoadedAt
+      || (Date.now() - state.adminDashboardCountsLoadedAt) >= ADMIN_DASHBOARD_COUNTS_TTL_MS;
+    if ((!state.adminDashboardCounts || dashboardCountsStale) && !state.adminDashboardCountsLoading) {
+      loadAdminDashboardCounts().then(() => {
+        if (state.route === "admin" && state.adminPage === "dashboard") {
+          state.skipNextRouteAnimation = true;
+          render();
+        }
+      });
+    }
+    if (state.mcqAccessHeldCount === null && !state.mcqAccessHeldCountLoading) {
+      loadMcqAccessHeldCount().then((count) => {
+        if (count !== null && state.route === "admin" && state.adminPage === "dashboard") {
+          state.skipNextRouteAnimation = true;
+          render();
+        }
+      });
+    }
+  }
 
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
   let pageContent = "";
@@ -32704,94 +32991,6 @@ function renderAdmin() {
 
   if (activeAdminPage === "dashboard") {
     const users = getUsers();
-    let students = 0;
-    let admins = 0;
-    const academicYearCounts = new Map([
-      [1, 0],
-      [2, 0],
-      [3, 0],
-      [4, 0],
-      [5, 0],
-    ]);
-    users.forEach((account) => {
-      if (account.role === "admin") {
-        admins += 1;
-      } else if (account.role === "student") {
-        students += 1;
-        const academicYear = normalizeAcademicYearOrNull(account.academicYear);
-        if (academicYear !== null) {
-          academicYearCounts.set(academicYear, (academicYearCounts.get(academicYear) || 0) + 1);
-        }
-      }
-    });
-    const userStats = buildAdminUserStatistics(users);
-    const registrationYearRows = userStats.registrationByYear
-      .map((entry) => {
-        const count = Number(entry?.count) || 0;
-        const share = users.length ? Math.round((count / users.length) * 100) : 0;
-        const width = userStats.maxRegistrationYearCount
-          ? Math.max((count / userStats.maxRegistrationYearCount) * 100, count ? 8 : 0)
-          : 0;
-        return `
-          <div class="admin-dashboard-breakdown-row" role="listitem">
-            <div class="admin-dashboard-breakdown-head">
-              <span class="admin-dashboard-breakdown-label">${entry.year}</span>
-              <span class="admin-dashboard-breakdown-value">${count} user${count === 1 ? "" : "s"} · ${share}%</span>
-            </div>
-            <span class="admin-dashboard-breakdown-track" aria-hidden="true">
-              <span class="admin-dashboard-breakdown-fill" style="width: ${width.toFixed(1)}%;"></span>
-            </span>
-          </div>
-        `;
-      })
-      .join("");
-    const providerRows = userStats.providerBreakdown
-      .map((entry) => {
-        const count = Number(entry?.count) || 0;
-        const share = users.length ? Math.round((count / users.length) * 100) : 0;
-        const width = userStats.maxProviderCount
-          ? Math.max((count / userStats.maxProviderCount) * 100, count ? 8 : 0)
-          : 0;
-        return `
-          <div class="admin-dashboard-breakdown-row" role="listitem">
-            <div class="admin-dashboard-breakdown-head">
-              <span class="admin-dashboard-breakdown-label">${escapeHtml(entry.label)}</span>
-              <span class="admin-dashboard-breakdown-value">${count} user${count === 1 ? "" : "s"} · ${share}%</span>
-            </div>
-            <span class="admin-dashboard-breakdown-track" aria-hidden="true">
-              <span class="admin-dashboard-breakdown-fill" style="width: ${width.toFixed(1)}%;"></span>
-            </span>
-          </div>
-        `;
-      })
-      .join("");
-    const dashboardUserCards = [
-      {
-        value: users.length,
-        label: "Total users",
-        detail: `${students} students • ${admins} admins`,
-      },
-      {
-        value: admins,
-        label: "Admins",
-        detail: `${users.length - admins} non-admin users`,
-      },
-      ...[5, 4, 3, 2, 1].map((year) => ({
-        value: academicYearCounts.get(year) || 0,
-        label: `Year ${year}`,
-        detail: `Students assigned to Year ${year}`,
-      })),
-    ]
-      .map((card) => `
-        <article class="card">
-          <p class="metric">
-            ${card.value}
-            <small>${card.label}</small>
-            <small>${card.detail}</small>
-          </p>
-        </article>
-      `)
-      .join("");
     const questionSnapshot = getAdminQuestionCountSnapshot();
     const questionTotals = questionSnapshot?.totals || normalizeAdminQuestionCountEntry({});
     const questionCountLoading = Boolean(state.adminQuestionCountLoading && !state.adminQuestionCountLastSyncAt);
@@ -32799,131 +32998,218 @@ function renderAdmin() {
     const questionCountSyncLabel = state.adminQuestionCountLastSyncAt
       ? new Date(state.adminQuestionCountLastSyncAt).toLocaleTimeString()
       : (questionSnapshot?.source === "local" ? "Local cache" : "Not yet");
-    const latestQuestionLabel = questionSnapshot?.latestQuestionAt
-      ? new Date(questionSnapshot.latestQuestionAt).toLocaleString()
-      : "No timestamp";
-    const questionStatsCards = [
-      {
-        value: questionCountLoading ? `<span class="inline-loader" aria-hidden="true"></span>` : questionTotals.total,
-        label: "Total DB questions",
-        detail: `Latest: ${latestQuestionLabel}`,
-      },
-      {
-        value: questionTotals.published,
-        label: "Published",
-        detail: `${questionTotals.publishedUsable} usable in tests`,
-      },
-      {
-        value: questionTotals.publishedUsable,
-        label: "Student-usable",
-        detail: "Published with choices and an answer",
-      },
-      {
-        value: questionTotals.publishedUnusable,
-        label: "Published but blocked",
-        detail: "Missing choices or correct answer",
-      },
-      {
-        value: questionTotals.draft,
-        label: "Draft",
-        detail: "Hidden from students",
-      },
-      {
-        value: questionTotals.archived,
-        label: "Archived",
-        detail: "Not used for new tests",
-      },
-    ]
-      .map((card) => `
-        <article class="card">
-          <p class="metric">
-            ${card.value}
-            <small>${escapeHtml(card.label)}</small>
-            <small>${escapeHtml(card.detail)}</small>
-          </p>
-        </article>
-      `)
-      .join("");
     const questionCourseRows = getAdminTopQuestionCourses(10)
       .map((entry) => {
         const usableShare = entry.published ? Math.round((entry.publishedUsable / entry.published) * 100) : 0;
         return `
           <tr>
             <td>${escapeHtml(entry.courseName)}</td>
-            <td><b>${entry.total}</b></td>
-            <td>${entry.published}</td>
-            <td>${entry.publishedUsable}</td>
-            <td>${entry.publishedUnusable}</td>
-            <td>${entry.draft}</td>
-            <td>${entry.archived}</td>
-            <td>${usableShare}%</td>
+            <td><b>${escapeHtml(formatAdminCount(entry.total))}</b></td>
+            <td>${escapeHtml(formatAdminCount(entry.published))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.publishedUsable))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.publishedUnusable))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.draft))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.archived))}</td>
+            <td>${escapeHtml(String(usableShare))}%</td>
           </tr>
         `;
       })
       .join("");
 
+    const nowMs = Date.now();
+    const dashboardUsers = buildAdminDashboardUserSnapshot(users, nowMs);
+    const dashboardCounts = state.adminDashboardCounts || createEmptyAdminDashboardCounts();
+    const dashboardCountsLoading = Boolean(state.adminDashboardCountsLoading && !state.adminDashboardCountsLoadedAt);
+    const pendingOldestLabel = dashboardUsers.oldestPendingCreatedAtMs
+      ? `oldest ${new Date(dashboardUsers.oldestPendingCreatedAtMs).toLocaleDateString()}`
+      : "";
+    const pendingDetailParts = [];
+    if (dashboardUsers.pendingMissingPhoneCount > 0) {
+      pendingDetailParts.push(`${dashboardUsers.pendingMissingPhoneCount} ${dashboardUsers.pendingMissingPhoneCount === 1 ? "has" : "have"} no phone number`);
+    }
+    if (pendingOldestLabel) {
+      pendingDetailParts.push(pendingOldestLabel);
+    }
+    const pendingStudentsDetail = dashboardUsers.pendingApprovalCount > 0
+      ? (pendingDetailParts.join(" · ") || "Review pending student details")
+      : "All students approved";
+    const courseRequestCount = sumAdminDashboardCounts(
+      dashboardCounts.videoEnrollmentRequestsPending,
+      dashboardCounts.videoCoursesPendingReview,
+    );
+    const courseRequestDetail = courseRequestCount === 0
+      ? "No requests"
+      : courseRequestCount === null
+        ? (dashboardCountsLoading ? "Checking requests" : "Request counts unavailable")
+        : `${formatAdminCount(dashboardCounts.videoEnrollmentRequestsPending)} enrollment · ${formatAdminCount(dashboardCounts.videoCoursesPendingReview)} course review`;
+    const mcqAccessDetail = typeof state.studentAutoMcqAccessEnabled === "boolean"
+      ? `Auto MCQ access is ${state.studentAutoMcqAccessEnabled ? "on" : "off"}`
+      : "Auto MCQ access status unavailable";
+    const attentionCards = [
+      {
+        target: "users-pending",
+        value: dashboardUsers.pendingApprovalCount,
+        label: "Students awaiting approval",
+        detail: pendingStudentsDetail,
+      },
+      {
+        target: "users-mcq-held",
+        value: state.mcqAccessHeldCount,
+        loading: state.mcqAccessHeldCountLoading,
+        label: "Waiting for MCQ access",
+        detail: mcqAccessDetail,
+      },
+      {
+        target: "course-requests",
+        value: courseRequestCount,
+        loading: dashboardCountsLoading,
+        label: "Course requests",
+        detail: courseRequestDetail,
+      },
+      {
+        target: "questions",
+        value: questionCountLoading ? null : questionTotals.publishedUnusable,
+        loading: questionCountLoading,
+        label: "Broken questions",
+        detail: questionCountLoading
+          ? "Checking published questions"
+          : questionTotals.publishedUnusable > 0
+            ? "Published but missing an answer"
+            : "All published questions usable",
+      },
+    ].map((card) => {
+      const countText = formatAdminCount(card.value, { loading: card.loading });
+      const attention = Number.isFinite(Number(card.value)) && Number(card.value) > 0;
+      return `
+        <button class="admin-dash-attention-card ${attention ? "is-attention" : ""}" type="button" data-action="admin-dashboard-open" data-target="${escapeHtml(card.target)}">
+          <span class="admin-dash-attention-value">${escapeHtml(countText)}</span>
+          <span class="admin-dash-attention-label">${escapeHtml(card.label)}</span>
+          <span class="admin-dash-attention-detail">${escapeHtml(card.detail)}</span>
+        </button>
+      `;
+    }).join("");
+    const maxAcademicYearCount = Math.max(0, ...Object.values(dashboardUsers.academicYearCounts));
+    const studentYearRows = [1, 2, 3, 4, 5].map((year) => {
+      const count = dashboardUsers.academicYearCounts[year] || 0;
+      const width = maxAcademicYearCount
+        ? Math.max((count / maxAcademicYearCount) * 100, count ? 6 : 0)
+        : 0;
+      return `
+        <div class="admin-dash-year-row">
+          <span>Year ${year}</span>
+          <span class="admin-dash-year-track" aria-hidden="true"><span style="width: ${width.toFixed(1)}%;"></span></span>
+          <span>${escapeHtml(formatAdminCount(count))}</span>
+        </div>
+      `;
+    }).join("");
+    const detailedQuestionStats = [
+      ["Published", questionTotals.published],
+      ["Usable", questionTotals.publishedUsable],
+      ["Blocked", questionTotals.publishedUnusable],
+      ["Draft", questionTotals.draft],
+      ["Archived", questionTotals.archived],
+    ].map(([label, value]) => `
+      <div class="admin-dash-more-stat">
+        <span>${escapeHtml(label)}</span>
+        <b>${escapeHtml(formatAdminCount(questionCountLoading ? null : value, { loading: questionCountLoading }))}</b>
+      </div>
+    `).join("");
+
     pageContent = `
       <section class="card admin-section" id="admin-stats-section">
-        <h2 class="title">MedBank Admin Dashboard</h2>
-        <p class="subtle">User totals first, with admin counts and academic year distribution summarized underneath.</p>
-        <div class="stats-grid" style="margin-top: 0.85rem;">
-          ${dashboardUserCards}
-        </div>
-        <div class="admin-dashboard-breakdowns">
-          <article class="card admin-dashboard-breakdown-card">
-            <h3>Users by Registration Year</h3>
-            <p class="subtle">Calendar year from each account's registration date.</p>
-            ${registrationYearRows
-        ? `<div class="admin-dashboard-breakdown-list" role="list">${registrationYearRows}</div>`
-        : `<p class="subtle">No registration timestamps found yet.</p>`
-      }
-          </article>
-          <article class="card admin-dashboard-breakdown-card">
-            <h3>Auth Provider Mix</h3>
-            <p class="subtle">Google vs email plus any other connected providers.</p>
-            ${providerRows
-        ? `<div class="admin-dashboard-breakdown-list" role="list">${providerRows}</div>`
-        : `<p class="subtle">No auth provider data available yet.</p>`
-      }
-          </article>
-        </div>
-      </section>
-      <section class="card admin-section" id="admin-question-stats-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Question Bank Totals</h3>
-            <p class="subtle">Fresh database counts separated by visibility and test usability.</p>
+        <div class="admin-dash-shell">
+          <header class="admin-dash-header">
+            <h2 class="title">Dashboard</h2>
+            <p>What needs you now, and how MedBank is doing.</p>
+          </header>
+
+          <section class="admin-dash-attention" aria-labelledby="admin-dash-attention-title">
+            <h3 id="admin-dash-attention-title">Needs your attention</h3>
+            <div class="admin-dash-attention-grid">
+              ${attentionCards}
+            </div>
+          </section>
+
+          <div class="admin-dash-panels">
+            <article class="admin-dash-panel">
+              <h3>Students</h3>
+              <div class="admin-dash-panel-lead">
+                <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(dashboardUsers.totalStudents))}</span>
+                <span>Total students</span>
+              </div>
+              <div class="admin-dash-inline-stats">
+                <span>+${escapeHtml(formatAdminCount(dashboardUsers.newStudentsLast7Days))} this week</span>
+                <span>${escapeHtml(formatAdminCount(dashboardCounts.onlineNow, { loading: dashboardCountsLoading }))} online now</span>
+              </div>
+              <div class="admin-dash-year-list" aria-label="Students by academic year">
+                ${studentYearRows}
+              </div>
+              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-page" data-page="users">Open Users</button>
+            </article>
+
+            <article class="admin-dash-panel">
+              <h3>MCQ Bank</h3>
+              <div class="admin-dash-panel-lead">
+                <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(questionCountLoading ? null : questionTotals.published, { loading: questionCountLoading }))}</span>
+                <span>Published questions</span>
+                ${!questionCountLoading && questionTotals.archived > 0 ? `<span class="admin-dash-panel-secondary">${escapeHtml(formatAdminCount(questionTotals.archived))} archived</span>` : ""}
+              </div>
+              <div class="admin-dash-panel-rows">
+                <div><span>Tests this week</span><b>${escapeHtml(formatAdminCount(dashboardCounts.testsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
+                <div><span>Students practising (7 days)</span><b>${escapeHtml(formatAdminCount(dashboardCounts.activeStudentsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
+                <div><span>Question counts updated</span><b>${escapeHtml(formatRelativeSyncTime(state.adminQuestionCountLastSyncAt))}</b></div>
+              </div>
+              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-page" data-page="questions">Open Questions</button>
+            </article>
+
+            <article class="admin-dash-panel">
+              <h3>Video Courses</h3>
+              <div class="admin-dash-panel-lead">
+                <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(dashboardCounts.videoCourses, { loading: dashboardCountsLoading }))}</span>
+                <span>Total courses</span>
+                <span class="admin-dash-panel-secondary">${escapeHtml(formatAdminCount(dashboardCounts.videoCoursesPublished, { loading: dashboardCountsLoading }))} published</span>
+              </div>
+              ${dashboardCounts.videoCourses === 0 ? `<p class="admin-dash-empty">No video courses yet</p>` : ""}
+              <div class="admin-dash-panel-rows">
+                <div><span>Enrollments</span><b>${escapeHtml(formatAdminCount(dashboardCounts.videoEnrolledStudents, { loading: dashboardCountsLoading }))}</b></div>
+                <div><span>Coupons redeemed (7 days)</span><b>${escapeHtml(formatAdminCount(dashboardCounts.couponRedemptionsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
+              </div>
+              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-course-platform-section" data-section="overview">Open Catalog</button>
+            </article>
           </div>
-          <div class="stack" style="align-items: flex-end;">
-            <span class="subtle">Question count sync: <b>${escapeHtml(questionCountSyncLabel)}</b></span>
-            ${questionSnapshot?.source && questionSnapshot.source !== "remote" ? `<span class="badge neutral">${escapeHtml(questionSnapshot.source)}</span>` : ""}
-          </div>
-        </div>
-        ${questionCountError
-        ? `<p class="subtle" style="margin-top: 0.7rem;">${escapeHtml(questionCountError)}</p>`
-        : ""
-      }
-        <div class="stats-grid" style="margin-top: 0.85rem;">
-          ${questionStatsCards}
-        </div>
-        <div class="table-wrap" style="margin-top: 0.9rem;">
-          <table>
-            <thead>
-              <tr>
-                <th>Course</th>
-                <th>Total</th>
-                <th>Published</th>
-                <th>Usable</th>
-                <th>Blocked</th>
-                <th>Draft</th>
-                <th>Archived</th>
-                <th>Usable share</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${questionCourseRows || `<tr><td colspan="8" class="subtle">No question counts loaded yet.</td></tr>`}
-            </tbody>
-          </table>
+
+          <details class="admin-dashboard-more">
+            <summary>More statistics</summary>
+            <div class="admin-dash-more-content">
+              <div class="admin-dash-more-stats">
+                ${detailedQuestionStats}
+              </div>
+              <div class="admin-dash-more-head">
+                <h3>Questions by subject</h3>
+                <span>Updated ${escapeHtml(questionCountSyncLabel)}</span>
+              </div>
+              ${questionCountError ? `<p class="admin-dash-error">${escapeHtml(questionCountError)}</p>` : ""}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Course</th>
+                      <th>Total</th>
+                      <th>Published</th>
+                      <th>Usable</th>
+                      <th>Blocked</th>
+                      <th>Draft</th>
+                      <th>Archived</th>
+                      <th>Usable share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${questionCourseRows || `<tr><td colspan="8" class="subtle">No question counts loaded yet.</td></tr>`}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
         </div>
       </section>
     `;
@@ -34747,6 +35033,45 @@ function wireAdmin() {
       state.adminCourseTopicModalCourse = "";
       state.adminCourseTopicGroupCreateModalOpen = false;
       state.adminCourseTopicInlineCreateOpen = false;
+      state.skipNextRouteAnimation = true;
+      render();
+    });
+  });
+
+  appEl.querySelectorAll("[data-action='admin-dashboard-open']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = String(button.getAttribute("data-target") || "").trim();
+      const previousPage = String(state.adminPage || "").trim() || "dashboard";
+      let nextPage = "";
+
+      if (target === "users-pending") {
+        resetAdminUserFilters();
+        state.adminUserFilterApproval = "pending";
+        nextPage = "users";
+      } else if (target === "users-mcq-held") {
+        resetAdminUserFilters();
+        state.adminUserFilterMcqHeld = true;
+        nextPage = "users";
+      } else if (target === "course-requests") {
+        nextPage = ADMIN_COURSES_PLATFORM_PAGE;
+        state.adminCoursePlatformSection = Number(state.adminDashboardCounts?.videoEnrollmentRequestsPending) > 0
+          ? "requests"
+          : "approvals";
+      } else if (target === "questions") {
+        nextPage = "questions";
+      }
+
+      if (!KNOWN_ADMIN_PAGES.has(nextPage)) {
+        return;
+      }
+      state.adminPage = nextPage;
+      if (previousPage !== nextPage) {
+        appendSystemLog("admin.page", `Admin page changed: ${previousPage} -> ${nextPage}`, {
+          from: previousPage,
+          to: nextPage,
+        });
+      }
+      applyAdminPageTransition(previousPage, nextPage);
       state.skipNextRouteAnimation = true;
       render();
     });
@@ -36720,13 +37045,7 @@ function wireAdmin() {
   });
 
   appEl.querySelector("[data-action='admin-users-clear-filters']")?.addEventListener("click", () => {
-    state.adminUserSearch = "";
-    state.adminUserFilterYear = "";
-    state.adminUserFilterSemester = "";
-    state.adminUserFilterApproval = "";
-    state.adminUserFilterProvider = "";
-    state.adminUserFilterMcqHeld = false;
-    state.adminSelectedUserIds = [];
+    resetAdminUserFilters();
     if (adminUserSearchDebounce) {
       window.clearTimeout(adminUserSearchDebounce);
       adminUserSearchDebounce = null;

@@ -16,6 +16,8 @@
      to #ef4444, a light red meant for dark surfaces, which only reaches 3.1:1 on
      comfort's parchment card. Comfort inherits this :root value. */
   --approval-gap-fg: #99201f;
+  --admin-dash-attention-fg: #8f1d1d;
+  --admin-dash-attention-bg: #fff0f0;
   --good: #2b9348;
   --shadow: 0 18px 36px rgba(9, 25, 39, 0.1);
   --shadow-soft: 0 10px 24px rgba(9, 25, 39, 0.08);
@@ -908,6 +910,8 @@ body.theme-dark {
   --accent: #8f8f8f;
   --danger: #ef4444;
   --approval-gap-fg: #f87171;
+  --admin-dash-attention-fg: #fca5a5;
+  --admin-dash-attention-bg: #2b1515;
   --good: #22c55e;
   --shadow: 0 20px 38px rgba(0, 0, 0, 0.58);
   --shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.44);
@@ -933,6 +937,8 @@ body.theme-comfort {
   --line-strong: rgba(105, 81, 61, 0.36);
   --brand: #76563f;
   --brand-strong: #5d4330;
+  --admin-dash-attention-fg: #7d1d1d;
+  --admin-dash-attention-bg: #f4ded8;
   --brand-soft: rgba(118, 86, 63, 0.14);
   --accent: #9d795d;
   --danger: #ef4444;
@@ -4610,6 +4616,261 @@ body .admin-sidebar-nav .btn.ghost.is-active:hover {
 .admin-main {
   display: grid;
   gap: 0.9rem;
+}
+
+.admin-dash-shell {
+  display: grid;
+  gap: 1.15rem;
+  min-width: 0;
+}
+
+.admin-dash-header h2,
+.admin-dash-header p,
+.admin-dash-attention h3,
+.admin-dash-panel h3,
+.admin-dash-more-head h3 {
+  margin: 0;
+}
+
+.admin-dash-header p {
+  margin-top: 0.25rem;
+  color: var(--muted);
+}
+
+.admin-dash-attention {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.admin-dash-attention h3,
+.admin-dash-panel h3,
+.admin-dash-more-head h3 {
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.admin-dash-attention-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.admin-dash-attention-card {
+  appearance: none;
+  display: grid;
+  align-content: start;
+  gap: 0.28rem;
+  min-width: 0;
+  min-height: 132px;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.admin-dash-attention-card:hover {
+  border-color: var(--brand);
+}
+
+.admin-dash-attention-card:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.admin-dash-attention-card.is-attention {
+  border-color: color-mix(in srgb, var(--admin-dash-attention-fg) 54%, var(--line));
+  background: var(--admin-dash-attention-bg);
+  color: var(--admin-dash-attention-fg);
+}
+
+.admin-dash-attention-value {
+  font-family: var(--font-admin-display);
+  font-size: clamp(1.75rem, 3vw, 2.35rem);
+  line-height: 1;
+}
+
+.admin-dash-attention-label {
+  font-size: 0.92rem;
+  line-height: 1.3;
+}
+
+.admin-dash-attention-detail {
+  margin-top: auto;
+  color: currentColor;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  opacity: 0.82;
+}
+
+.admin-dash-panels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.admin-dash-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.78rem;
+  min-width: 0;
+  padding: 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-dash-panel-lead {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+  gap: 0.18rem 0.55rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-panel-value {
+  grid-row: span 2;
+  color: var(--ink);
+  font-family: var(--font-admin-display);
+  font-size: clamp(1.8rem, 3.2vw, 2.5rem);
+  line-height: 1;
+}
+
+.admin-dash-panel-secondary {
+  color: var(--muted);
+}
+
+.admin-dash-inline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem 0.9rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-year-list,
+.admin-dash-panel-rows {
+  display: grid;
+  gap: 0.48rem;
+}
+
+.admin-dash-year-row {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.admin-dash-year-track {
+  display: block;
+  height: 0.38rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--brand-soft);
+}
+
+.admin-dash-year-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+}
+
+.admin-dash-panel-rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-top: 0.52rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-panel-rows b {
+  color: var(--ink);
+  text-align: right;
+}
+
+.admin-dash-empty,
+.admin-dash-error {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-panel-link {
+  width: 100%;
+  min-height: 44px;
+  margin-top: auto;
+}
+
+.admin-dashboard-more {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-dashboard-more > summary {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.72rem 0.9rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.admin-dashboard-more > summary:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.admin-dash-more-content {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+  padding: 0 0.9rem 0.9rem;
+}
+
+.admin-dash-more-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-block: 1px solid var(--line);
+}
+
+.admin-dash-more-stat {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  padding: 0.7rem 0.45rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.admin-dash-more-stat b {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.admin-dash-more-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.admin-dash-more-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .admin-dashboard-breakdowns {
@@ -10812,6 +11073,14 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
 }
 
 @media (max-width: 960px) {
+  .admin-dash-attention-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-dash-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .app-shell {
     width: min(1200px, 94vw);
     margin: 1.2rem auto 2rem;
@@ -11804,6 +12073,27 @@ html body :is(.exam-choice .exam-choice-text,
 
 /* Mobile phone layout layer. Desktop rules above stay unchanged. */
 @media (max-width: 640px) {
+  .admin-dash-attention-grid,
+  .admin-dash-more-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-dash-attention-card,
+  .admin-dash-panel-link,
+  .admin-dashboard-more > summary {
+    min-height: 44px;
+  }
+
+  .admin-dash-more-head,
+  .admin-dash-panel-rows > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-dash-panel-rows b {
+    text-align: left;
+  }
+
   html {
     -webkit-text-size-adjust: 100%;
     scroll-padding-top: 126px;
