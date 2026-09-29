@@ -216,7 +216,6 @@ const ADMIN_NAV_GROUPS = [
     items: [
       { page: "users", label: "Users" },
       { page: "universities", label: "Universities" },
-      { section: "requests", label: "Enrollment Requests" },
     ],
   },
   {
@@ -235,6 +234,7 @@ const ADMIN_NAV_GROUPS = [
       { section: "overview", label: "Catalog" },
       { section: "builder", label: "Course Builder" },
       { section: "enrollments", label: "Enrolled Users" },
+      { section: "requests", label: "Enrollment Requests" },
       { section: "coupons", label: "Activation Coupons" },
       { section: "approvals", label: "Course Approvals" },
       { section: "suggestions", label: "Suggestions" },
