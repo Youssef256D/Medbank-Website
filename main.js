@@ -466,6 +466,8 @@ function createDefaultAdminAddUserDraft() {
   };
 }
 
+const ADMIN_HELP_STORAGE_KEY = "medbank_admin_help_open_v1";
+
 const state = {
   route: INITIAL_ROUTE,
   sessionId: readPersistedActiveSessionId(),
@@ -714,7 +716,12 @@ const state = {
   universitiesLoadedAt: 0,
   universitiesError: "",
   adminUniversityDraft: null,
+  adminUniversityDraftInitial: "",
+  adminUniversityDraftDirty: false,
+  adminUniversityDialogReturnFocus: "",
+  adminUniversityDialogNeedsFocus: false,
   adminUniversitySaving: false,
+  adminHelpOpen: loadAdminHelpOpenState(),
   userMenuOpen: false,
   notificationMenuOpen: false,
 };
@@ -32018,6 +32025,203 @@ async function setAdminUserMcqAccessFromRow(row, button, nextEnabledOverride = n
 // switch that decides whether a university offers the MCQ Bank. Every write
 // goes straight to public.universities (admin-only RLS) and is followed by a
 // fresh read; nothing is merged into the cached list locally.
+let adminSharedUiWired = false;
+
+function loadAdminHelpOpenState() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ADMIN_HELP_STORAGE_KEY) || "{}");
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+    return Object.fromEntries(Object.entries(stored).map(([id, open]) => [id, Boolean(open)]));
+  } catch (_) {
+    return {};
+  }
+}
+
+function getAdminHelpOpenState() {
+  if (!state.adminHelpOpen || typeof state.adminHelpOpen !== "object" || Array.isArray(state.adminHelpOpen)) {
+    state.adminHelpOpen = loadAdminHelpOpenState();
+  }
+  return state.adminHelpOpen;
+}
+
+function setAdminHelpOpen(id, open) {
+  const pageId = String(id || "").trim();
+  if (!pageId) return;
+  getAdminHelpOpenState()[pageId] = Boolean(open);
+  try {
+    localStorage.setItem(ADMIN_HELP_STORAGE_KEY, JSON.stringify(state.adminHelpOpen));
+  } catch (_) {
+    // UI preference only. Private windows and full storage can reject writes.
+  }
+}
+
+function renderAdminIconButton({ icon, label, attrs = "", variant = "", busy = false } = {}) {
+  const icons = {
+    plus: '<path d="M12 5v14M5 12h14"></path>',
+    refresh: '<path d="M20 6v5h-5"></path><path d="M19 11a7.5 7.5 0 1 0 .2 3"></path>',
+    info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>',
+    more: '<circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>',
+  };
+  const iconName = Object.prototype.hasOwnProperty.call(icons, icon) ? icon : "info";
+  const variantClass = variant === "primary" ? " is-primary" : "";
+  const busyAttributes = busy ? ' disabled aria-busy="true"' : "";
+  const spinClass = busy && iconName === "refresh" ? " is-spinning" : "";
+  return `<button type="button" class="admin-icon-btn${variantClass}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" ${attrs}${busyAttributes}>
+    <svg class="admin-icon-svg${spinClass}" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[iconName]}</svg>
+  </button>`;
+}
+
+function renderAdminPageHeader({ id, title, count = null, actions = "", notes = [] } = {}) {
+  const pageId = String(id || "").trim();
+  const helpNotes = Array.isArray(notes) ? notes.filter(Boolean) : [];
+  const hasNotes = Boolean(pageId && helpNotes.length);
+  const open = hasNotes && Boolean(getAdminHelpOpenState()[pageId]);
+  const countText = count === null || count === undefined ? "" : ` <span class="admin-page-header-count">· ${escapeHtml(String(count))}</span>`;
+  const helpButton = hasNotes
+    ? renderAdminIconButton({
+      icon: "info",
+      label: "How this page works",
+      attrs: `data-action="admin-help-toggle" data-help-id="${escapeHtml(pageId)}" aria-expanded="${open ? "true" : "false"}" aria-controls="admin-help-${escapeHtml(pageId)}"`,
+    })
+    : "";
+  const notePanel = hasNotes ? `<div class="admin-help-note" id="admin-help-${escapeHtml(pageId)}" data-admin-help-note="${escapeHtml(pageId)}" ${open ? "" : "hidden"}>
+    <button type="button" class="admin-help-note-close" data-action="admin-help-toggle" data-help-id="${escapeHtml(pageId)}" aria-label="Close how this page works" title="Close">×</button>
+    <h4>How this page works</h4>
+    <ul>${helpNotes.map((note) => `<li>${note}</li>`).join("")}</ul>
+  </div>` : "";
+  return `<header class="admin-page-header">
+    <h3>${escapeHtml(title)}${countText}</h3>
+    <div class="admin-page-header-actions">${actions}${helpButton}</div>
+  </header>${notePanel}`;
+}
+
+function renderAdminRowMenu({ id, label, items = [], disabled = false } = {}) {
+  const menuId = String(id || "").trim();
+  const safeItems = Array.isArray(items) ? items.filter((item) => item && item.label) : [];
+  const orderedItems = [...safeItems.filter((item) => !item.danger), ...safeItems.filter((item) => item.danger)];
+  const firstDangerIndex = orderedItems.findIndex((item) => item.danger);
+  const menuItems = orderedItems.map((item, index) => `${index === firstDangerIndex && firstDangerIndex > 0 ? '<div class="admin-row-menu-divider" role="separator"></div>' : ""}
+    <button type="button" role="menuitem" class="admin-row-menu-item${item.danger ? " is-danger" : ""}" ${item.attrs || ""} ${item.disabled ? "disabled" : ""}>${escapeHtml(item.label)}</button>`).join("");
+  return `<div class="admin-row-menu" data-admin-row-menu="${escapeHtml(menuId)}">
+    ${renderAdminIconButton({
+      icon: "more",
+      label,
+      attrs: `data-action="admin-row-menu-toggle" data-menu-id="${escapeHtml(menuId)}" aria-haspopup="menu" aria-expanded="false" aria-controls="admin-row-menu-${escapeHtml(menuId)}"${disabled ? " disabled" : ""}`,
+    })}
+    <div class="admin-row-menu-list" id="admin-row-menu-${escapeHtml(menuId)}" role="menu" hidden>${menuItems}</div>
+  </div>`;
+}
+
+function closeAdminRowMenus({ restoreFocus = false, except = null } = {}) {
+  let focusTarget = null;
+  appEl.querySelectorAll("[data-admin-row-menu]").forEach((menu) => {
+    if (menu === except) return;
+    const toggle = menu.querySelector("[data-action='admin-row-menu-toggle']");
+    const list = menu.querySelector(".admin-row-menu-list");
+    if (!toggle || !list || list.hidden) return;
+    list.hidden = true;
+    list.removeAttribute("style");
+    toggle.setAttribute("aria-expanded", "false");
+    focusTarget = focusTarget || toggle;
+  });
+  if (restoreFocus) focusTarget?.focus();
+}
+
+function positionAdminRowMenu(menu) {
+  const toggle = menu?.querySelector("[data-action='admin-row-menu-toggle']");
+  const list = menu?.querySelector(".admin-row-menu-list");
+  if (!toggle || !list || list.hidden) return;
+  const gutter = 8;
+  const gap = 6;
+  const toggleBox = toggle.getBoundingClientRect();
+  const menuBox = list.getBoundingClientRect();
+  const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+  const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+  const left = Math.max(gutter, Math.min(toggleBox.right - menuBox.width, viewportWidth - menuBox.width - gutter));
+  const belowTop = toggleBox.bottom + gap;
+  const aboveTop = toggleBox.top - menuBox.height - gap;
+  const top = belowTop + menuBox.height <= viewportHeight - gutter || aboveTop < gutter ? belowTop : aboveTop;
+  list.style.left = `${Math.round(left)}px`;
+  list.style.top = `${Math.round(Math.max(gutter, top))}px`;
+}
+
+function openAdminRowMenu(menu, focusEdge = "") {
+  const toggle = menu?.querySelector("[data-action='admin-row-menu-toggle']");
+  const list = menu?.querySelector(".admin-row-menu-list");
+  if (!toggle || !list || toggle.disabled) return;
+  closeAdminRowMenus({ except: menu });
+  list.hidden = false;
+  toggle.setAttribute("aria-expanded", "true");
+  positionAdminRowMenu(menu);
+  const items = [...list.querySelectorAll("[role='menuitem']:not(:disabled)")];
+  if (focusEdge === "first") items[0]?.focus();
+  if (focusEdge === "last") items.at(-1)?.focus();
+}
+
+function wireAdminSharedUi() {
+  if (adminSharedUiWired) return;
+  adminSharedUiWired = true;
+  appEl.addEventListener("click", (event) => {
+    const helpToggle = event.target.closest?.("[data-action='admin-help-toggle']");
+    if (helpToggle) {
+      const id = String(helpToggle.getAttribute("data-help-id") || "").trim();
+      const panel = [...appEl.querySelectorAll("[data-admin-help-note]")]
+        .find((entry) => entry.getAttribute("data-admin-help-note") === id);
+      if (panel) {
+        const open = panel.hidden;
+        panel.hidden = !open;
+        appEl.querySelectorAll("[data-action='admin-help-toggle']").forEach((control) => {
+          if (control.getAttribute("data-help-id") === id) control.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        setAdminHelpOpen(id, open);
+      }
+      return;
+    }
+    const rowToggle = event.target.closest?.("[data-action='admin-row-menu-toggle']");
+    if (rowToggle) {
+      const menu = rowToggle.closest("[data-admin-row-menu]");
+      const list = menu?.querySelector(".admin-row-menu-list");
+      if (!menu || !list) return;
+      if (list.hidden) openAdminRowMenu(menu);
+      else closeAdminRowMenus({ restoreFocus: true });
+      return;
+    }
+    if (event.target.closest?.(".admin-row-menu-item")) closeAdminRowMenus();
+  }, true);
+  appEl.addEventListener("keydown", (event) => {
+    const toggle = event.target.closest?.("[data-action='admin-row-menu-toggle']");
+    if (toggle && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      openAdminRowMenu(toggle.closest("[data-admin-row-menu]"), event.key === "ArrowDown" ? "first" : "last");
+      return;
+    }
+    const item = event.target.closest?.(".admin-row-menu-item");
+    if (!item) return;
+    const menu = item.closest("[data-admin-row-menu]");
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeAdminRowMenus({ restoreFocus: true });
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...menu.querySelectorAll("[role='menuitem']:not(:disabled)")];
+    const currentIndex = items.indexOf(item);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    items[(currentIndex + step + items.length) % items.length]?.focus();
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest?.("[data-admin-row-menu]")) closeAdminRowMenus({ restoreFocus: true });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && appEl.querySelector(".admin-row-menu-list:not([hidden])")) {
+      closeAdminRowMenus({ restoreFocus: true });
+    }
+  });
+  window.addEventListener("resize", () => closeAdminRowMenus(), { passive: true });
+  window.addEventListener("scroll", () => closeAdminRowMenus(), { capture: true, passive: true });
+}
+
 function newAdminUniversityDraft() {
   return { id: "", name: "", name_ar: "", sort_order: 100, is_active: true, mcq_bank_available: false };
 }
@@ -32046,7 +32250,8 @@ function renderAdminUniversitiesSection() {
   }
   const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving);
   const draft = state.adminUniversityDraft;
-  const rows = getCachedUniversities().map((university) => {
+  const universities = getCachedUniversities();
+  const rows = universities.map((university) => {
     const students = countStudentsAtUniversity(university.id);
     return `<tr data-university-id="${escapeHtml(university.id)}">
       <td><b>${escapeHtml(university.name)}</b>${university.name_ar ? `<br><small dir="rtl" lang="ar">${escapeHtml(university.name_ar)}</small>` : ""}</td>
@@ -32054,41 +32259,79 @@ function renderAdminUniversitiesSection() {
       <td><span class="badge ${university.is_active ? "good" : "neutral"}">${university.is_active ? "Shown" : "Hidden"}</span></td>
       <td><span class="badge ${university.mcq_bank_available ? "good" : "neutral"}">${university.mcq_bank_available ? "Available" : "Not offered"}</span></td>
       <td>${escapeHtml(String(students))}</td>
-      <td><div class="admin-popup-actions">
-        <button type="button" class="btn ghost admin-btn-sm" data-university-edit="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>Edit</button>
-        <button type="button" class="btn ghost admin-btn-sm" data-university-toggle-active="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>${university.is_active ? "Hide from sign-up" : "Show at sign-up"}</button>
-        <button type="button" class="btn ghost admin-btn-sm" data-university-toggle-mcq="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>${university.mcq_bank_available ? "Turn off MCQ Bank" : "Offer MCQ Bank"}</button>
-        <button type="button" class="btn danger admin-btn-sm" data-university-delete="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>Delete</button>
-      </div></td>
+      <td class="admin-university-actions-column">${renderAdminRowMenu({
+        id: `university-${university.id}`,
+        label: `Actions for ${university.name}`,
+        disabled: busy,
+        items: [
+          { label: "Edit", attrs: `data-university-edit="${escapeHtml(university.id)}"` },
+          { label: university.is_active ? "Hide from sign-up" : "Show at sign-up", attrs: `data-university-toggle-active="${escapeHtml(university.id)}"` },
+          { label: university.mcq_bank_available ? "Turn off MCQ Bank" : "Offer MCQ Bank", attrs: `data-university-toggle-mcq="${escapeHtml(university.id)}"` },
+          { label: "Delete", attrs: `data-university-delete="${escapeHtml(university.id)}"`, danger: true },
+        ],
+      })}</td>
     </tr>`;
   }).join("");
   const emptyRow = state.universitiesLoading
     ? "Loading universities…"
     : state.universitiesError ? "Universities could not be loaded." : "No universities yet. Add the first one.";
+  const headerActions = `${renderAdminIconButton({
+    icon: "refresh",
+    label: "Reload universities",
+    attrs: `data-university-refresh${state.adminUniversitySaving ? " disabled" : ""}`,
+    busy: Boolean(state.universitiesLoading),
+  })}${renderAdminIconButton({
+    icon: "plus",
+    label: "Add university",
+    attrs: `data-university-new${busy ? " disabled" : ""}`,
+    variant: "primary",
+  })}`;
+  const pageHeader = renderAdminPageHeader({
+    id: "universities",
+    title: "Universities",
+    count: universities.length,
+    actions: headerActions,
+    notes: [
+      "Students pick their university from this list when they sign up.",
+      "The MCQ Bank is only for <b>Medicine</b> students at universities where it's turned on. Everyone else gets Video Courses. This is applied automatically.",
+      "Hiding a university removes it from sign-up but keeps its students. A university with students can't be deleted — hide it instead.",
+    ],
+  });
+  const dialogTitle = draft ? (draft.id ? `Edit ${String(draft.name || "university")}` : "Add university") : "";
+  const dialogSubtitle = draft?.id ? `<p class="admin-dialog-subtitle">
+    <span>${escapeHtml(draft.name || "University")}</span>
+    ${draft.name_ar ? `<span dir="rtl" lang="ar">${escapeHtml(draft.name_ar)}</span>` : ""}
+  </p>` : "";
   return `<section class="card admin-section" id="admin-universities-section">
-    <div class="flex-between"><div><h3>Universities</h3>
-      <p class="subtle">The list students choose from when they create an account. The MCQ Bank is only offered to <b>Medicine</b> students at universities where it is available; everyone else gets Video Courses only. The database applies this automatically.</p></div>
-      <div class="admin-popup-actions">
-        <button type="button" class="btn ghost" data-university-refresh ${busy ? "disabled" : ""}>${state.universitiesLoading ? "Loading…" : "Refresh"}</button>
-        <button type="button" class="btn" data-university-new ${busy ? "disabled" : ""}>Add university</button>
-      </div></div>
+    ${pageHeader}
     ${state.universitiesError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.universitiesError)}</div>` : ""}
     <div class="table-wrap"><table><thead><tr><th>University</th><th>Sort</th><th>Sign-up</th><th>MCQ Bank</th><th>Students</th><th>Actions</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="6">${escapeHtml(emptyRow)}</td></tr>`}</tbody></table></div>
-    <p class="subtle">Hidden universities disappear from sign-up but keep their students. A university that still has students cannot be deleted; hide it instead.</p>
-    ${draft ? `<form id="admin-university-form" class="admin-university-editor"><h3>${draft.id ? "Edit university" : "Add university"}</h3>
-      <fieldset ${busy ? "disabled" : ""}>
-      <div class="form-row">
-        <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" /></label>
-        <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
-      </div>
-      <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
-      <p class="subtle">Lower numbers appear first in the sign-up list.</p>
-      <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
-      <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
-      <div class="admin-popup-actions"><button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save university"}</button>
-      <button class="btn ghost" type="button" data-university-cancel>Close editor</button></div>
-      </fieldset></form>` : ""}
+    ${draft ? `<div class="admin-dialog" data-admin-dialog="university">
+      <button type="button" class="admin-dialog-backdrop" data-university-cancel aria-label="Close university editor" ${state.adminUniversitySaving ? "disabled" : ""}></button>
+      <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="admin-university-dialog-title">
+        <div class="admin-dialog-head">
+          <div><h3 id="admin-university-dialog-title">${escapeHtml(dialogTitle)}</h3>${dialogSubtitle}</div>
+          <button type="button" class="admin-dialog-close" data-university-cancel aria-label="Close university editor" title="Close" ${state.adminUniversitySaving ? "disabled" : ""}>×</button>
+        </div>
+        <form id="admin-university-form" class="admin-university-editor">
+          <fieldset ${busy ? "disabled" : ""}>
+            <div class="form-row">
+              <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" /></label>
+              <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
+            </div>
+            <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
+            <p class="subtle admin-university-sort-hint">Lower numbers appear first.</p>
+            <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
+            <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
+            <div class="admin-dialog-actions">
+              <button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save"}</button>
+              <button class="btn ghost" type="button" data-university-cancel>Cancel</button>
+            </div>
+          </fieldset>
+        </form>
+      </section>
+    </div>` : ""}
   </section>`;
 }
 
@@ -32100,6 +32343,60 @@ function captureAdminUniversityDraft(form) {
   draft.sort_order = form.elements.sort_order.value;
   draft.is_active = form.elements.is_active.checked;
   draft.mcq_bank_available = form.elements.mcq_bank_available.checked;
+  state.adminUniversityDraftDirty = getAdminUniversityDraftSnapshot(draft) !== state.adminUniversityDraftInitial;
+}
+
+function getAdminUniversityDraftSnapshot(draft) {
+  if (!draft) return "";
+  return JSON.stringify({
+    id: String(draft.id || ""),
+    name: String(draft.name || ""),
+    name_ar: String(draft.name_ar || ""),
+    sort_order: String(draft.sort_order ?? 100),
+    is_active: Boolean(draft.is_active),
+    mcq_bank_available: Boolean(draft.mcq_bank_available),
+  });
+}
+
+function beginAdminUniversityEditor(draft, returnFocus) {
+  state.adminUniversityDraft = draft;
+  state.adminUniversityDraftInitial = getAdminUniversityDraftSnapshot(draft);
+  state.adminUniversityDraftDirty = false;
+  state.adminUniversityDialogReturnFocus = String(returnFocus || "new");
+  state.adminUniversityDialogNeedsFocus = true;
+  refreshAdminUniversitiesView();
+}
+
+function focusAdminUniversityDialogReturnTarget(returnFocus) {
+  window.setTimeout(() => {
+    if (returnFocus === "new") {
+      appEl.querySelector("[data-university-new]")?.focus();
+      return;
+    }
+    const targetMenuId = `university-${returnFocus}`;
+    const target = [...appEl.querySelectorAll("[data-action='admin-row-menu-toggle']")]
+      .find((button) => button.getAttribute("data-menu-id") === targetMenuId);
+    target?.focus();
+  }, 0);
+}
+
+function finishAdminUniversityEditorClose({ restoreFocus = true } = {}) {
+  const returnFocus = state.adminUniversityDialogReturnFocus;
+  state.adminUniversityDraft = null;
+  state.adminUniversityDraftInitial = "";
+  state.adminUniversityDraftDirty = false;
+  state.adminUniversityDialogNeedsFocus = false;
+  state.adminUniversityDialogReturnFocus = "";
+  refreshAdminUniversitiesView();
+  if (restoreFocus) focusAdminUniversityDialogReturnTarget(returnFocus);
+}
+
+function requestAdminUniversityEditorClose(form, { restoreFocus = true } = {}) {
+  if (state.adminUniversitySaving) return false;
+  captureAdminUniversityDraft(form);
+  if (state.adminUniversityDraftDirty && !window.confirm("Discard your changes to this university?")) return false;
+  finishAdminUniversityEditorClose({ restoreFocus });
+  return true;
 }
 
 // Runs one write, then re-reads the list (and, when MCQ availability moved,
@@ -32137,8 +32434,36 @@ function wireAdminUniversities() {
   const section = appEl.querySelector("#admin-universities-section");
   if (!section) return;
   const form = section.querySelector("#admin-university-form");
+  const dialog = section.querySelector("[data-admin-dialog='university']");
   const capture = () => captureAdminUniversityDraft(form);
   const findUniversity = (id) => getCachedUniversities().find((entry) => entry.id === id) || null;
+  form?.addEventListener("input", capture);
+  form?.addEventListener("change", capture);
+  if (dialog && state.adminUniversityDialogNeedsFocus) {
+    state.adminUniversityDialogNeedsFocus = false;
+    window.setTimeout(() => form?.elements.name?.focus(), 0);
+  }
+  dialog?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      requestAdminUniversityEditorClose(form);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const panel = dialog.querySelector(".admin-dialog-panel");
+    const focusable = [...(panel?.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])") || [])]
+      .filter((element) => !element.hidden);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
   section.querySelector("[data-university-refresh]")?.addEventListener("click", async () => {
     capture();
     const loading = loadUniversities({ force: true });
@@ -32147,27 +32472,26 @@ function wireAdminUniversities() {
     refreshAdminUniversitiesView();
   });
   section.querySelector("[data-university-new]")?.addEventListener("click", () => {
-    if (state.adminUniversityDraft && !window.confirm("Discard the unsaved changes in the editor?")) return;
-    state.adminUniversityDraft = newAdminUniversityDraft();
-    refreshAdminUniversitiesView();
+    capture();
+    if (state.adminUniversityDraftDirty && !window.confirm("Discard your changes to this university?")) return;
+    beginAdminUniversityEditor(newAdminUniversityDraft(), "new");
   });
-  section.querySelector("[data-university-cancel]")?.addEventListener("click", () => {
-    state.adminUniversityDraft = null;
-    refreshAdminUniversitiesView();
-  });
+  section.querySelectorAll("[data-university-cancel]").forEach((button) => button.addEventListener("click", () => {
+    requestAdminUniversityEditorClose(form);
+  }));
   section.querySelectorAll("[data-university-edit]").forEach((button) => button.addEventListener("click", () => {
     const university = findUniversity(button.getAttribute("data-university-edit"));
     if (!university) return;
-    if (state.adminUniversityDraft && !window.confirm("Discard the unsaved changes in the editor?")) return;
-    state.adminUniversityDraft = {
+    capture();
+    if (state.adminUniversityDraftDirty && !window.confirm("Discard your changes to this university?")) return;
+    beginAdminUniversityEditor({
       id: university.id,
       name: university.name,
       name_ar: university.name_ar || "",
       sort_order: university.sort_order,
       is_active: university.is_active,
       mcq_bank_available: university.mcq_bank_available,
-    };
-    refreshAdminUniversitiesView();
+    }, university.id);
   }));
   section.querySelectorAll("[data-university-toggle-active]").forEach((button) => button.addEventListener("click", () => {
     capture();
@@ -32208,7 +32532,7 @@ function wireAdminUniversities() {
         "University delete timed out.",
       );
       if (!rows?.length) throw new Error("University was not deleted");
-      if (state.adminUniversityDraft?.id === university.id) state.adminUniversityDraft = null;
+      if (state.adminUniversityDraft?.id === university.id) finishAdminUniversityEditorClose();
       toast(`${university.name} deleted.`);
     });
   }));
@@ -32237,8 +32561,7 @@ function wireAdminUniversities() {
       toast(existing ? "University saved." : "University added.");
     }, { refreshProfiles: Boolean(existing && mcqChanged) });
     if (saved) {
-      state.adminUniversityDraft = null;
-      refreshAdminUniversitiesView();
+      finishAdminUniversityEditorClose();
     }
   });
 }
@@ -34662,6 +34985,8 @@ function applyAdminPageTransition(previousPage, nextPage) {
 }
 
 function wireAdmin() {
+  wireAdminSharedUi();
+  document.body.classList.toggle("is-admin-dialog-open", Boolean(appEl.querySelector(".admin-dialog")));
   wireAdminPopups();
   wireAdminUniversities();
 
