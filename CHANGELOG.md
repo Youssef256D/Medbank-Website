@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-29 — Admin panel: one grouped sidebar
+- The admin panel has **one sidebar** listing every page, grouped as Overview,
+  People, MCQ Bank, Video Courses, Messaging and System. The old
+  "Questions / Video Courses" switch in the top bar is gone — Users,
+  Notifications, Pop-ups, Site Access etc. no longer look like MCQ-only pages.
+- Enrollment Requests sits under People; "Course metadata" is now **Catalog**;
+  "MCQ Subjects" is **Subjects** under the MCQ Bank group.
+- The current page is now actually highlighted (it never was — see AGENTS.md).
+- The sync help text is folded under **About sync**.
+- Tablet widths (641–960px) use the same one-row scrolling menu as phones.
+
 ### 2026-09-28 — Auto MCQ access switch on Admin → Users
 - New **Auto MCQ access for new students** switch at the top of Admin → Users,
   with a one-line explanation of the current state. Off: new Medicine students

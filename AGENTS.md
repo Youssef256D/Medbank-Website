@@ -189,6 +189,56 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-29 — Admin panel: one grouped sidebar (step 1 of the admin split)
+Navigation only; no data, sync, Supabase, auth or access behaviour changed.
+Static cache bust: `2026-09-29.01-local`.
+
+1. **`ADMIN_NAV_GROUPS`** (next to `ADMIN_DATA_PAGES`) is the single nav
+   definition. An item is `{ page }` (a data page, `data-action="admin-page"`)
+   or `{ section }` (a Video Courses section, `data-action="admin-course-platform-section"`).
+   **Every one of the 12 data pages and 9 sections appears exactly once** —
+   add a new admin page here or it is unreachable. Page/section ids,
+   `KNOWN_ADMIN_PAGES` and `ADMIN_COURSES_PLATFORM_SECTIONS` are unchanged.
+2. **`renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection)`**
+   replaces `renderAdminDataSidebarNav` + `renderAdminCoursesPlatformSidebarNav`.
+   Section items are active only while `adminPage === "video-courses"`. The
+   per-item SVG icons were dropped; the requests/approvals badges are kept.
+   `tests/app-popups-utils.test.js` slices main.js up to this function name —
+   rename it and that test silently loads the rest of main.js.
+3. **Top-bar admin tabs removed** (`privateNavEl` is hidden for admins). Safe
+   because admins are always forced to `route = "admin"`. The `admin-top-tab`
+   body handler is left in place, unused.
+4. **`applyAdminPageTransition(previousPage, nextPage)`** holds the page-leave
+   cleanup (question/user selection, topic modals, agent token, presence
+   polling) and is now called from **both** nav handlers. Before, the section
+   handler skipped it, which was harmless only while the two sidebars were
+   separate: Users → Course Builder would otherwise keep a stale user selection
+   and Activity → any section would keep presence polling running.
+5. **The active highlight never worked, and needs `!important`.** The global
+   "Outline & Ghost Button Overrides" block sets every `.btn.ghost` to
+   `background: transparent !important; box-shadow: none !important`, so
+   `.admin-sidebar-nav .btn.is-active` never showed in any theme. The fix is a
+   scoped `body .admin-sidebar-nav .btn.ghost.is-active` rule with `!important`
+   (brand-soft tint + 3px inset brand bar). In dark mode (currently paused) the
+   bar uses `--brand` `#2a2a2a` and is barely visible; the tint still shows.
+6. **Tablet track blow-out.** At 641–960px the nav is a single nowrap flex rail
+   (~2,800px). With `grid-template-columns: 1fr` the grid track grows to the
+   rail's min-content and the whole admin page became ~2,900px wide. That block
+   now uses `minmax(0, 1fr)` + `.admin-sidebar { min-width: 0 }` (the 640px block
+   already had its own guards). Group labels render inline in the rail via
+   `.admin-nav-group { display: contents }`.
+7. Desktop sidebar scrolls internally (`max-height: calc(100vh - 2rem)`).
+8. **Verified** in the preview as the local demo admin: 6 groups / 21 buttons;
+   Users → Catalog → Enrollment Requests → Activity → Course Builder → Users
+   each opens the right page with exactly one `aria-current`; top tabs hidden;
+   highlight measured in light/comfort/dark; no page overflow at the pane's
+   phone width, 768px or 1366px. Not verified against a real Supabase admin
+   session. Implemented via the Codex implement lane; the highlight and tablet
+   fixes were added in review. `node --check`, `npm run lint`, `npm test` (67) clean.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`tests/app-popups-utils.test.js`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-28 — Auto MCQ access for new students (admin switch)
 Backend: migration `20260928125817_student_auto_mcq_access.sql` (authored with
 the Flutter app; already live — **do not re-apply**). Flag

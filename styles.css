@@ -4442,12 +4442,32 @@ body.theme-comfort .btn {
 .admin-sidebar {
   position: sticky;
   top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
 }
 
 .admin-sidebar-nav {
   display: grid;
   gap: 0.55rem;
   margin-top: 0.7rem;
+}
+
+.admin-nav-group {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.admin-nav-group + .admin-nav-group {
+  margin-top: 0.9rem;
+}
+
+.admin-nav-group-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .admin-sidebar-nav .btn {
@@ -4466,6 +4486,33 @@ body.theme-comfort .btn {
   border-color: rgba(23, 126, 137, 0.5);
   background: rgba(23, 126, 137, 0.12);
   color: var(--ink);
+}
+
+/* The global "Outline & Ghost Button Overrides" block forces every .btn.ghost
+   to `background: transparent !important; box-shadow: none !important`, so the
+   plain .is-active rule above never showed and the current page was not
+   highlighted. !important is needed to beat it; scoped to this one state. */
+body .admin-sidebar-nav .btn.ghost.is-active,
+body .admin-sidebar-nav .btn.ghost.is-active:hover {
+  background: var(--brand-soft) !important;
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent) !important;
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--brand) !important;
+}
+
+.admin-sidebar-sync-help {
+  width: 100%;
+}
+
+.admin-sidebar-sync-help summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+}
+
+.admin-sidebar-sync-help small {
+  display: block;
+  margin-top: 0.45rem;
 }
 
 #admin-cloud-sync-slot {
@@ -10816,8 +10863,10 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
     width: 100%;
   }
 
+  /* minmax(0, ...) + min-width: 0 stop the single-row nav rail (thousands of
+     px of nowrap buttons) from widening the whole grid track. */
   .admin-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .admin-dashboard-breakdowns {
@@ -10826,6 +10875,44 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
 
   .admin-sidebar {
     position: static;
+    max-height: none;
+    overflow-y: visible;
+    min-width: 0;
+  }
+
+  .admin-sidebar-nav {
+    display: flex;
+    gap: 0.42rem;
+    overflow-x: auto;
+    padding-bottom: 0.12rem;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+  }
+
+  .admin-sidebar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-nav-group {
+    display: contents;
+  }
+
+  .admin-nav-group-label {
+    flex: 0 0 auto;
+    align-self: center;
+    padding-left: 0.55rem;
+    white-space: nowrap;
+  }
+
+  .admin-nav-group:first-child .admin-nav-group-label {
+    padding-left: 0;
+  }
+
+  .admin-sidebar-nav .btn {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
   }
 
   .admin-topic-add {
@@ -12276,6 +12363,21 @@ html body :is(.exam-choice .exam-choice-text,
     width: auto;
     min-height: 42px;
     white-space: nowrap;
+  }
+
+  .admin-nav-group {
+    display: contents;
+  }
+
+  .admin-nav-group-label {
+    flex: 0 0 auto;
+    align-self: center;
+    padding-left: 0.48rem;
+    white-space: nowrap;
+  }
+
+  .admin-nav-group:first-child .admin-nav-group-label {
+    padding-left: 0;
   }
 
   #admin-cloud-sync-slot .cloud-sync-pill {

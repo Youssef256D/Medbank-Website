@@ -69,7 +69,7 @@ test('UMD browser namespace and static runtime registrations', () => {
 
 // Exercise the actual classic-script admin functions with an isolated browser/client.
 const mainSource = fs.readFileSync('main.js', 'utf8');
-const adminSource = mainSource.slice(mainSource.indexOf('// Mobile pop-up administration.'), mainSource.indexOf('function renderAdminDataSidebarNav'));
+const adminSource = mainSource.slice(mainSource.indexOf('// Mobile pop-up administration.'), mainSource.indexOf('function renderAdminSidebarNav'));
 function adminHarness(overrides = {}) {
   const state = { route: 'admin', adminPage: 'popups', adminPopups: [], adminPopupMetrics: {}, adminPopupsLoadedAt: 1,
     adminNotificationVideoCourses: [], adminCoursesPlatformCourses: [], adminPopupDraft: null };
