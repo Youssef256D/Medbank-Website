@@ -19,6 +19,10 @@ hosted Supabase is the source of truth.
 - **Users**: one compact toolbar; filters, "Add user" and the approval
   switches open in pop-ups; active filters show as removable chips.
   **Export CSV now works** (the button did nothing before).
+- **Users rows are read-only and calm**: name, email, ID, term, a status dot,
+  MCQ/Video tags and one ⋯ menu per row (pending students also get a small
+  Approve). Editing moves to an "Edit details" pop-up with one Save. The bulk
+  bar only appears after you tick rows.
 - **Universities**: icon buttons, a "How this page works" note, a ⋯ menu per
   row, and editing in a pop-up.
 - **Sidebar**: Enrollment Requests moved under Video Courses.

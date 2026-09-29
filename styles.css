@@ -21724,3 +21724,276 @@ body.is-admin-dialog-open {
     order: -1;
   }
 }
+
+/* Users table: read-only rows (editing happens in the "Edit details" dialog). */
+.admin-users-table {
+  min-width: 720px;
+}
+
+.admin-users-table .col-select { width: 44px; }
+.admin-users-table .col-account { width: 42%; }
+.admin-users-table .col-term { width: 16%; }
+.admin-users-table .col-status { width: 17%; }
+.admin-users-table .col-access { width: 15%; }
+.admin-users-table .col-actions { width: 56px; }
+
+.admin-users-table th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.admin-users-table .admin-user-account {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.admin-user-name {
+  color: var(--ink);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-users-table .admin-account-email,
+.admin-account-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-users-table .admin-account-email {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.admin-users-table .admin-account-approval-gap {
+  margin-top: 0.15rem;
+}
+
+.admin-user-term-cell {
+  display: table-cell;
+}
+
+.admin-user-term-cell [data-user-term] {
+  display: block;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.admin-user-term-cell .admin-course-preview {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.admin-user-term-missing {
+  color: var(--approval-gap-fg, var(--muted));
+}
+
+.admin-user-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.admin-user-status::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.admin-user-status.is-approved::before {
+  background: #1f9d6b;
+}
+
+.admin-user-status.is-pending::before {
+  background: #d98a1c;
+}
+
+.admin-user-inline-approve {
+  display: inline-flex;
+  margin-left: 0.4rem;
+  padding: 0.18rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.admin-user-inline-approve:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.admin-user-inline-approve:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.admin-user-inline-approve[hidden] {
+  display: none;
+}
+
+.admin-user-access-tag {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.25rem 0.2rem 0;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.74rem;
+}
+
+.admin-user-access-tag.is-off {
+  color: var(--muted);
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.admin-users-table .admin-user-actions-cell {
+  text-align: right;
+}
+
+/* Bulk bar: only rendered while rows are selected. */
+.admin-users-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+}
+
+.admin-users-bulk-count {
+  flex: 1 1 auto;
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+body .admin-users-bulk-bar .admin-users-bulk-suspend {
+  color: var(--danger);
+}
+
+.admin-users-showing {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* Edit details dialog */
+.admin-user-edit {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.admin-user-edit label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.admin-user-edit-label {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.admin-user-edit-subjects .admin-course-preview {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.admin-user-edit .admin-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0;
+  border: 0;
+}
+
+.admin-users-pending-chip {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.admin-user-full-access {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  /* Compact card: checkbox and ⋯ in the corners, no per-field labels, and
+     term · status · access on one wrapped line. */
+  .admin-users-table-wrap .admin-users-table tr {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+    padding: 0.75rem 3.25rem 0.75rem 2.6rem;
+  }
+
+  .admin-users-table-wrap .admin-users-table td {
+    display: block;
+    width: auto;
+    padding: 0;
+    border: 0;
+  }
+
+  .admin-users-table-wrap .admin-users-table td::before {
+    content: none !important;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-select-cell {
+    position: absolute;
+    top: 0.85rem;
+    left: 0.75rem;
+  }
+
+  .admin-users-table-wrap .admin-users-table td:nth-child(2) {
+    flex: 1 1 100%;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-actions-cell {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-term-cell [data-user-term],
+  .admin-users-table-wrap .admin-users-table td.admin-user-term-cell .admin-course-preview {
+    display: inline;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-term-cell .admin-course-preview::before {
+    content: " · ";
+  }
+
+  .admin-users-table-wrap .admin-users-table td[colspan] {
+    flex: 1 1 100%;
+  }
+
+  .admin-user-inline-approve {
+    min-height: 36px;
+    padding: 0.3rem 0.85rem;
+  }
+
+  .admin-page-header-actions {
+    flex-wrap: wrap;
+  }
+}

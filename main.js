@@ -491,6 +491,7 @@ const state = {
   adminAddUserDraftDirty: false,
   adminUsersFiltersOpen: false,
   adminUsersSettingsOpen: false,
+  adminUserEditId: null,
   adminUserEnrollmentDrafts: {},
   adminUserEnrollmentSaving: {},
   adminSelectedUserIds: [],
@@ -31435,36 +31436,56 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
 
   const coursePreviewEl = row.querySelector(".admin-course-preview");
   if (coursePreviewEl) {
-    coursePreviewEl.textContent = coursePreview || "No MCQ subjects assigned";
+    coursePreviewEl.textContent = coursePreviewEl.hasAttribute("data-count-only")
+      ? `${visibleCourses.length} MCQ subject${visibleCourses.length === 1 ? "" : "s"}`
+      : (coursePreview || "No MCQ subjects assigned");
     coursePreviewEl.title = visibleCourses.join(", ");
+  }
+
+  const nameText = row.querySelector("[data-user-name-text]");
+  if (nameText) {
+    nameText.textContent = String(displayAccount.name ?? account.name ?? "") || "Unnamed user";
+  }
+
+  const termText = row.querySelector("[data-user-term]");
+  if (termText && displayAccount.role === "student") {
+    const hasTerm = year !== null && semester !== null;
+    termText.textContent = hasTerm ? `Y${year} · S${semester}` : "No term";
+    termText.classList.toggle("admin-user-term-missing", !hasTerm);
   }
 
   const statusBadge = row.querySelector("[data-user-status-badge]");
   if (statusBadge) {
-    statusBadge.className = `badge ${isApproved ? "good" : "bad"}`;
-    statusBadge.textContent = isApproved ? "approved" : "pending";
+    statusBadge.className = `admin-user-status ${isApproved ? "is-approved" : "is-pending"}`;
+    statusBadge.textContent = isApproved ? "Approved" : "Pending";
   }
 
   const mcqStatusBadge = row.querySelector("[data-user-mcq-status-badge]");
   if (mcqStatusBadge) {
-    mcqStatusBadge.className = `badge ${mcqAccessEnabled ? "good" : "neutral"}`;
-    mcqStatusBadge.textContent = `MCQ ${mcqAccessEnabled ? "on" : "off"}`;
+    mcqStatusBadge.className = `admin-user-access-tag ${mcqAccessEnabled ? "is-on" : "is-off"}`;
+    mcqStatusBadge.title = `MCQ Bank ${mcqAccessEnabled ? "on" : "off"}`;
   }
 
   const coursesStatusBadge = row.querySelector("[data-user-courses-status-badge]");
   if (coursesStatusBadge) {
-    coursesStatusBadge.className = `badge ${coursesAccessEnabled ? "good" : "neutral"}`;
-    coursesStatusBadge.textContent = `Video Courses ${coursesAccessEnabled ? "on" : "off"}`;
+    coursesStatusBadge.className = `admin-user-access-tag ${coursesAccessEnabled ? "is-on" : "is-off"}`;
+    coursesStatusBadge.title = `Video Courses ${coursesAccessEnabled ? "on" : "off"}`;
   }
 
-  const approvalButton = row.querySelector("[data-action='toggle-user-approval']");
-  if (approvalButton) {
+  // Two approval controls per row: the ⋯ menu item (Approve/Suspend) and, for
+  // pending students, an inline "Approve" that disappears once approved.
+  row.querySelectorAll("[data-action='toggle-user-approval']").forEach((approvalButton) => {
     const isBusy = approvalButton.dataset.busy === "1";
     approvalButton.disabled = isBusy || account.role === "admin";
-    if (!isBusy) {
+    if (approvalButton.hasAttribute("data-admin-inline-approve")) {
+      approvalButton.hidden = isApproved;
+      if (!isBusy) {
+        approvalButton.textContent = "Approve";
+      }
+    } else if (!isBusy) {
       approvalButton.textContent = isApproved ? "Suspend" : "Approve";
     }
-  }
+  });
 
   const mcqHold = row.querySelector("[data-user-mcq-hold]");
   if (mcqHold && mcqHold.querySelector("[data-action='activate-user-mcq']")?.dataset.busy !== "1") {
@@ -31475,9 +31496,16 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
   if (mcqAccessButton) {
     const isBusy = mcqAccessButton.dataset.busy === "1";
     mcqAccessButton.disabled = isBusy || account.role === "admin" || isAdminUserMcqIneligible(account);
-    mcqAccessButton.setAttribute("aria-checked", mcqAccessEnabled ? "true" : "false");
-    if (!isBusy) {
-      mcqAccessButton.innerHTML = renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled);
+    if (mcqAccessButton.hasAttribute("data-admin-access-item")) {
+      if (!isBusy) {
+        mcqAccessButton.textContent = mcqAccessEnabled ? "Turn MCQ access off" : "Turn MCQ access on";
+        mcqAccessButton.classList.remove("is-loading");
+      }
+    } else {
+      mcqAccessButton.setAttribute("aria-checked", mcqAccessEnabled ? "true" : "false");
+      if (!isBusy) {
+        mcqAccessButton.innerHTML = renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled);
+      }
     }
   }
 
@@ -31485,9 +31513,16 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
   if (coursesAccessButton) {
     const isBusy = coursesAccessButton.dataset.busy === "1";
     coursesAccessButton.disabled = isBusy || account.role === "admin";
-    coursesAccessButton.setAttribute("aria-checked", coursesAccessEnabled ? "true" : "false");
-    if (!isBusy) {
-      coursesAccessButton.innerHTML = renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled);
+    if (coursesAccessButton.hasAttribute("data-admin-access-item")) {
+      if (!isBusy) {
+        coursesAccessButton.textContent = coursesAccessEnabled ? "Turn Video Courses off" : "Turn Video Courses on";
+        coursesAccessButton.classList.remove("is-loading");
+      }
+    } else {
+      coursesAccessButton.setAttribute("aria-checked", coursesAccessEnabled ? "true" : "false");
+      if (!isBusy) {
+        coursesAccessButton.innerHTML = renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled);
+      }
     }
   }
 
@@ -33735,19 +33770,10 @@ function renderAdmin() {
         const coursesAccessEnabled = isUserCoursesAccessEnabled(account);
         const isGoogleAuthUser = getAuthProviderFromUser(account) === "google";
         const missingApprovalFields = isApproved ? [] : describeMissingStudentApprovalFields(account);
-        const resetPasswordAction = isGoogleAuthUser
-          ? ""
-          : '<button class="btn ghost admin-btn-sm" data-action="reset-user-password">Set password</button>';
         const visibleCourses = getAdminVisibleCoursesForUser(displayAccount, allCourses);
-        const compactCourses = visibleCourses.slice(0, 2).map((course) => (course.length > 42 ? `${course.slice(0, 39)}...` : course));
-        const coursePreview =
-          visibleCourses.length > 2 ? `${compactCourses.join(", ")} +${visibleCourses.length - 2} more` : compactCourses.join(", ");
         const isSelf = account.id === user.id;
         const canBulkSelect = canBulkSelectAdminUser(account, user);
         const isSelected = accountId ? selectedUserSet.has(accountId) : false;
-        const accountPhone = String(displayAccount.phone ?? "");
-        const saveMode = accountId ? getAdminUserEnrollmentSaveMode(accountId) : "";
-        const saveBusy = Boolean(saveMode);
         const accountName = String(displayAccount.name ?? account.name ?? "").trim();
         const rowClassNames = [];
         if (isSelected) {
@@ -33759,6 +33785,36 @@ function renderAdmin() {
         const authProviderIcon = isGoogleAuthUser
           ? '<span class="admin-auth-provider-icon" data-provider="google" title="Google account" aria-label="Google account" role="img"><svg viewBox="0 0 18 18" aria-hidden="true" focusable="false"><path fill="#4285F4" d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2086 1.125-.8427 2.0782-1.7963 2.7155v2.2573h2.9082c1.7018-1.5664 2.6845-3.8741 2.6845-6.6137z"></path><path fill="#34A853" d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1818l-2.9082-2.2573c-.8063.54-1.8377.8591-3.0482.8591-2.3441 0-4.3282-1.5832-5.0355-3.71H.9573v2.3305C2.4382 15.9832 5.4818 18 9 18z"></path><path fill="#FBBC05" d="M3.9645 10.71c-.18-.54-.2823-1.1168-.2823-1.71s.1023-1.17.2823-1.71V4.9595H.9573C.3477 6.1732 0 7.5477 0 9s.3477 2.8268.9573 4.0405L3.9645 10.71z"></path><path fill="#EA4335" d="M9 3.5795c1.3214 0 2.5077.4541 3.4405 1.3459l2.5814-2.5814C13.4636.8918 11.43 0 9 0 5.4818 0 2.4382 2.0168.9573 4.9595L3.9645 7.29C4.6718 5.1632 6.6559 3.5795 9 3.5795z"></path></svg></span>'
           : "";
+        const accountLabel = String(account.name || account.email || "this user");
+        const menuItems = [
+          { label: "Edit details", attrs: `data-action="admin-user-edit-open" data-user-id="${escapeHtml(accountId)}"` },
+        ];
+        if (!isGoogleAuthUser) {
+          menuItems.push({ label: "Set password", attrs: 'data-action="reset-user-password"' });
+        }
+        if (account.role === "student") {
+          menuItems.push({ label: "Device", attrs: 'data-action="view-user-device"' });
+          menuItems.push({ label: "University", attrs: 'data-action="edit-user-university"' });
+          menuItems.push({
+            label: mcqAccessEnabled ? "Turn MCQ access off" : "Turn MCQ access on",
+            attrs: `data-action="toggle-user-mcq-access" data-admin-access-item="mcq"${isAdminUserMcqIneligible(account) ? ' title="Not MCQ-eligible: set a Medicine college at a university that offers the MCQ Bank first."' : ""}`,
+            disabled: isAdminUserMcqIneligible(account),
+          });
+          menuItems.push({
+            label: coursesAccessEnabled ? "Turn Video Courses off" : "Turn Video Courses on",
+            attrs: 'data-action="toggle-user-courses-access" data-admin-access-item="courses"',
+          });
+        }
+        if (account.role !== "admin") {
+          menuItems.push({ label: isApproved ? "Suspend" : "Approve", attrs: 'data-action="toggle-user-approval" data-admin-approval-item' });
+        }
+        menuItems.push({ label: "Remove user", attrs: 'data-action="remove-user"', danger: true, disabled: isSelf });
+        const termLabel = account.role === "student"
+          ? (year !== null && semester !== null ? `Y${year} · S${semester}` : "No term")
+          : "—";
+        const subjectsLabel = account.role === "student" && visibleCourses.length
+          ? `${visibleCourses.length} MCQ subject${visibleCourses.length === 1 ? "" : "s"}`
+          : "";
         return `
           <tr data-user-id="${escapeHtml(account.id)}" class="${rowClassNames.join(" ")}">
             <td class="admin-user-select-cell">
@@ -33767,7 +33823,7 @@ function renderAdmin() {
                 name="selectedAdminUser"
                 data-action="admin-select-user"
                 data-user-id="${escapeHtml(accountId)}"
-                aria-label="Select ${escapeHtml(String(account.name || account.email || "user"))}"
+                aria-label="Select ${escapeHtml(accountLabel)}"
                 ${isSelected ? "checked" : ""}
                 ${bulkDeactivateRunning || !canBulkSelect ? "disabled" : ""}
                 ${selectionDisabledReason ? `title="${escapeHtml(selectionDisabledReason)}"` : ""}
@@ -33775,97 +33831,35 @@ function renderAdmin() {
             </td>
             <td>
               <div class="admin-user-account">
-                <label class="admin-inline-name-field">
-                  <span class="sr-only">Full name for ${escapeHtml(String(account.email || "user"))}</span>
-                  <input
-                    class="admin-mini-input admin-inline-name-input"
-                    type="text"
-                    name="inlineName"
-                    data-field="name"
-                    value="${escapeHtml(accountName)}"
-                    autocomplete="off"
-                    maxlength="120"
-                    placeholder="Full name"
-                    aria-label="Full name for ${escapeHtml(String(account.email || "user"))}"
-                  />
-                </label><br />
+                <span class="admin-user-name" data-user-name-text>${escapeHtml(accountName || "Unnamed user")}</span>
                 <small class="admin-account-email">
                   <span>${escapeHtml(account.email)}</span>
                   ${authProviderIcon}
-                </small><br />
-                <small class="admin-account-public-id">MedBank ID: <b>${escapeHtml(String(account.publicUserId || account.public_user_id || "Pending"))}</b></small><br />
-                ${account.role === "student" ? `${renderAdminUserUniversitySummary(account)}<br />` : ""}
-                ${renderAdminUserMcqHold(account)}
-                ${missingApprovalFields.length ? `<small class="admin-account-approval-gap" title="Auto-approval and Approve all pending both skip this account until these are filled in.">Not auto-approved &mdash; needs ${escapeHtml(formatMissingApprovalFieldList(missingApprovalFields))}</small><br />` : ""}
-                <label class="admin-inline-phone-field">
-                  <input
-                    class="admin-mini-input admin-inline-phone-input"
-                    type="tel"
-                    name="inlinePhone"
-                    data-field="phone"
-                    value="${escapeHtml(accountPhone)}"
-                    inputmode="tel"
-                    autocomplete="off"
-                    maxlength="20"
-                    placeholder="+20 10 0000 0000"
-                    aria-label="Phone number for ${escapeHtml(String(account.name || account.email || "user"))}"
-                  />
-                </label>
-                <small>
-                  <span class="badge ${isApproved ? "good" : "bad"}" data-user-status-badge>${isApproved ? "approved" : "pending"}</span>
-                  ${account.role === "student" ? `<span class="badge ${mcqAccessEnabled ? "good" : "neutral"}" data-user-mcq-status-badge>MCQ ${mcqAccessEnabled ? "on" : "off"}</span>` : ""}
-                  ${account.role === "student" ? `<span class="badge ${coursesAccessEnabled ? "good" : "neutral"}" data-user-courses-status-badge>Video Courses ${coursesAccessEnabled ? "on" : "off"}</span>` : ""}
                 </small>
+                <small class="admin-account-meta">ID ${escapeHtml(String(account.publicUserId || account.public_user_id || "pending"))}${account.role !== "student" ? ` · ${escapeHtml(getUserRoleLabel(account.role))}` : ""}</small>
+                ${account.role === "student" ? renderAdminUserUniversitySummary(account) : ""}
+                ${renderAdminUserMcqHold(account)}
+                ${missingApprovalFields.length ? `<small class="admin-account-approval-gap" title="Auto-approval and Approve all pending both skip this account until these are filled in.">Needs ${escapeHtml(formatMissingApprovalFieldList(missingApprovalFields))}</small>` : ""}
               </div>
             </td>
-            <td><span class="badge ${account.role === "admin" ? "good" : "neutral"}">${escapeHtml(account.role)}</span></td>
+            <td class="admin-user-term-cell">
+              <span data-user-term class="${account.role === "student" && termLabel === "No term" ? "admin-user-term-missing" : ""}">${escapeHtml(termLabel)}</span>
+              ${subjectsLabel ? `<small class="admin-course-preview" data-count-only title="${escapeHtml(visibleCourses.join(", "))}">${escapeHtml(subjectsLabel)}</small>` : ""}
+            </td>
             <td>
-              ${account.role === "student"
-            ? `<select class="admin-mini-select" name="inlineAcademicYear" data-field="academicYear">
-                       <option value="" ${year === null ? "selected" : ""}>Select year</option>
-                       ${[1, 2, 3, 4, 5]
-              .map((entry) => `<option value="${entry}" ${year === entry ? "selected" : ""}>Year ${entry}</option>`)
-              .join("")}
-                     </select>`
-            : `<span class="admin-na">-</span>`
-          }
+              <span class="admin-user-status ${isApproved ? "is-approved" : "is-pending"}" data-user-status-badge>${isApproved ? "Approved" : "Pending"}</span>
+              ${account.role === "student" && !isApproved
+            ? `<button class="admin-user-inline-approve" type="button" data-action="toggle-user-approval" data-admin-inline-approve>Approve</button>`
+            : ""}
             </td>
             <td>
               ${account.role === "student"
-            ? `<select class="admin-mini-select" name="inlineAcademicSemester" data-field="academicSemester">
-                       <option value="" ${semester === null ? "selected" : ""}>Select semester</option>
-                       <option value="1" ${semester === 1 ? "selected" : ""}>Semester 1</option>
-                       <option value="2" ${semester === 2 ? "selected" : ""}>Semester 2</option>
-                     </select>`
-            : `<span class="admin-na">-</span>`
-          }
-            </td>
-            <td class="admin-user-courses">
-              <small class="admin-course-preview" title="${escapeHtml(visibleCourses.join(", "))}">${escapeHtml(coursePreview || "No MCQ subjects assigned")}</small>
+            ? `<span class="admin-user-access-tag ${mcqAccessEnabled ? "is-on" : "is-off"}" data-user-mcq-status-badge title="MCQ Bank ${mcqAccessEnabled ? "on" : "off"}">MCQ</span>
+                 <span class="admin-user-access-tag ${coursesAccessEnabled ? "is-on" : "is-off"}" data-user-courses-status-badge title="Video Courses ${coursesAccessEnabled ? "on" : "off"}">Video</span>`
+            : `<small class="admin-user-full-access">Full access</small>`}
             </td>
             <td class="admin-user-actions-cell">
-              <div class="admin-user-actions">
-                <button class="btn ghost admin-btn-sm ${saveBusy ? "is-loading" : ""}" data-action="save-user-enrollment" ${saveBusy ? "disabled" : ""}>${renderAdminUserEnrollmentSaveButtonContent({ busy: saveBusy, mode: saveMode || "manual" })}</button>
-                ${resetPasswordAction}
-                ${account.role === "student" ? '<button class="btn ghost admin-btn-sm" type="button" data-action="view-user-device">Device</button>' : ""}
-                ${account.role === "student" ? '<button class="btn ghost admin-btn-sm" type="button" data-action="edit-user-university">University</button>' : ""}
-                <button class="btn ghost admin-btn-sm" data-action="toggle-user-approval" ${account.role === "admin" ? "disabled" : ""}>
-                  ${isApproved ? "Suspend" : "Approve"}
-                </button>
-                <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-mcq-access" role="switch" aria-checked="${mcqAccessEnabled ? "true" : "false"}" ${account.role === "admin" || isAdminUserMcqIneligible(account) ? "disabled" : ""} ${isAdminUserMcqIneligible(account) ? 'title="Not MCQ-eligible: set a Medicine college at a university that offers the MCQ Bank first."' : ""}>
-                  ${renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled)}
-                </button>
-                <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-courses-access" role="switch" aria-checked="${coursesAccessEnabled ? "true" : "false"}" ${account.role === "admin" ? "disabled" : ""}>
-                  ${renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled)}
-                </button>
-                <label class="admin-role-select-label">
-                  <span class="sr-only">Role for ${escapeHtml(account.name || account.email || "this user")}</span>
-                  <select class="admin-role-select admin-btn-sm" data-action="set-user-role" ${isSelf ? "disabled" : ""}>
-                    ${renderAdminUserRoleOptions(account.role)}
-                  </select>
-                </label>
-                <button class="btn danger admin-btn-sm" data-action="remove-user" ${isSelf ? "disabled" : ""}>Remove</button>
-              </div>
+              ${renderAdminRowMenu({ id: `user-${accountId}`, label: `Actions for ${accountLabel}`, items: menuItems })}
             </td>
           </tr>
         `;
@@ -34116,39 +34110,100 @@ function renderAdmin() {
       })
       : "";
 
-    adminGlobalOverlay = `${usersFiltersDialogHtml}${usersAddUserDialogHtml}${usersSettingsDialogHtml}`;
+    // "Edit details" dialog. Its root carries data-user-id plus the same
+    // data-field inputs and save button the old inline row had, so
+    // saveUserEnrollmentFromRow() saves from it unchanged.
+    const editUserAccount = state.adminUserEditId
+      ? users.find((entry) => String(entry?.id || "").trim() === String(state.adminUserEditId))
+      : null;
+    let usersEditUserDialogHtml = "";
+    if (editUserAccount) {
+      const editView = getAdminUserEnrollmentViewModel(editUserAccount);
+      const editDisplay = editView.account || editUserAccount;
+      const editId = String(editUserAccount.id || "").trim();
+      const editIsStudent = editUserAccount.role === "student";
+      const editIsSelf = editId === String(user.id || "");
+      const editYear = editIsStudent ? normalizeAcademicYearOrNull(editDisplay.academicYear) : null;
+      const editSemester = editIsStudent ? normalizeAcademicSemesterOrNull(editDisplay.academicSemester) : null;
+      const editCourses = editIsStudent ? getAdminVisibleCoursesForUser(editDisplay, allCourses) : [];
+      const editSaveMode = getAdminUserEnrollmentSaveMode(editId);
+      const editMissing = isUserAccessApproved(editUserAccount) ? [] : describeMissingStudentApprovalFields(editUserAccount);
+      const editBody = `
+        <div class="admin-user-edit" data-user-edit-root data-user-id="${escapeHtml(editId)}">
+          <div class="form-row">
+            <label>Full name
+              <input id="admin-user-edit-name" type="text" data-field="name" value="${escapeHtml(String(editDisplay.name ?? editUserAccount.name ?? ""))}" autocomplete="off" maxlength="120" required />
+            </label>
+            <label>Phone number
+              <input id="admin-user-edit-phone" type="tel" data-field="phone" value="${escapeHtml(String(editDisplay.phone ?? ""))}" inputmode="tel" autocomplete="off" maxlength="20" placeholder="+20 10 0000 0000" />
+            </label>
+          </div>
+          ${editIsStudent
+        ? `<div class="form-row">
+              <label>Year
+                <select id="admin-user-edit-year" data-field="academicYear">
+                  <option value="" ${editYear === null ? "selected" : ""}>Select year</option>
+                  ${[1, 2, 3, 4, 5].map((entry) => `<option value="${entry}" ${editYear === entry ? "selected" : ""}>Year ${entry}</option>`).join("")}
+                </select>
+              </label>
+              <label>Semester
+                <select id="admin-user-edit-semester" data-field="academicSemester">
+                  <option value="" ${editSemester === null ? "selected" : ""}>Select semester</option>
+                  <option value="1" ${editSemester === 1 ? "selected" : ""}>Semester 1</option>
+                  <option value="2" ${editSemester === 2 ? "selected" : ""}>Semester 2</option>
+                </select>
+              </label>
+            </div>`
+        : ""}
+          <label>Role
+            <select id="admin-user-edit-role" class="admin-role-select" data-action="set-user-role" ${editIsSelf ? "disabled title=\"You cannot change your own role.\"" : ""}>
+              ${renderAdminUserRoleOptions(editUserAccount.role)}
+            </select>
+          </label>
+          ${editIsStudent
+        ? `<div class="admin-user-edit-subjects">
+              <p class="admin-user-edit-label">MCQ subjects <small>(set by year and semester)</small></p>
+              <p class="admin-course-preview">${escapeHtml(editCourses.length ? editCourses.join(", ") : "No MCQ subjects for this term yet")}</p>
+            </div>`
+        : ""}
+          ${editMissing.length ? `<p class="admin-account-approval-gap">Not approved yet — needs ${escapeHtml(formatMissingApprovalFieldList(editMissing))}.</p>` : ""}
+          <div class="admin-dialog-actions">
+            <button class="btn ghost" type="button" data-action="admin-user-edit-cancel">Cancel</button>
+            <button class="btn ${editSaveMode ? "is-loading" : ""}" type="button" data-action="save-user-enrollment" ${editSaveMode ? "disabled" : ""}>${renderAdminUserEnrollmentSaveButtonContent({ busy: Boolean(editSaveMode), mode: editSaveMode || "manual" })}</button>
+          </div>
+        </div>
+      `;
+      usersEditUserDialogHtml = renderAdminDialog({
+        id: "users-edit-user",
+        title: `Edit ${String(editUserAccount.name || editUserAccount.email || "user")}`,
+        subtitle: String(editUserAccount.email || ""),
+        body: editBody,
+        closeAction: "admin-user-edit-cancel",
+      });
+    }
+
+    adminGlobalOverlay = `${usersFiltersDialogHtml}${usersAddUserDialogHtml}${usersSettingsDialogHtml}${usersEditUserDialogHtml}`;
 
     pageContent = `
       <section class="card admin-section" id="admin-users-section">
         ${usersPageHeaderHtml}
         ${usersFilterChipsHtml}
 
-        <div class="admin-question-bulk-bar admin-users-bulk-bar" style="margin-top: 0.74rem;">
-          <label class="admin-question-select-all">
-            <input
-              type="checkbox"
-              name="selectAllUsersVisible"
-              data-action="admin-select-all-users"
-              aria-label="Select all users currently shown"
-              data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
-              ${allVisibleSelected ? "checked" : ""}
-              ${bulkDeactivateRunning || !visibleSelectableUserIds.length ? "disabled" : ""}
-            />
-            <span>Select all in this view</span>
-          </label>
-          <p class="admin-question-selection-count">Selected: <b>${selectedUserCount}</b> • Showing <b>${renderedUsers.length}</b> of ${filteredUsers.length} filtered (${users.length} total)</p>
-          <div class="stack">
-            <button class="btn admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-approve-users" ${bulkDeactivateRunning || !selectedUserCount ? "disabled" : ""}>
-              ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve selected"}
+        ${selectedUserCount
+        ? `<div class="admin-users-bulk-bar" role="region" aria-label="Bulk actions">
+            <span class="admin-users-bulk-count"><b>${selectedUserCount}</b> selected</span>
+            <button class="btn admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-approve-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+              ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve"}
             </button>
-            <button class="btn danger admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-deactivate-users" ${bulkDeactivateRunning || !selectedUserCount ? "disabled" : ""}>
-              ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Suspending...</span>` : "Suspend selected"}
+            <button class="btn ghost admin-btn-sm admin-users-bulk-suspend ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-deactivate-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+              ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Suspending...</span>` : "Suspend"}
             </button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning || !selectedUserCount ? "disabled" : ""}>Clear selection</button>
-          </div>
-        </div>
+            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning ? "disabled" : ""}>Clear</button>
+          </div>`
+        : ""}
+        <p class="admin-users-showing">Showing ${String(renderedUsers.length)} of ${String(filteredUsers.length)}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}</p>
         ${hiddenFilteredUserCount
-        ? `<p class="subtle" style="margin: 0.7rem 0 0;">Showing the first ${ADMIN_USER_RENDER_LIMIT} matching users to keep this screen responsive. Use search, year, or semester filters to edit users beyond this set.</p>`
+        ? `<p class="subtle" style="margin: 0.4rem 0 0;">Showing the first ${ADMIN_USER_RENDER_LIMIT} matching users to keep this screen responsive. Use search or filters to reach the others.</p>`
         : ""
       }
 
@@ -34157,24 +34212,33 @@ function renderAdmin() {
             <colgroup>
               <col class="col-select" />
               <col class="col-account" />
-              <col class="col-role" />
-              <col class="col-year" />
-              <col class="col-semester" />
-              <col class="col-courses" />
+              <col class="col-term" />
+              <col class="col-status" />
+              <col class="col-access" />
               <col class="col-actions" />
             </colgroup>
             <thead>
               <tr>
-                <th class="admin-user-select-cell">Select</th>
+                <th class="admin-user-select-cell">
+                  <input
+                    type="checkbox"
+                    name="selectAllUsersVisible"
+                    data-action="admin-select-all-users"
+                    aria-label="Select all users currently shown"
+                    title="Select all users currently shown"
+                    data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
+                    ${allVisibleSelected ? "checked" : ""}
+                    ${bulkDeactivateRunning || !visibleSelectableUserIds.length ? "disabled" : ""}
+                  />
+                </th>
                 <th>Account</th>
-                <th>Role</th>
-                <th>Year</th>
-                <th>Semester</th>
-                <th>MCQ Subjects</th>
-                <th>Actions</th>
+                <th>Term</th>
+                <th>Status</th>
+                <th>Access</th>
+                <th><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
-            <tbody>${accountRows || `<tr><td colspan="7" class="subtle">No users match the current search, year, and semester filters.</td></tr>`}</tbody>
+            <tbody>${accountRows || `<tr><td colspan="6" class="subtle">No users match the current search and filters.</td></tr>`}</tbody>
           </table>
         </div>
       </section>
@@ -35468,6 +35532,7 @@ function applyAdminPageTransition(previousPage, nextPage) {
     state.adminUsersFiltersOpen = false;
     state.adminAddUserPanelOpen = false;
     state.adminUsersSettingsOpen = false;
+    state.adminUserEditId = null;
     if (adminUserSearchDebounce) {
       window.clearTimeout(adminUserSearchDebounce);
       adminUserSearchDebounce = null;
@@ -35539,6 +35604,24 @@ function trackAdminDialogFocus() {
       adminDialogLastFocusId = target.id;
     }
   });
+}
+
+let adminUserEditReturnFocusUserId = "";
+
+function closeAdminUserEditDialog({ discardDraft = true } = {}) {
+  const editId = String(state.adminUserEditId || "").trim();
+  if (discardDraft && editId) {
+    clearAdminUserEnrollmentDraft(editId);
+  }
+  state.adminUserEditId = null;
+  state.skipNextRouteAnimation = true;
+  render();
+  const returnId = adminUserEditReturnFocusUserId || editId;
+  adminUserEditReturnFocusUserId = "";
+  const returnRow = returnId
+    ? [...appEl.querySelectorAll("tr[data-user-id]")].find((row) => row.getAttribute("data-user-id") === returnId)
+    : null;
+  returnRow?.querySelector("[data-action='admin-row-menu-toggle']")?.focus({ preventScroll: true });
 }
 
 function restoreAdminDialogFocusAfterRender() {
@@ -37363,7 +37446,7 @@ function wireAdmin() {
   });
   document.body.classList.toggle(
     "is-admin-dialog-open",
-    Boolean(state.adminUsersFiltersOpen || state.adminAddUserPanelOpen || state.adminUsersSettingsOpen),
+    Boolean(state.adminUsersFiltersOpen || state.adminAddUserPanelOpen || state.adminUsersSettingsOpen || state.adminUserEditId),
   );
   restoreAdminDialogFocusAfterRender();
 
@@ -38241,8 +38324,10 @@ function wireAdmin() {
       };
       const role = users[idx].role;
       const previousApproved = Boolean(users[idx].isApproved);
+      // Read-only table rows have no inputs; bulk approve re-saves them from the
+      // stored account. The "Edit details" dialog root has the inputs.
       const nameInput = row.querySelector("input[data-field='name']");
-      const fullName = String(nameInput?.value || "").trim();
+      const fullName = String(nameInput ? nameInput.value : (users[idx].name || "")).trim();
       if (!fullName) {
         if (!suppressValidationToast) {
           toast("Full name is required.");
@@ -38251,7 +38336,7 @@ function wireAdmin() {
       }
       users[idx].name = fullName;
       const phoneInput = row.querySelector("input[data-field='phone']");
-      const rawPhone = String(phoneInput?.value || "").trim();
+      const rawPhone = String(phoneInput ? phoneInput.value : (users[idx].phone || "")).trim();
       let normalizedPhone = "";
       if (rawPhone) {
         const phoneValidation = validateAndNormalizePhoneNumber(rawPhone);
@@ -38270,8 +38355,8 @@ function wireAdmin() {
       if (role === "student") {
         const yearSelect = row.querySelector("select[data-field='academicYear']");
         const semesterSelect = row.querySelector("select[data-field='academicSemester']");
-        const year = normalizeAcademicYearOrNull(yearSelect?.value);
-        const semester = normalizeAcademicSemesterOrNull(semesterSelect?.value);
+        const year = normalizeAcademicYearOrNull(yearSelect ? yearSelect.value : users[idx].academicYear);
+        const semester = normalizeAcademicSemesterOrNull(semesterSelect ? semesterSelect.value : users[idx].academicSemester);
         if (year === null || semester === null) {
           if (!suppressValidationToast && (mode === "manual" || syncNow)) {
             toast("Select both year and semester before saving.");
@@ -38509,10 +38594,49 @@ function wireAdmin() {
 
   appEl.querySelectorAll("[data-action='save-user-enrollment']").forEach((button) => {
     button.addEventListener("click", async () => {
-      const row = button.closest("tr[data-user-id]");
+      const row = button.closest("tr[data-user-id], [data-user-edit-root][data-user-id]");
       clearEnrollmentAutoSaveTimer(row);
-      await saveUserEnrollmentFromRow(row, { mode: "manual", syncNow: true });
+      const saved = await saveUserEnrollmentFromRow(row, { mode: "manual", syncNow: true });
+      if (saved && row?.hasAttribute("data-user-edit-root")) {
+        closeAdminUserEditDialog({ discardDraft: false });
+      }
     });
+  });
+
+  // "Edit details" dialog (opened from the row ⋯ menu).
+  appEl.querySelectorAll("[data-action='admin-user-edit-open']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = String(button.getAttribute("data-user-id") || "").trim();
+      if (!userId || !getUsers().some((entry) => String(entry?.id || "").trim() === userId)) {
+        toast("Account not found.");
+        return;
+      }
+      adminUserEditReturnFocusUserId = userId;
+      state.adminUserEditId = userId;
+      state.skipNextRouteAnimation = true;
+      render();
+      appEl.querySelector("#admin-user-edit-name")?.focus({ preventScroll: true });
+    });
+  });
+  appEl.querySelectorAll("[data-action='admin-user-edit-cancel']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const editId = String(state.adminUserEditId || "").trim();
+      const editRoot = appEl.querySelector("[data-user-edit-root]");
+      const account = getUsers().find((entry) => String(entry?.id || "").trim() === editId);
+      if (editRoot && account && hasAdminUserEnrollmentDraftChanges(account, readAdminUserEnrollmentDraftFromRow(editRoot))
+        && !window.confirm("Discard your changes to this user?")) {
+        return;
+      }
+      closeAdminUserEditDialog({ discardDraft: true });
+    });
+  });
+  // Typing keeps a draft (which also pauses the admin poll re-render and the
+  // auto-approval sweep), but the dialog never auto-saves: Save is explicit.
+  const adminUserEditRoot = appEl.querySelector("[data-user-edit-root][data-user-id]");
+  adminUserEditRoot?.querySelectorAll("[data-field]").forEach((field) => {
+    const syncDraft = () => syncAdminUserEnrollmentDraftFromRow(adminUserEditRoot, { patchUi: false });
+    field.addEventListener("input", syncDraft);
+    field.addEventListener("change", syncDraft);
   });
 
   appEl.querySelectorAll("[data-action='reset-user-password']").forEach((button) => {
@@ -38621,7 +38745,7 @@ function wireAdmin() {
       if (select.dataset.busy === "1") {
         return;
       }
-      const row = select.closest("tr[data-user-id]");
+      const row = select.closest("tr[data-user-id], [data-user-edit-root][data-user-id]");
       const userId = row?.getAttribute("data-user-id");
       const current = getCurrentUser();
       if (!userId) {

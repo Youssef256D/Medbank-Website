@@ -235,6 +235,24 @@ Frontend only; no schema, RLS, auth or access change. Static cache bust:
    list.
 7. **Universities**: header + notes, ⋯ row menu, add/edit in a dialog with an
    unsaved-changes confirm.
+7a. **Users table rows are read-only** (2026-09-30). Name, phone, year,
+   semester and role are edited in an "Edit details" dialog
+   (`state.adminUserEditId`); everything else lives in the row's ⋯ menu.
+   **Load-bearing design:** the dialog root is `[data-user-edit-root][data-user-id]`
+   and carries the same `data-field` inputs and `save-user-enrollment` button the
+   old inline row had, so `saveUserEnrollmentFromRow()` saves from it
+   unchanged; the save and role handlers look up
+   `closest("tr[data-user-id], [data-user-edit-root][data-user-id]")`. Menu
+   items stay inside the `<tr>`, so every other row handler's
+   `closest("tr[data-user-id]")` still works. When an element has no inputs (a
+   read-only row during bulk approve / Approve all pending),
+   `saveUserEnrollmentFromRow` now falls back to the stored name, phone and
+   term instead of failing with "Full name is required". The dialog keeps a
+   draft while typing (pauses the poll and the auto-approval sweep) but never
+   auto-saves. `patchAdminUserRowUi` updates the status dot, term, access
+   tags, the inline Approve (hidden once approved) and the menu labels. The
+   bulk bar renders only while rows are selected; select-all moved to the
+   table header.
 8. **Sidebar**: Enrollment Requests moved from People to Video Courses.
 9. **Verified** in the preview as the local demo admin at 1366px, 768px and
    375px (dialogs, menus, focus, Escape, chips, CSV contents, card
