@@ -1040,6 +1040,65 @@ body.is-google-auth-loading {
   min-width: 0;
 }
 
+.topbar-notice {
+  grid-column: 2;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: min(560px, 100%);
+  min-width: 0;
+  padding: 0.38rem 0.42rem 0.38rem 0.72rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 80%, var(--brand) 20%);
+  color: var(--ink);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.topbar-notice[hidden] {
+  display: none !important;
+}
+
+.topbar-notice-text {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.topbar .topbar-notice .topbar-notice-close {
+  flex: 0 0 28px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.topbar .topbar-notice .topbar-notice-close:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.topbar .topbar-notice .topbar-notice-close:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 .topbar::after {
   content: "";
   position: absolute;
@@ -11035,6 +11094,13 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
     justify-content: space-between;
   }
 
+  .topbar.admin-only-header .topbar-notice {
+    flex: 1 0 100%;
+    order: 3;
+    width: 100%;
+    max-width: 100%;
+  }
+
   .top-nav {
     order: 3;
     width: 100%;
@@ -11976,6 +12042,13 @@ html body :is(.exam-choice .exam-choice-text,
     justify-content: center;
     flex-wrap: wrap;
     gap: 0.54rem;
+  }
+
+  .topbar.admin-only-header .topbar-notice {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    width: 100%;
+    max-width: 100%;
   }
 
   #auth-actions:has(button[data-nav="login"]) {

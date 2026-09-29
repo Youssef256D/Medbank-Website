@@ -43,6 +43,7 @@ const privateNavEl = document.getElementById("private-nav");
 const authActionsEl = document.getElementById("auth-actions");
 const adminLinkEl = document.getElementById("admin-link");
 const googleAuthLoadingEl = document.getElementById("google-auth-loading");
+let topbarSystemNoticeEl = null;
 const APP_VERSION = String(document.querySelector('meta[name="app-version"]')?.getAttribute("content") || "2026-05-20.05").trim();
 const REQUIRED_QUESTION_CATALOG_REFRESH_VERSION = "2026-06-29-full-question-repair-v2";
 const ROUTE_STATE_ROUTE_KEY = "mcq_last_route";
@@ -631,6 +632,7 @@ const state = {
   adminDataRefreshing: false,
   adminDataLastSyncAt: 0,
   adminDataSyncError: "",
+  adminSystemNoticeDismissed: "",
   adminForceRefreshRunning: false,
   adminApproveAllPendingRunning: false,
   studentAutoApprovalEnabled: false,
@@ -4051,6 +4053,7 @@ async function handleSupabaseAuthStateChange(event, session) {
     state.adminDataRefreshing = false;
     state.adminDataLastSyncAt = 0;
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
     state.adminForceRefreshRunning = false;
     state.adminQuestionCountSnapshot = null;
     state.adminQuestionCountLoading = false;
@@ -8518,6 +8521,7 @@ function schedulePostAuthDataWarmup(user) {
   if (currentUser.role === "admin" && hasCachedAdminData) {
     state.adminDataLastSyncAt = Date.now();
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
   }
 
   postAuthWarmupRuntime.key = key;
@@ -8536,6 +8540,7 @@ function schedulePostAuthDataWarmup(user) {
       }
       state.adminDataLastSyncAt = Date.now();
       state.adminDataSyncError = "";
+      state.adminSystemNoticeDismissed = "";
     } else if (currentUser.role === "student") {
       await ensureFreshStudentDataAfterAuth(currentUser, {
         reason: "post-auth warmup",
@@ -21909,6 +21914,7 @@ async function refreshAdminDataSnapshot(user, options = {}) {
   state.adminDataRefreshing = true;
   if (surfaceErrors) {
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
   }
   if (renderLoadingState && state.route === "admin") {
     state.skipNextRouteAnimation = true;
@@ -22262,6 +22268,7 @@ function render() {
     state.adminDataRefreshing = false;
     state.adminDataLastSyncAt = 0;
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
     state.adminForceRefreshRunning = false;
     state.adminQuestionCountSnapshot = null;
     state.adminQuestionCountLoading = false;
@@ -22829,6 +22836,52 @@ function syncTopbar() {
     : 0;
   const unreadNotificationLabel = unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount);
   const canOpenMcqBank = user?.role !== "student" || isUserMcqAccessEnabled(user);
+
+  if (!topbarSystemNoticeEl && topbarEl) {
+    topbarSystemNoticeEl = document.createElement("div");
+    topbarSystemNoticeEl.id = "topbar-system-notice";
+    topbarSystemNoticeEl.className = "topbar-notice";
+    topbarSystemNoticeEl.setAttribute("role", "status");
+    topbarSystemNoticeEl.setAttribute("aria-live", "polite");
+    topbarSystemNoticeEl.hidden = true;
+
+    const noticeTextEl = document.createElement("span");
+    noticeTextEl.className = "topbar-notice-text";
+
+    const noticeCloseEl = document.createElement("button");
+    noticeCloseEl.type = "button";
+    noticeCloseEl.className = "topbar-notice-close";
+    noticeCloseEl.setAttribute("aria-label", "Dismiss message");
+    noticeCloseEl.textContent = "×";
+    noticeCloseEl.addEventListener("click", () => {
+      state.adminSystemNoticeDismissed = noticeTextEl.textContent || "";
+      topbarSystemNoticeEl.hidden = true;
+    });
+
+    topbarSystemNoticeEl.append(noticeTextEl, noticeCloseEl);
+    topbarEl.insertBefore(topbarSystemNoticeEl, authActionsEl);
+  }
+
+  const adminSystemMessage = typeof state.adminDataSyncError === "string"
+    ? state.adminDataSyncError
+    : "";
+  if (!adminSystemMessage.trim()) {
+    state.adminSystemNoticeDismissed = "";
+  }
+  if (topbarSystemNoticeEl) {
+    const shouldShowAdminSystemNotice = Boolean(
+      isAdmin
+      && state.route === "admin"
+      && adminSystemMessage.trim()
+      && adminSystemMessage !== state.adminSystemNoticeDismissed
+    );
+    const noticeTextEl = topbarSystemNoticeEl.querySelector(".topbar-notice-text");
+    if (noticeTextEl) {
+      noticeTextEl.textContent = adminSystemMessage;
+    }
+    topbarSystemNoticeEl.title = adminSystemMessage;
+    topbarSystemNoticeEl.hidden = !shouldShowAdminSystemNotice;
+  }
 
   const brandButton = brandWrapEl?.querySelector(".brand");
   if (brandButton) {
@@ -34449,9 +34502,6 @@ function renderAdmin() {
     `;
   }
 
-  const syncNotice = state.adminDataSyncError
-    ? `<div class="card admin-section"><p class="subtle" style="margin:0;">${escapeHtml(state.adminDataSyncError)}</p></div>`
-    : "";
   const adminLastSyncLabel = state.adminDataLastSyncAt
     ? new Date(state.adminDataLastSyncAt).toLocaleTimeString()
     : "Not yet";
@@ -34491,7 +34541,7 @@ function renderAdmin() {
         </div>
       </aside>
 
-      <div class="admin-main">${syncNotice}${pageContent}</div>
+      <div class="admin-main">${pageContent}</div>
     </section>
     ${adminGlobalOverlay}
   `;
@@ -35083,6 +35133,7 @@ function wireAdmin() {
       const deferred = supabaseSync.pendingWrites.has(remoteKey);
       state.adminDataLastSyncAt = Date.now();
       state.adminDataSyncError = "";
+      state.adminSystemNoticeDismissed = "";
       const activeLabel = `${activeSummary.activeCount} active student${activeSummary.activeCount === 1 ? "" : "s"}`;
       const solvingLabel = activeSummary.solvingCount
         ? ` ${activeSummary.solvingCount} ${activeSummary.solvingCount === 1 ? "student is" : "students are"} mid-exam and will sync silently.`
@@ -35149,6 +35200,7 @@ function wireAdmin() {
     }
     state.adminDataLastSyncAt = Date.now();
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
     state.skipNextRouteAnimation = true;
     render();
     flushPendingSyncInBackground();
