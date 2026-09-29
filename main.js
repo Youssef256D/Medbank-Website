@@ -489,6 +489,8 @@ const state = {
   adminAddUserPanelOpen: false,
   adminAddUserDraft: createDefaultAdminAddUserDraft(),
   adminAddUserDraftDirty: false,
+  adminUsersFiltersOpen: false,
+  adminUsersSettingsOpen: false,
   adminUserEnrollmentDrafts: {},
   adminUserEnrollmentSaving: {},
   adminSelectedUserIds: [],
@@ -952,6 +954,7 @@ function shouldDeferAdminUsersAutoRender() {
   }
   return (
     (Boolean(state.adminAddUserPanelOpen) && Boolean(state.adminAddUserDraftDirty))
+    || Boolean(state.adminUsersFiltersOpen)
     || hasAdminUserEnrollmentDrafts()
     || hasActiveAdminUserEnrollmentSaves()
     || adminUserMutationActiveCount > 0
@@ -966,6 +969,10 @@ let wasAdminCourseTopicGroupCreateModalOpen = false;
 let wasAdminCourseTopicInlineCreateOpen = false;
 let adminCourseSearchDebounce = null;
 let adminUserSearchDebounce = null;
+// Selector of the toolbar button that opened the currently-open Users
+// dialog, so closing it (backdrop, x, Escape, Cancel/Done) can return focus
+// there. Cleared once that focus restore happens.
+let adminUsersDialogReturnFocusSelector = null;
 let adminApprovedAccessRepairInFlight = false;
 let adminApprovedAccessRepairSignature = "";
 let adminApprovedAccessRepairCompletedSignature = "";
@@ -31367,12 +31374,17 @@ function patchAdminUsersPendingSummaryUi() {
   const pendingCount = getUsers().filter((entry) => entry.role === "student" && !isUserAccessApproved(entry)).length;
   const pendingBadge = usersSection.querySelector("[data-admin-pending-count]");
   if (pendingBadge) {
-    pendingBadge.className = `badge ${pendingCount ? "bad" : "good"}`;
-    pendingBadge.innerHTML = `Pending: <b>${pendingCount}</b>`;
+    pendingBadge.className = `badge ${pendingCount ? "bad" : "good"} admin-users-pending-chip`;
+    pendingBadge.textContent = `${pendingCount} pending`;
+    pendingBadge.hidden = !pendingCount;
   }
-  const approveAllButton = usersSection.querySelector("[data-action='approve-all-pending']");
+  // The "Approve all pending" button only exists in the DOM while the
+  // Approval settings dialog is open, so it lives in adminGlobalOverlay
+  // (outside #admin-users-section) rather than usersSection.
+  const approveAllButton = appEl?.querySelector("[data-action='approve-all-pending']");
   if (approveAllButton && !state.adminUserBulkActionRunning && !state.adminApproveAllPendingRunning) {
     approveAllButton.disabled = !pendingCount;
+    approveAllButton.textContent = `Approve all pending (${pendingCount})`;
   }
   return true;
 }
@@ -32381,9 +32393,14 @@ function renderAdminIconButton({ icon, label, attrs = "", variant = "", busy = f
     refresh: '<path d="M20 6v5h-5"></path><path d="M19 11a7.5 7.5 0 1 0 .2 3"></path>',
     info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>',
     more: '<circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>',
+    filter: '<path d="M4 5h16l-6.5 7.5v5.4l-3 1.6v-7L4 5Z"></path>',
+    download: '<path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"></path>',
+    settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"></path>',
+    search: '<circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path>',
+    x: '<path d="M18 6 6 18M6 6l12 12"></path>',
   };
   const iconName = Object.prototype.hasOwnProperty.call(icons, icon) ? icon : "info";
-  const variantClass = variant === "primary" ? " is-primary" : "";
+  const variantClass = variant === "primary" || variant === "is-primary" ? " is-primary" : "";
   const busyAttributes = busy ? ' disabled aria-busy="true"' : "";
   const spinClass = busy && iconName === "refresh" ? " is-spinning" : "";
   return `<button type="button" class="admin-icon-btn${variantClass}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" ${attrs}${busyAttributes}>
@@ -33332,6 +33349,34 @@ function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection
     : activeAdminPage === item.page;
 }
 
+// Shared admin UI pieces (page header, icon buttons, dialog shell, row menu).
+// Centered dialog shell. `body`/`actions` are trusted HTML; `closeAction` is
+// the data-action shared by the backdrop and the × button, so a caller only
+// has to wire one click handler (plus Escape, see wireAdmin) to close it.
+function renderAdminDialog({ id, title, subtitle = "", body = "", actions = "", closeAction = "" } = {}) {
+  const dialogId = String(id || "").trim();
+  const titleId = `admin-dialog-title-${dialogId}`;
+  const safeClose = escapeHtml(String(closeAction || "").trim());
+  return `
+    <div class="admin-dialog" id="admin-dialog-${escapeHtml(dialogId)}" data-admin-dialog="${escapeHtml(dialogId)}" data-close-action="${safeClose}">
+      <button type="button" class="admin-dialog-backdrop" data-action="${safeClose}" aria-label="Close dialog"></button>
+      <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(titleId)}" tabindex="-1">
+        <div class="admin-dialog-head">
+          <div>
+            <h3 id="${escapeHtml(titleId)}">${escapeHtml(title)}</h3>
+            ${subtitle ? `<p class="subtle">${escapeHtml(subtitle)}</p>` : ""}
+          </div>
+          <button type="button" class="admin-icon-btn admin-dialog-close" data-action="${safeClose}" aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        <div class="admin-dialog-body">${body}</div>
+        ${actions ? `<div class="admin-dialog-actions">${actions}</div>` : ""}
+      </section>
+    </div>
+  `;
+}
+
 function renderAdmin() {
   const user = getCurrentUser();
   if (!user || user.role !== "admin") {
@@ -33827,139 +33872,256 @@ function renderAdmin() {
       })
       .join("");
 
+    const activeUserFilterCount = [
+      userFilterYear !== null,
+      userFilterSemester !== null,
+      Boolean(userFilterApproval),
+      userFilterMcqHeld,
+      Boolean(userFilterProvider),
+    ].filter(Boolean).length;
+    const activeUserFilterChips = [];
+    if (userFilterYear !== null) {
+      activeUserFilterChips.push({ key: "year", label: `Year ${userFilterYear}` });
+    }
+    if (userFilterSemester !== null) {
+      activeUserFilterChips.push({ key: "semester", label: `Semester ${userFilterSemester}` });
+    }
+    if (userFilterApproval) {
+      const approvalChipLabel = userFilterApproval === "pending"
+        ? "Not approved"
+        : userFilterApproval === "incomplete"
+          ? "Not approved · missing details"
+          : "Approved";
+      activeUserFilterChips.push({ key: "approval", label: approvalChipLabel });
+    }
+    if (userFilterMcqHeld) {
+      activeUserFilterChips.push({ key: "mcqHeld", label: "Waiting for MCQ" });
+    }
+    if (userFilterProvider) {
+      activeUserFilterChips.push({ key: "provider", label: userFilterProvider === "google" ? "Google" : "Email & password" });
+    }
+
+    const usersToolbarSearchHtml = `
+      <label class="admin-users-toolbar-search">
+        <span class="sr-only">Search users</span>
+        <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input
+          id="admin-user-search"
+          type="search"
+          value="${escapeHtml(userSearchQuery)}"
+          placeholder="MedBank ID, name, email, phone, year, or semester"
+        />
+      </label>
+    `;
+    const usersToolbarPendingChipHtml = `
+      <button type="button" class="badge ${pendingCount ? "bad" : "good"} admin-users-pending-chip" data-admin-pending-count data-action="admin-users-filter-pending" ${pendingCount ? "" : "hidden"}>${pendingCount} pending</button>
+    `;
+    const usersToolbarFiltersButtonHtml = `
+      <span class="admin-icon-btn-wrap">
+        ${renderAdminIconButton({
+      icon: "filter",
+      label: activeUserFilterCount ? `Filters (${activeUserFilterCount} active)` : "Filters",
+      attrs: `data-action="admin-users-open-filters" aria-haspopup="dialog"`,
+      variant: activeUserFilterCount ? "is-active" : "",
+    })}
+        ${activeUserFilterCount ? `<span class="admin-icon-btn-badge">${activeUserFilterCount}</span>` : ""}
+      </span>
+    `;
+    const usersToolbarExportButtonHtml = renderAdminIconButton({
+      icon: "download",
+      label: `Export ${filteredUsers.length} users as CSV`,
+      attrs: `data-action="admin-users-export-csv" ${filteredUsers.length ? "" : "disabled"}`,
+    });
+    const usersToolbarAddButtonHtml = renderAdminIconButton({
+      icon: "plus",
+      label: "Add user",
+      attrs: `data-action="admin-users-open-add-user"`,
+      variant: "is-primary",
+    });
+    const usersToolbarSettingsButtonHtml = renderAdminIconButton({
+      icon: "settings",
+      label: "Approval settings",
+      attrs: `data-action="admin-users-open-settings"`,
+    });
+    const usersToolbarActionsHtml = `
+      ${usersToolbarSearchHtml}
+      ${usersToolbarPendingChipHtml}
+      ${usersToolbarFiltersButtonHtml}
+      ${usersToolbarExportButtonHtml}
+      ${usersToolbarAddButtonHtml}
+      ${usersToolbarSettingsButtonHtml}
+    `;
+    const usersPageHeaderHtml = renderAdminPageHeader({
+      id: "users",
+      title: "Users",
+      count: users.length,
+      actions: usersToolbarActionsHtml,
+      notes: [
+        "Add users, assign year/semester, change roles, and manage account access.",
+        "Search by MedBank ID, phone, name, or email.",
+      ],
+    });
+    const usersFilterChipsHtml = activeUserFilterChips.length
+      ? `
+        <div class="admin-users-filter-chips">
+          ${activeUserFilterChips
+        .map(
+          (chip) => `
+                <span class="admin-users-filter-chip">
+                  ${escapeHtml(chip.label)}
+                  <button type="button" data-action="admin-users-remove-filter" data-filter="${escapeHtml(chip.key)}" aria-label="Remove filter: ${escapeHtml(chip.label)}">&times;</button>
+                </span>
+              `,
+        )
+        .join("")}
+          <button type="button" class="btn ghost admin-btn-sm admin-users-filter-chips-clear" data-action="admin-users-clear-filters">Clear all</button>
+        </div>
+      `
+      : "";
+
+    const usersFiltersDialogHtml = state.adminUsersFiltersOpen
+      ? renderAdminDialog({
+        id: "users-filters",
+        title: "Filters",
+        subtitle: "Narrow the list by year, semester, approval, MCQ activation, or sign-in method.",
+        closeAction: "admin-users-close-filters",
+        body: `
+          <form id="admin-user-filter-form" class="admin-users-filter-form" autocomplete="off">
+            <div class="form-row">
+              <label>Year
+                <select id="admin-user-filter-year" name="academicYear">
+                  <option value="" ${userFilterYear === null ? "selected" : ""}>All years</option>
+                  ${[1, 2, 3, 4, 5]
+          .map((entry) => `<option value="${entry}" ${userFilterYear === entry ? "selected" : ""}>Year ${entry}</option>`)
+          .join("")}
+                </select>
+              </label>
+              <label>Semester
+                <select id="admin-user-filter-semester" name="academicSemester">
+                  <option value="" ${userFilterSemester === null ? "selected" : ""}>All semesters</option>
+                  <option value="1" ${userFilterSemester === 1 ? "selected" : ""}>Semester 1</option>
+                  <option value="2" ${userFilterSemester === 2 ? "selected" : ""}>Semester 2</option>
+                </select>
+              </label>
+              <label>Approval
+                <select id="admin-user-filter-approval" name="approvalStatus">
+                  <option value="" ${!userFilterApproval ? "selected" : ""}>All accounts</option>
+                  <option value="pending" ${userFilterApproval === "pending" ? "selected" : ""}>Not approved (${approvalFilterCounts.pending})</option>
+                  <option value="incomplete" ${userFilterApproval === "incomplete" ? "selected" : ""}>Not approved · missing details (${approvalFilterCounts.incomplete})</option>
+                  <option value="approved" ${userFilterApproval === "approved" ? "selected" : ""}>Approved (${approvalFilterCounts.approved})</option>
+                </select>
+              </label>
+              <label>MCQ activation
+                <select id="admin-user-filter-mcq-held" name="mcqHeld">
+                  <option value="" ${!userFilterMcqHeld ? "selected" : ""}>All accounts</option>
+                  <option value="held" ${userFilterMcqHeld ? "selected" : ""}>Waiting for MCQ (${mcqHeldLocalCount})</option>
+                </select>
+              </label>
+              <label>Sign-in method
+                <select id="admin-user-filter-provider" name="authProvider">
+                  <option value="" ${!userFilterProvider ? "selected" : ""}>All methods</option>
+                  <option value="google" ${userFilterProvider === "google" ? "selected" : ""}>Google (${providerFilterCounts.google})</option>
+                  <option value="email" ${userFilterProvider === "email" ? "selected" : ""}>Email &amp; password (${providerFilterCounts.email})</option>
+                </select>
+              </label>
+            </div>
+          </form>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-clear-filters" ${resetUserFiltersDisabled ? "disabled" : ""}>Reset filters</button>
+          <button class="btn admin-btn-sm" type="button" data-action="admin-users-close-filters">Done</button>
+        `,
+      })
+      : "";
+
+    const usersAddUserDialogHtml = state.adminAddUserPanelOpen
+      ? renderAdminDialog({
+        id: "users-add-user",
+        title: "Add user",
+        subtitle: "Create a student or admin account only when needed.",
+        closeAction: "admin-users-close-add-user",
+        body: `
+          <form id="admin-add-user-form" autocomplete="off">
+            <div class="form-row">
+              <label>Full name <input name="name" autocomplete="off" value="${escapeHtml(addUserDraft.name)}" required /></label>
+              <label>Email <input type="email" name="email" autocomplete="off" value="${escapeHtml(addUserDraft.email)}" required /></label>
+            </div>
+            <div class="form-row">
+              <label>Password <input type="password" name="password" minlength="6" autocomplete="new-password" value="${escapeHtml(addUserDraft.password)}" required /></label>
+              <label>Role
+                <select name="role">
+                  <option value="student" ${addUserDraft.role === "student" ? "selected" : ""}>Student</option>
+                  <option value="creator" ${addUserDraft.role === "creator" ? "selected" : ""}>Creator</option>
+                  <option value="admin" ${addUserDraft.role === "admin" ? "selected" : ""}>Admin</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>Phone number <input type="tel" name="phone" autocomplete="off" inputmode="tel" maxlength="20" placeholder="+20 10 0000 0000" value="${escapeHtml(addUserDraft.phone)}" /></label>
+              <label>Year
+                <select name="academicYear">
+                  <option value="1" ${addUserDraft.academicYear === "1" ? "selected" : ""}>Year 1</option>
+                  <option value="2" ${addUserDraft.academicYear === "2" ? "selected" : ""}>Year 2</option>
+                  <option value="3" ${addUserDraft.academicYear === "3" ? "selected" : ""}>Year 3</option>
+                  <option value="4" ${addUserDraft.academicYear === "4" ? "selected" : ""}>Year 4</option>
+                  <option value="5" ${addUserDraft.academicYear === "5" ? "selected" : ""}>Year 5</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>Semester
+                <select name="academicSemester">
+                  <option value="1" ${addUserDraft.academicSemester === "1" ? "selected" : ""}>Semester 1</option>
+                  <option value="2" ${addUserDraft.academicSemester === "2" ? "selected" : ""}>Semester 2</option>
+                </select>
+              </label>
+            </div>
+            <div class="stack">
+              <button class="btn" type="submit">Add user</button>
+            </div>
+          </form>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-close-add-user">Cancel</button>
+        `,
+      })
+      : "";
+
+    const usersSettingsDialogHtml = state.adminUsersSettingsOpen
+      ? renderAdminDialog({
+        id: "users-settings",
+        title: "Approval settings",
+        closeAction: "admin-users-close-settings",
+        body: `
+          <div class="admin-users-settings-block">
+            <button class="admin-access-switch" type="button" data-action="toggle-student-auto-approval" role="switch" aria-checked="${autoApprovalEnabled ? "true" : "false"}" ${autoApprovalBusy ? "disabled" : ""} title="Approve pending students automatically once their profile is complete">
+              ${renderAdminAccessSwitchContent(autoApprovalBusy ? "Auto-approve..." : "Auto-approve", autoApprovalEnabled)}
+            </button>
+            <p class="subtle">
+              ${autoApprovalEnabled
+            ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. This runs in the database, so it keeps working when no admin is signed in.`
+            : "New student accounts require admin approval."}
+            </p>
+            ${state.studentAutoApprovalError
+            ? `<p class="subtle" style="color: var(--danger);">${escapeHtml(state.studentAutoApprovalError)}</p>`
+            : ""}
+          </div>
+          ${renderAdminAutoMcqAccessPanel(users)}
+          <div class="admin-users-settings-block">
+            <button class="btn ${approveAllPendingRunning ? "is-loading" : ""}" type="button" data-action="approve-all-pending" ${pendingCount && !approveAllPendingRunning ? "" : "disabled"}>
+              ${approveAllPendingRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : `Approve all pending (${pendingCount})`}
+            </button>
+          </div>
+        `,
+      })
+      : "";
+
+    adminGlobalOverlay = `${usersFiltersDialogHtml}${usersAddUserDialogHtml}${usersSettingsDialogHtml}`;
+
     pageContent = `
       <section class="card admin-section" id="admin-users-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Users</h3>
-            <p class="subtle">Add users, assign year/semester, change roles, and manage account access. Search by MedBank ID, phone, name, or email.</p>
-          </div>
-          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem;">
-            <div style="display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; justify-content: flex-end;">
-              <span class="badge ${pendingCount ? 'bad' : 'good'}" data-admin-pending-count style="font-size: 0.8rem; padding: 0.3rem 0.7rem;">Pending: <b>${pendingCount}</b></span>
-              <button class="btn ${approveAllPendingRunning ? "is-loading" : ""}" type="button" data-action="approve-all-pending" ${pendingCount && !approveAllPendingRunning ? "" : "disabled"}>
-                ${approveAllPendingRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve all pending"}
-              </button>
-              <button class="admin-access-switch" type="button" data-action="toggle-student-auto-approval" role="switch" aria-checked="${autoApprovalEnabled ? "true" : "false"}" ${autoApprovalBusy ? "disabled" : ""} title="Approve pending students automatically once their profile is complete">
-                ${renderAdminAccessSwitchContent(autoApprovalBusy ? "Auto-approve..." : "Auto-approve", autoApprovalEnabled)}
-              </button>
-            </div>
-            <span class="subtle" style="text-align: right;">
-              ${autoApprovalEnabled
-                ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. This runs in the database, so it keeps working when no admin is signed in.`
-                : "New student accounts require admin approval."}
-            </span>
-            ${state.studentAutoApprovalError
-              ? `<span class="subtle" style="text-align: right; color: var(--danger);">${escapeHtml(state.studentAutoApprovalError)}</span>`
-              : ""}
-          </div>
-        </div>
-        ${renderAdminAutoMcqAccessPanel(users)}
-        <details id="admin-add-user-disclosure" class="admin-user-create-panel" style="margin-top: 0.85rem;" ${state.adminAddUserPanelOpen ? "open" : ""}>
-          <summary class="admin-user-create-toggle">
-            <span class="admin-user-create-toggle-main">
-              <span class="admin-user-create-chevron" aria-hidden="true"></span>
-              <span class="admin-user-create-toggle-copy">
-                <b>Add new user</b>
-                <small>Create a student or admin account only when needed.</small>
-              </span>
-            </span>
-          </summary>
-          <div class="admin-user-create-panel-body">
-            <form id="admin-add-user-form" autocomplete="off">
-              <div class="form-row">
-                <label>Full name <input name="name" autocomplete="off" value="${escapeHtml(addUserDraft.name)}" required /></label>
-                <label>Email <input type="email" name="email" autocomplete="off" value="${escapeHtml(addUserDraft.email)}" required /></label>
-              </div>
-              <div class="form-row">
-                <label>Password <input type="password" name="password" minlength="6" autocomplete="new-password" value="${escapeHtml(addUserDraft.password)}" required /></label>
-                <label>Role
-                  <select name="role">
-                    <option value="student" ${addUserDraft.role === "student" ? "selected" : ""}>Student</option>
-                    <option value="creator" ${addUserDraft.role === "creator" ? "selected" : ""}>Creator</option>
-                    <option value="admin" ${addUserDraft.role === "admin" ? "selected" : ""}>Admin</option>
-                  </select>
-                </label>
-              </div>
-              <div class="form-row">
-                <label>Phone number <input type="tel" name="phone" autocomplete="off" inputmode="tel" maxlength="20" placeholder="+20 10 0000 0000" value="${escapeHtml(addUserDraft.phone)}" /></label>
-                <label>Year
-                  <select name="academicYear">
-                    <option value="1" ${addUserDraft.academicYear === "1" ? "selected" : ""}>Year 1</option>
-                    <option value="2" ${addUserDraft.academicYear === "2" ? "selected" : ""}>Year 2</option>
-                    <option value="3" ${addUserDraft.academicYear === "3" ? "selected" : ""}>Year 3</option>
-                    <option value="4" ${addUserDraft.academicYear === "4" ? "selected" : ""}>Year 4</option>
-                    <option value="5" ${addUserDraft.academicYear === "5" ? "selected" : ""}>Year 5</option>
-                  </select>
-                </label>
-              </div>
-              <div class="form-row">
-                <label>Semester
-                  <select name="academicSemester">
-                    <option value="1" ${addUserDraft.academicSemester === "1" ? "selected" : ""}>Semester 1</option>
-                    <option value="2" ${addUserDraft.academicSemester === "2" ? "selected" : ""}>Semester 2</option>
-                  </select>
-                </label>
-              </div>
-              <div class="stack">
-                <button class="btn" type="submit">Add user</button>
-              </div>
-            </form>
-          </div>
-        </details>
-
-        <form id="admin-user-filter-form" class="admin-users-filter-form" style="margin-top: 0.95rem;" autocomplete="off">
-          <div class="form-row">
-            <label class="admin-user-search-field">Search user
-              <input
-                id="admin-user-search"
-                type="search"
-                value="${escapeHtml(userSearchQuery)}"
-                placeholder="MedBank ID, name, email, phone, year, or semester"
-              />
-            </label>
-            <label>Year
-              <select id="admin-user-filter-year" name="academicYear">
-                <option value="" ${userFilterYear === null ? "selected" : ""}>All years</option>
-                ${[1, 2, 3, 4, 5]
-        .map((entry) => `<option value="${entry}" ${userFilterYear === entry ? "selected" : ""}>Year ${entry}</option>`)
-        .join("")}
-              </select>
-            </label>
-            <label>Semester
-              <select id="admin-user-filter-semester" name="academicSemester">
-                <option value="" ${userFilterSemester === null ? "selected" : ""}>All semesters</option>
-                <option value="1" ${userFilterSemester === 1 ? "selected" : ""}>Semester 1</option>
-                <option value="2" ${userFilterSemester === 2 ? "selected" : ""}>Semester 2</option>
-              </select>
-            </label>
-            <label>Approval
-              <select id="admin-user-filter-approval" name="approvalStatus">
-                <option value="" ${!userFilterApproval ? "selected" : ""}>All accounts</option>
-                <option value="pending" ${userFilterApproval === "pending" ? "selected" : ""}>Not approved (${approvalFilterCounts.pending})</option>
-                <option value="incomplete" ${userFilterApproval === "incomplete" ? "selected" : ""}>Not approved · missing details (${approvalFilterCounts.incomplete})</option>
-                <option value="approved" ${userFilterApproval === "approved" ? "selected" : ""}>Approved (${approvalFilterCounts.approved})</option>
-              </select>
-            </label>
-            <label>MCQ activation
-              <select id="admin-user-filter-mcq-held" name="mcqHeld">
-                <option value="" ${!userFilterMcqHeld ? "selected" : ""}>All accounts</option>
-                <option value="held" ${userFilterMcqHeld ? "selected" : ""}>Waiting for MCQ (${mcqHeldLocalCount})</option>
-              </select>
-            </label>
-            <label>Sign-in method
-              <select id="admin-user-filter-provider" name="authProvider">
-                <option value="" ${!userFilterProvider ? "selected" : ""}>All methods</option>
-                <option value="google" ${userFilterProvider === "google" ? "selected" : ""}>Google (${providerFilterCounts.google})</option>
-                <option value="email" ${userFilterProvider === "email" ? "selected" : ""}>Email &amp; password (${providerFilterCounts.email})</option>
-              </select>
-            </label>
-          </div>
-          <div class="stack">
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-clear-filters" ${resetUserFiltersDisabled ? "disabled" : ""}>Reset filters</button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-export-csv" ${filteredUsers.length ? "" : "disabled"}>Export CSV (${filteredUsers.length})</button>
-          </div>
-        </form>
+        ${usersPageHeaderHtml}
+        ${usersFilterChipsHtml}
 
         <div class="admin-question-bulk-bar admin-users-bulk-bar" style="margin-top: 0.74rem;">
           <label class="admin-question-select-all">
@@ -35303,6 +35465,9 @@ function applyAdminPageTransition(previousPage, nextPage) {
   if (nextPage !== "users") {
     state.adminSelectedUserIds = [];
     state.adminUserBulkActionRunning = false;
+    state.adminUsersFiltersOpen = false;
+    state.adminAddUserPanelOpen = false;
+    state.adminUsersSettingsOpen = false;
     if (adminUserSearchDebounce) {
       window.clearTimeout(adminUserSearchDebounce);
       adminUserSearchDebounce = null;
@@ -35332,7 +35497,68 @@ function applyAdminPageTransition(previousPage, nextPage) {
   }
 }
 
+// Moves focus into a just-opened renderAdminDialog() (its first focusable
+// field, falling back to the panel itself). Call this after the render()
+// that shows the dialog.
+function focusIntoAdminDialog(dialogId) {
+  const panel = appEl?.querySelector(`#admin-dialog-${dialogId} .admin-dialog-panel`);
+  if (!panel) {
+    return;
+  }
+  const focusable = panel.querySelector("input, select, textarea, button:not([disabled])");
+  (focusable || panel).focus({ preventScroll: true });
+}
+
+// Returns focus to whichever toolbar button opened the dialog that was just
+// closed. Call this after the render() that hides the dialog.
+function restoreAdminUsersDialogFocus() {
+  const selector = adminUsersDialogReturnFocusSelector;
+  adminUsersDialogReturnFocusSelector = null;
+  if (!selector) {
+    return;
+  }
+  const trigger = appEl?.querySelector(selector);
+  trigger?.focus({ preventScroll: true });
+}
+
+// A render() while a dialog is open (a filter change applies immediately, the
+// admin poll) replaces the dialog's DOM, so focus falls to <body>: Escape then
+// stops reaching the dialog and keyboard users lose their place. Remember the
+// last focused element inside a dialog and put focus back after the render.
+let adminDialogLastFocusId = "";
+let adminDialogFocusTrackerWired = false;
+
+function trackAdminDialogFocus() {
+  if (adminDialogFocusTrackerWired) {
+    return;
+  }
+  adminDialogFocusTrackerWired = true;
+  document.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.id && target.closest(".admin-dialog")) {
+      adminDialogLastFocusId = target.id;
+    }
+  });
+}
+
+function restoreAdminDialogFocusAfterRender() {
+  const openDialog = appEl?.querySelector(".admin-dialog [role='dialog']");
+  if (!openDialog) {
+    adminDialogLastFocusId = "";
+    return;
+  }
+  if (document.activeElement && document.activeElement !== document.body) {
+    return;
+  }
+  const previous = adminDialogLastFocusId ? document.getElementById(adminDialogLastFocusId) : null;
+  const target = previous && openDialog.contains(previous)
+    ? previous
+    : openDialog.querySelector("input, select, textarea, button:not([disabled])") || openDialog;
+  target.focus({ preventScroll: true });
+}
+
 function wireAdmin() {
+  trackAdminDialogFocus();
   wireAdminSharedUi();
   document.body.classList.toggle("is-admin-dialog-open", Boolean(appEl.querySelector(".admin-dialog")));
   wireAdminPopups();
@@ -35365,6 +35591,7 @@ function wireAdmin() {
       setAdminNavGroupOpen(groupId, open);
     });
   });
+
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
 
   appEl.querySelectorAll("[data-action='admin-page']").forEach((button) => {
@@ -37094,12 +37321,96 @@ function wireAdmin() {
   });
   wireAdminCoursesPlatformBuilder();
 
-  const addUserDisclosure = document.getElementById("admin-add-user-disclosure");
-  addUserDisclosure?.addEventListener("toggle", () => {
-    if (!(addUserDisclosure instanceof HTMLDetailsElement)) {
-      return;
-    }
-    state.adminAddUserPanelOpen = addUserDisclosure.open;
+  // Users page dialogs (Filters, Add user, Approval settings): each is a
+  // renderAdminDialog() driven by one state boolean, so open/close is just
+  // flipping that flag and re-rendering. Content itself (draft, filters,
+  // counts) is derived from state the same way it always was, so a re-render
+  // while a dialog is open (e.g. the 30s admin poll) reopens it unchanged.
+  const adminUsersDialogSpecs = [
+    { dialogId: "users-filters", openAction: "admin-users-open-filters", closeAction: "admin-users-close-filters", openField: "adminUsersFiltersOpen" },
+    { dialogId: "users-add-user", openAction: "admin-users-open-add-user", closeAction: "admin-users-close-add-user", openField: "adminAddUserPanelOpen" },
+    { dialogId: "users-settings", openAction: "admin-users-open-settings", closeAction: "admin-users-close-settings", openField: "adminUsersSettingsOpen" },
+  ];
+  adminUsersDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
+    appEl.querySelectorAll(`[data-action='${openAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        adminUsersDialogReturnFocusSelector = `[data-action='${openAction}']`;
+        state[openField] = true;
+        state.skipNextRouteAnimation = true;
+        render();
+        focusIntoAdminDialog(dialogId);
+      });
+    });
+    appEl.querySelectorAll(`[data-action='${closeAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        state[openField] = false;
+        state.skipNextRouteAnimation = true;
+        render();
+        restoreAdminUsersDialogFocus();
+      });
+    });
+  });
+  appEl.querySelectorAll(".admin-dialog").forEach((dialogEl) => {
+    dialogEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.stopPropagation();
+      const closeAction = dialogEl.getAttribute("data-close-action");
+      const closeButton = closeAction ? appEl.querySelector(`[data-action='${closeAction}']`) : null;
+      closeButton?.click();
+    });
+  });
+  document.body.classList.toggle(
+    "is-admin-dialog-open",
+    Boolean(state.adminUsersFiltersOpen || state.adminAddUserPanelOpen || state.adminUsersSettingsOpen),
+  );
+  restoreAdminDialogFocusAfterRender();
+
+  // Export the list exactly as currently filtered. downloadAdminUsersCsv and its
+  // formula-guarded columns existed, but nothing called them, so the button
+  // had been silently dead.
+  appEl.querySelectorAll("[data-action='admin-users-export-csv']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const filters = {
+        search: String(state.adminUserSearch || ""),
+        year: normalizeAcademicYearOrNull(state.adminUserFilterYear),
+        semester: normalizeAcademicSemesterOrNull(state.adminUserFilterSemester),
+        approval: normalizeAdminUserApprovalFilter(state.adminUserFilterApproval),
+        provider: normalizeAdminUserProviderFilter(state.adminUserFilterProvider),
+        mcqHeld: state.adminUserFilterMcqHeld === true,
+      };
+      const filtered = getUsers().filter((account) => matchesAdminUserFilters(account, filters));
+      const isFiltered = Boolean(filters.search || filters.year || filters.semester || filters.approval || filters.provider || filters.mcqHeld);
+      downloadAdminUsersCsv(filtered, isFiltered ? "users-filtered" : "users");
+    });
+  });
+
+  appEl.querySelector("[data-action='admin-users-filter-pending']")?.addEventListener("click", () => {
+    state.adminUserFilterApproval = "pending";
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+
+  appEl.querySelectorAll("[data-action='admin-users-remove-filter']").forEach((chipButton) => {
+    chipButton.addEventListener("click", () => {
+      const filterKey = String(chipButton.getAttribute("data-filter") || "").trim();
+      if (filterKey === "year") {
+        state.adminUserFilterYear = "";
+      } else if (filterKey === "semester") {
+        state.adminUserFilterSemester = "";
+      } else if (filterKey === "approval") {
+        state.adminUserFilterApproval = "";
+      } else if (filterKey === "mcqHeld") {
+        state.adminUserFilterMcqHeld = false;
+      } else if (filterKey === "provider") {
+        state.adminUserFilterProvider = "";
+      } else {
+        return;
+      }
+      state.skipNextRouteAnimation = true;
+      render();
+    });
   });
 
   const addUserForm = document.getElementById("admin-add-user-form");
@@ -37433,14 +37744,18 @@ function wireAdmin() {
     }, 140);
   });
 
-  appEl.querySelector("[data-action='admin-users-clear-filters']")?.addEventListener("click", () => {
-    resetAdminUserFilters();
-    if (adminUserSearchDebounce) {
-      window.clearTimeout(adminUserSearchDebounce);
-      adminUserSearchDebounce = null;
-    }
-    state.skipNextRouteAnimation = true;
-    render();
+  // Two buttons share this action: the filter-chips row "Clear all" and the
+  // Filters dialog "Reset filters".
+  appEl.querySelectorAll("[data-action='admin-users-clear-filters']").forEach((button) => {
+    button.addEventListener("click", () => {
+      resetAdminUserFilters();
+      if (adminUserSearchDebounce) {
+        window.clearTimeout(adminUserSearchDebounce);
+        adminUserSearchDebounce = null;
+      }
+      state.skipNextRouteAnimation = true;
+      render();
+    });
   });
 
   adminUsersSection?.addEventListener("change", (event) => {
