@@ -189,6 +189,63 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-30 — Admin pages: Dashboard, top-bar notice, Users toolbar, Universities
+Frontend only; no schema, RLS, auth or access change. Static cache bust:
+`2026-09-29.09-local` (drop `-local` before shipping).
+
+1. **Shared admin UI pieces** (block above `function renderAdmin()`, plus
+   helpers near the sidebar code): `renderAdminPageHeader({ id, title, count,
+   actions, notes })` (title, icon actions, ⓘ "How this page works" note —
+   open state per page in localStorage `medbank_admin_help_open_v1`, toggled
+   DOM-only by ONE delegated listener in `wireAdminSharedUi`),
+   `renderAdminIconButton`, `renderAdminRowMenu` (⋯ menu) and
+   `renderAdminDialog` (centered dialog, sheet on phones). **Adopt these for
+   the remaining admin pages instead of writing new ones.** Two parallel
+   implementations were merged into one: never add a second
+   `admin-help-toggle` listener — two listeners toggle the note twice and it
+   never opens.
+2. **Row menu inside the blurred panel.** `.panel.admin-shell` has
+   `backdrop-filter`, which makes it the containing block for
+   `position: fixed`; `positionAdminRowMenu` measures where the list landed and
+   cancels the offset. Any future fixed popover inside the admin shell needs
+   the same correction (or must be portalled to `body`).
+3. **Dialog focus survives re-renders.** Dialogs are re-rendered from state
+   (the 30 s poll, a filter change), which dropped focus to `<body>` and broke
+   Escape. `trackAdminDialogFocus` / `restoreAdminDialogFocusAfterRender`
+   restore focus to the last focused element inside the dialog.
+4. **Dashboard** (`admin-dash-*`): needs-attention cards open pages
+   pre-filtered via `data-action="admin-dashboard-open"`;
+   `loadAdminDashboardCounts` does count-only reads, each isolated (a failure
+   shows "—"), cached 60 s, no extra polling. Student numbers come from the
+   local users cache via the pure `buildAdminDashboardUserSnapshot` (tested in
+   `tests/admin-dashboard.test.js`) so they always agree with the Users page.
+   `resetAdminUserFilters()` is the single reset used by the cards, the chips
+   and "Reset filters".
+5. **Top-bar notice** (`#topbar-system-notice`, created in `syncTopbar`):
+   `state.adminDataSyncError` is shown there, not in the page body. Dismissal
+   is per message text (`state.adminSystemNoticeDismissed`) and clears when the
+   error clears.
+6. **Users page**: one toolbar (search, pending chip, Filters / Export / Add
+   user / Approval settings icons), removable filter chips; the filters,
+   add-user form and approval switches live in dialogs whose open state is in
+   `state` (`adminUsersFiltersOpen`, `adminAddUserPanelOpen`,
+   `adminUsersSettingsOpen`). `shouldDeferAdminUsersAutoRender` also defers
+   while Filters is open. **Export CSV had no click handler on production** —
+   `downloadAdminUsersCsv` was never called; it is now wired to the filtered
+   list.
+7. **Universities**: header + notes, ⋯ row menu, add/edit in a dialog with an
+   unsaved-changes confirm.
+8. **Sidebar**: Enrollment Requests moved from People to Video Courses.
+9. **Verified** in the preview as the local demo admin at 1366px, 768px and
+   375px (dialogs, menus, focus, Escape, chips, CSV contents, card
+   navigation). Not verified with a real Supabase admin session. Implemented by
+   Codex (Dashboard, top-bar notice, Universities — all three stopped at the
+   ChatGPT usage limit after passing gates) and Claude Sonnet (Users); merged,
+   fixed and reviewed by the orchestrator. `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`tests/admin-dashboard.test.js` (new), `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-29 — Admin panel: one grouped sidebar (step 1 of the admin split)
 Navigation only; no data, sync, Supabase, auth or access behaviour changed.
 Static cache bust: `2026-09-29.03-local`.

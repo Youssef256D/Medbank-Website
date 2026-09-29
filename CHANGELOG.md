@@ -9,6 +9,20 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Admin pages redesign
+- **Dashboard** leads with "Needs your attention" (students awaiting approval,
+  waiting for MCQ access, course requests, broken questions — each opens the
+  right page already filtered), then Students / MCQ Bank / Video Courses
+  panels. Detailed tables fold under "More statistics".
+- **System messages** (e.g. "No active Supabase session…") show in the top
+  bar and can be dismissed instead of taking space above every page.
+- **Users**: one compact toolbar; filters, "Add user" and the approval
+  switches open in pop-ups; active filters show as removable chips.
+  **Export CSV now works** (the button did nothing before).
+- **Universities**: icon buttons, a "How this page works" note, a ⋯ menu per
+  row, and editing in a pop-up.
+- **Sidebar**: Enrollment Requests moved under Video Courses.
+
 ### 2026-09-29 — Admin panel: one grouped sidebar
 - The admin panel has **one sidebar** listing every page, grouped as Overview,
   People, MCQ Bank, Video Courses, Messaging and System. The old
