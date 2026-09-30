@@ -22251,6 +22251,16 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
   white-space: nowrap;
 }
 
+.admin-bulk-import-target-row {
+  grid-template-columns: minmax(8rem, 0.5fr) minmax(0, 1.5fr) minmax(0, 1fr);
+}
+
+@media (max-width: 760px) {
+  .admin-bulk-import-target-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .admin-question-row-actions {
   display: inline-flex;
   gap: 0.4rem;

@@ -30644,6 +30644,48 @@ function resolveAdminQuestionListView(questions, allCourses, preferredCourse = "
   };
 }
 
+// Bulk Import step 1: subjects grouped by curriculum year so the admin picks
+// the year first. A subject missing from the curriculum lands in "Other".
+function buildAdminCourseYearGroups(allCourses) {
+  const courses = Array.isArray(allCourses) ? allCourses.filter(Boolean) : [];
+  const placed = new Set();
+  const groups = [];
+  Object.keys(MEDBANK_CURRICULUM || {})
+    .map(Number)
+    .filter((year) => Number.isFinite(year))
+    .sort((a, b) => a - b)
+    .forEach((year) => {
+      const semesters = [];
+      Object.keys(MEDBANK_CURRICULUM[year] || {})
+        .map(Number)
+        .sort((a, b) => a - b)
+        .forEach((semester) => {
+          const termCourses = getCurriculumCourses(year, semester)
+            .filter((course) => courses.includes(course) && !placed.has(course));
+          termCourses.forEach((course) => placed.add(course));
+          if (termCourses.length) semesters.push({ label: `Semester ${semester}`, courses: termCourses });
+        });
+      if (semesters.length) groups.push({ key: String(year), label: `Year ${year}`, semesters });
+    });
+  const other = courses.filter((course) => !placed.has(course));
+  if (other.length) groups.push({ key: "other", label: "Other", semesters: [{ label: "", courses: other }] });
+  return groups;
+}
+
+function findAdminCourseYearGroup(groups, course) {
+  return groups.find((group) => group.semesters.some((term) => term.courses.includes(course))) || groups[0] || null;
+}
+
+function renderAdminCourseYearGroupOptions(group, selectedCourse) {
+  if (!group) return "";
+  return group.semesters.map((term) => {
+    const options = term.courses
+      .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+      .join("");
+    return term.label ? `<optgroup label="${escapeHtml(term.label)}">${options}</optgroup>` : options;
+  }).join("");
+}
+
 function resolveAdminImportView(allCourses, preferredCourse = "") {
   const configuredCourses = Array.isArray(allCourses) ? allCourses.filter(Boolean) : [];
   const fallbackCourse = configuredCourses.includes(preferredCourse) ? preferredCourse : (configuredCourses[0] || "");
@@ -31245,13 +31287,15 @@ function renderAdminBulkImportSection(allCourses, options = {}) {
     : "";
   const exportStatus = state.adminQuestionExportStatus === "published" ? "published" : "all";
   const exportRunning = Boolean(state.adminQuestionExportRunning);
+  const importYearGroups = buildAdminCourseYearGroups(allCourses);
+  const importYearGroup = findAdminCourseYearGroup(importYearGroups, importCourse);
   const bulkImportHeaderHtml = renderAdminPageHeader({
     id: "bulk-import",
     title: "Bulk Import",
     actions: "",
     notes: [
       "Import many questions at once from a CSV or JSON file, or by pasting rows directly.",
-      "Any row without its own course/topic uses the default subject and topic chosen in step 1.",
+      "Any row without its own course/topic uses the subject and topic chosen in step 1. Pick the year first; the subject list then shows only that year.",
       "CSV headers: stem, choiceA, choiceB, choiceC, choiceD, choiceE, correct, explanation, course, topic, system, difficulty, status, tags, questionImage, explanationImage.",
     ],
   });
@@ -31261,18 +31305,24 @@ function renderAdminBulkImportSection(allCourses, options = {}) {
       ${bulkImportHeaderHtml}
       <form id="admin-import-form" class="admin-bulk-import-steps" autocomplete="off">
         <section class="admin-bulk-import-step">
-          <h4><span class="admin-bulk-import-step-num">1</span> Choose subject &amp; topic</h4>
-          <div class="form-row">
+          <h4><span class="admin-bulk-import-step-num">1</span> Choose year, subject &amp; topic</h4>
+          <div class="form-row admin-bulk-import-target-row">
             <label>
-              Default course
-              <select name="defaultCourse" id="admin-import-course">
-                ${allCourses
-      .map((course) => `<option value="${escapeHtml(course)}" ${importCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+              Year
+              <select id="admin-import-year">
+                ${importYearGroups
+      .map((group) => `<option value="${escapeHtml(group.key)}" ${importYearGroup?.key === group.key ? "selected" : ""}>${escapeHtml(group.label)}</option>`)
       .join("")}
               </select>
             </label>
             <label>
-              Default topic
+              Subject
+              <select name="defaultCourse" id="admin-import-course">
+                ${renderAdminCourseYearGroupOptions(importYearGroup, importCourse)}
+              </select>
+            </label>
+            <label>
+              Topic
               <select name="defaultTopic" id="admin-import-topic">
                 ${importTopics
       .map((topic) => `<option value="${escapeHtml(topic)}" ${importTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
@@ -40025,6 +40075,18 @@ function wireAdmin() {
     state.adminImportTopic = topic;
   };
   syncImportSelectionsFromInputs();
+  const importYearSelect = document.getElementById("admin-import-year");
+  importYearSelect?.addEventListener("change", () => {
+    const groups = buildAdminCourseYearGroups(allCourses);
+    const group = groups.find((entry) => entry.key === importYearSelect.value) || groups[0] || null;
+    const firstCourse = group?.semesters[0]?.courses[0] || "";
+    if (importCourseSelect) {
+      importCourseSelect.innerHTML = renderAdminCourseYearGroupOptions(group, firstCourse);
+      importCourseSelect.value = firstCourse;
+    }
+    setSelectOptions(importTopicSelect, QBANK_COURSE_TOPICS[firstCourse] || [], false);
+    syncImportSelectionsFromInputs();
+  });
   importCourseSelect?.addEventListener("change", () => {
     const course = importCourseSelect.value || allCourses[0];
     setSelectOptions(importTopicSelect, QBANK_COURSE_TOPICS[course] || [], false);

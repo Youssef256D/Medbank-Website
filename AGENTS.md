@@ -247,6 +247,12 @@ Frontend only; no schema, RLS, auth or access change. Static cache bust:
    pencil = `admin-edit`, red trash = `admin-delete` (still confirms). New
    `renderAdminIconButton` icons `pencil` / `trash` and `variant: "danger"`
    (`.admin-icon-btn.is-danger`) — reuse them where a row has only 1–2 actions.
+6b. **Bulk Import step 1 is Year → Subject → Topic.**
+   `buildAdminCourseYearGroups(allCourses)` groups subjects by
+   `MEDBANK_CURRICULUM` year/semester ("Other" for the rest);
+   `renderAdminCourseYearGroupOptions` renders the semester `<optgroup>`s. The
+   year is derived from `state.adminImportCourse`; there is no year state.
+   Reuse these for any other year-first subject picker.
 7a. **Users table rows are read-only** (2026-09-30). Name, phone, year,
    semester and role are edited in an "Edit details" dialog
    (`state.adminUserEditId`); everything else lives in the row's ⋯ menu.

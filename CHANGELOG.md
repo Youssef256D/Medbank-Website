@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Bulk Import: pick the year before the subject
+- Step 1 is now Year → Subject → Topic. The Subject list shows only that
+  year's subjects, grouped by semester (subjects missing from the curriculum
+  go under "Other"). Nothing new is stored: the year is worked out from the
+  chosen subject. Cache bust `2026-09-30.09-local`.
+
 ### 2026-09-30 — Questions: inline edit/delete icons
 - Admin → Questions rows show a pencil (Edit) and a red trash (Delete) icon
   button instead of the ⋯ menu. Same `admin-edit` / `admin-delete` handlers,
