@@ -191,7 +191,7 @@ can reactivate them.
 
 ### 2026-09-30 — Admin pages: Dashboard, top-bar notice, Users toolbar, Universities
 Frontend only; no schema, RLS, auth or access change. Static cache bust:
-`2026-09-29.09-local` (drop `-local` before shipping).
+`2026-09-30.07-local` (drop `-local` before shipping).
 
 1. **Shared admin UI pieces** (block above `function renderAdmin()`, plus
    helpers near the sidebar code): `renderAdminPageHeader({ id, title, count,
@@ -262,6 +262,22 @@ Frontend only; no schema, RLS, auth or access change. Static cache bust:
    bulk bar renders only while rows are selected; select-all moved to the
    table header.
 8. **Sidebar**: Enrollment Requests moved from People to Video Courses.
+8a. **Every admin page now uses the shared pieces** (2026-09-30): MCQ Subjects,
+   Questions, Bulk Import, Notifications, Pop-ups, Site Access, Hermes,
+   Activity, Logs and all nine Video Courses sections have a
+   `renderAdminPageHeader` header with notes; row actions are ⋯ menus; create
+   forms (add subject, question filters, new notification, coupon batch,
+   announcement, suggestion) are `renderAdminDialog`s in `adminGlobalOverlay`,
+   registered in `adminSimpleDialogSpecs` (renamed from
+   `adminUsersDialogSpecs`) or, for Video Courses, wired on `appEl` in
+   `wireAdminCoursesPlatformBuilder` (the section `root` cannot see them).
+   `is-admin-dialog-open` is set generically from the DOM at the top of
+   `wireAdmin` — do not add per-page toggles. Long lists render in pages with
+   "Show more": Logs 100 (was every entry, ~9,600 nodes), Questions 100,
+   Notifications 50 up to the old 200 ceiling, enrollments/coupons/requests
+   100. Logs have no severity field, so there is no level filter.
+   `renderAdminPopupsSection` stays inside the test-sliced region, so its
+   header is added in the renderAdmin branch instead.
 9. **Verified** in the preview as the local demo admin at 1366px, 768px and
    375px (dialogs, menus, focus, Escape, chips, CSV contents, card
    navigation). Not verified with a real Supabase admin session. Implemented by

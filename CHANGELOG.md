@@ -26,6 +26,10 @@ hosted Supabase is the source of truth.
 - **Universities**: icon buttons, a "How this page works" note, a ⋯ menu per
   row, and editing in a pop-up.
 - **Sidebar**: Enrollment Requests moved under Video Courses.
+- **Every other admin page** follows the same style: one header with a count,
+  icon actions and a "How this page works" note; ⋯ menus instead of button
+  rows; create forms in pop-ups; no red buttons on the page. **Logs open much
+  faster** (100 entries at a time instead of all of them).
 
 ### 2026-09-29 — Admin panel: one grouped sidebar
 - The admin panel has **one sidebar** listing every page, grouped as Overview,
