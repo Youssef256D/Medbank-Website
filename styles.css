@@ -22129,3 +22129,19 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
     min-height: 44px;
   }
 }
+
+/* Admin Messaging pages */
+.admin-list-show-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.75rem;
+}
+#admin-popups-section > .flex-between {
+  justify-content: flex-end;
+}
+@media (max-width: 640px) {
+  .admin-list-show-more .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}
