@@ -50,6 +50,46 @@ function parseBearerToken(authHeader: string): string {
   return value.slice("bearer ".length).trim();
 }
 
+// Admin layers (migration 20260930030000_admin_permission_areas): the areas
+// this admin may change, and whether they are a super admin. This function
+// runs with the service role, so the database's own admin-account guard does
+// not apply here; these checks do the same job. Until that migration is
+// applied the table does not exist and every admin keeps full access, as
+// before.
+type AdminAccess = { ok: boolean; isSuper: boolean; areas: string[] };
+
+async function loadAdminAccess(client: ReturnType<typeof createClient>, actorId: string): Promise<AdminAccess> {
+  const { data, error } = await client
+    .from("admin_permissions")
+    .select("is_super,areas")
+    .eq("user_id", actorId)
+    .maybeSingle();
+  if (error) {
+    const code = String((error as { code?: string }).code || "");
+    const message = String(error.message || "");
+    if (code === "42P01" || code === "PGRST205" || (/admin_permissions/i.test(message) && /does not exist|schema cache/i.test(message))) {
+      return { ok: true, isSuper: true, areas: [] };
+    }
+    return { ok: false, isSuper: false, areas: [] };
+  }
+  return {
+    ok: true,
+    isSuper: Boolean(data?.is_super),
+    areas: Array.isArray(data?.areas) ? data.areas.map((area: unknown) => String(area)) : [],
+  };
+}
+
+function adminHasArea(access: AdminAccess, area: string): boolean {
+  return access.isSuper || access.areas.includes(area);
+}
+
+async function anyTargetIsAdmin(client: ReturnType<typeof createClient>, ids: string[]): Promise<boolean | null> {
+  if (!ids.length) return false;
+  const { data, error } = await client.from("profiles").select("id").in("id", ids).eq("role", "admin").limit(1);
+  if (error) return null;
+  return Array.isArray(data) && data.length > 0;
+}
+
 Deno.serve(async (req) => {
   const requestOrigin = String(req.headers.get("origin") || "").trim();
 
@@ -107,6 +147,14 @@ Deno.serve(async (req) => {
   }
   if (String(actorProfile?.role || "").trim().toLowerCase() !== "admin") {
     return jsonResponse(403, { ok: false, error: "Only admins can upload course videos." }, requestOrigin);
+  }
+
+  const adminAccess = await loadAdminAccess(adminClient, actorId);
+  if (!adminAccess.ok) {
+    return jsonResponse(500, { ok: false, error: "Could not verify admin permissions." }, requestOrigin);
+  }
+  if (!adminHasArea(adminAccess, "video_courses")) {
+    return jsonResponse(403, { ok: false, error: "Your admin account does not include the Video Courses area." }, requestOrigin);
   }
 
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/stream?direct_user=true`;

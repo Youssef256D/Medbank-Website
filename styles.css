@@ -22898,3 +22898,68 @@ body.theme-dark {
   color: var(--muted);
   cursor: default;
 }
+
+/* Admin access page (admin layers) */
+.admin-access-table {
+  min-width: 640px;
+}
+.admin-access-table td {
+  vertical-align: top;
+  padding-top: 0.8rem;
+  padding-bottom: 0.8rem;
+}
+.admin-access-name {
+  display: block;
+  color: var(--ink);
+}
+.admin-access-you {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.admin-access-email {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.admin-access-super,
+.admin-access-area {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 32px;
+  color: var(--ink);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.admin-access-areas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1rem;
+}
+.admin-access-area:has(input:disabled) {
+  color: var(--muted);
+  cursor: default;
+}
+.admin-access-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .admin-access-super,
+  .admin-access-area {
+    min-height: 44px;
+  }
+}
+.admin-access-table input[type="checkbox"] {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  margin: 0;
+}
+.admin-access-super span,
+.admin-access-area span {
+  white-space: nowrap;
+}
+.admin-access-table .btn:disabled {
+  opacity: 0.45;
+}

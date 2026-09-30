@@ -189,6 +189,87 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-30 — Admin layers: super admins and admins limited to areas
+Adds super admins and per-admin areas (People, MCQ Bank, Video Courses,
+Messaging, System), **enforced in the database**. Static cache bust:
+`2026-09-30.14`. **Not applied to production yet** (the agent was not allowed
+to run SQL or deploy on the hosted project): follow
+`docs/admin-layers-runbook.md`. Until the migrations run, every admin keeps
+full access.
+
+1. **Migration `20260930030000_admin_permission_areas`** (rollback provided):
+   `public.admin_permissions (user_id, is_super, areas[])`, the checks
+   `private.is_super_admin()`, `private.admin_has_area(area)`,
+   `private.admin_write_allowed(area)` (true for every non-admin) and
+   `private.admin_super_allowed()`. Only super admins write the table; an
+   admin reads their own row. **Every existing admin is seeded as super.** A
+   missing row = no areas. Two triggers: `trg_admin_permissions_before_write`
+   (stamps, and refuses to lose the last super admin) and
+   `trg_profiles_guard_admin_accounts`: a non-super admin cannot create,
+   promote, demote, edit, suspend or delete an **admin** account, or change
+   their own role; nobody can demote/suspend/delete the last super admin.
+   Backend jobs (auth.uid() null) and super admins pass.
+2. **Migration `20260930030100_admin_area_enforcement`** (rollback provided):
+   **additive only, no existing policy touched.** Adds RESTRICTIVE
+   insert/update/delete policies `<table>_area_guard_*` on 29 tables + flags
+   (by key), `*_super_guard` (all commands) on the 4 Hermes tables,
+   `storage_objects_area_guard_*` by bucket, and super-only guards for the
+   Site Access key `g:mcq_site_maintenance` in `app_state` (anon gets its own
+   function-free policy, because anon cannot execute private functions; see
+   the universities 42501 note of 2026-09-28). **Reads are not restricted.**
+   Own-row writes (own profile, presence, own tests, notification reads,
+   own lesson progress / requests) stay allowed. The coupon generator,
+   coupon disable and course review RPCs are patched in place (their
+   `is_admin_user()` becomes `admin_has_area('video_courses')`).
+3. **Verified on a local Postgres 16 copy** (not production): the stand-in
+   schema recreates `profiles` (with the `app_user_role` enum),
+   `private.is_admin_user()`, the tables and columns the guards use, the
+   admin/own-row permissive policies, `app_state`, `storage.objects` and the
+   three RPCs. 46 checks, including: an MCQ admin updates questions but 0
+   universities/students/Site Access, cannot insert notifications, upload
+   course videos, generate coupons, read Hermes or make themselves super;
+   a People admin cannot promote to admin, suspend a super, delete a super or
+   demote themselves; students, creators and anon behave as before; the last
+   super admin cannot demote themselves or delete their row. Rollback removes
+   everything and the migrations re-apply.
+4. **Edge Functions** (`admin-create-user`, `admin-delete-user`,
+   `admin-set-user-access`, `admin-set-user-password`: People; creating or
+   changing an **admin** needs super. `cloudflare-stream-tus-upload`: Video
+   Courses). They use the service role, so the profile trigger does not cover
+   them; each checks `admin_permissions` itself and treats a missing table as
+   full access. Deployed copies were compared with the repo first and
+   matched. **`send-push-notification` is intentionally unchanged: the
+   deployed version is newer than the repo copy (Flutter repo, shared
+   dispatcher). Never deploy it from here.** Two more deployed functions have
+   no source in this repo: `delete-my-account`, `verify-play-integrity`.
+5. **Website.** `ADMIN_AREAS`, `ADMIN_PAGE_AREAS`, `ADMIN_SUPER_ONLY_PAGES`
+   (site-access, ai-agents, admin-access) and the pure helpers
+   `normalizeAdminAccess` / `adminAccessHasArea` / `canAdminAccessPage` /
+   `describeAdminAccess` live in one marked block after
+   `isAdminNavItemActive` (tested in `tests/admin-access.test.js`). The
+   signed-in admin's row loads every 60 s (`ensureCurrentAdminAccessFresh`,
+   called from `renderAdmin`); **until it loads, and in the local demo,
+   nothing is hidden**. The sidebar drops pages outside the areas and empty
+   groups; `renderAdmin` sends such a page to the Dashboard; the Dashboard
+   drops cards/panels for missing areas; the Users page offers the Admin role
+   and ⋯ menus on other admins' rows to super admins only; the auto-approval
+   sweep needs People. New **System → Admin access** page
+   (`renderAdminAccessSection` / `wireAdminAccess`): super switch + area
+   boxes per admin, per-row Save (upsert), friendly message when the DB
+   refuses to lose the last super.
+6. **Every new admin page must be added to `ADMIN_PAGE_AREAS` or
+   `ADMIN_SUPER_ONLY_PAGES`** (a test fails otherwise; unknown pages are
+   super-only). **Every new table an admin writes needs an `_area_guard_`
+   policy**, or limited admins can write it.
+7. **Found, not fixed:** `app_state` global keys (`g:*`) are writable by
+   anyone including signed-out visitors; only the Site Access key is now
+   protected.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`tests/admin-access.test.js` (new), two migrations + two rollbacks,
+five Edge Functions, `docs/admin-layers-runbook.md` (new), `CHANGELOG.md`,
+`AGENTS.md`, `CLAUDE.md`.
+
 ### 2026-09-30 — Picking an instructor makes that creator the course owner
 Frontend only; no schema or RLS change (the admin insert/update policies
 already allow any `owner_id`). Static cache bust: `2026-09-30.13`.
