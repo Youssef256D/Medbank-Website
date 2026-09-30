@@ -243,6 +243,10 @@ Frontend only; no schema, RLS, auth or access change. Static cache bust:
    list.
 7. **Universities**: header + notes, ⋯ row menu, add/edit in a dialog with an
    unsaved-changes confirm.
+6a. **Questions rows use inline icon buttons, not a ⋯ menu** (owner request):
+   pencil = `admin-edit`, red trash = `admin-delete` (still confirms). New
+   `renderAdminIconButton` icons `pencil` / `trash` and `variant: "danger"`
+   (`.admin-icon-btn.is-danger`) — reuse them where a row has only 1–2 actions.
 7a. **Users table rows are read-only** (2026-09-30). Name, phone, year,
    semester and role are edited in an "Edit details" dialog
    (`state.adminUserEditId`); everything else lives in the row's ⋯ menu.

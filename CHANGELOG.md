@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Questions: inline edit/delete icons
+- Admin → Questions rows show a pencil (Edit) and a red trash (Delete) icon
+  button instead of the ⋯ menu. Same `admin-edit` / `admin-delete` handlers,
+  same delete confirm. `renderAdminIconButton` gained `pencil` / `trash` icons
+  and a `danger` variant. Cache bust `2026-09-30.08-local`.
+
 ### 2026-09-30 — Admin pages redesign
 - **Dashboard** leads with "Needs your attention" (students awaiting approval,
   waiting for MCQ access, course requests, broken questions — each opens the

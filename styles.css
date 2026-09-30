@@ -21324,6 +21324,15 @@ small.admin-account-approval-gap {
   background: var(--brand);
 }
 
+.admin-icon-btn.is-danger {
+  color: var(--danger);
+}
+
+.admin-icon-btn.is-danger:hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
 .admin-icon-btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -22240,6 +22249,12 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
 .admin-question-actions-cell {
   text-align: right;
   white-space: nowrap;
+}
+
+.admin-question-row-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
 }
 
 .admin-question-show-more {

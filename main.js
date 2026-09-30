@@ -32500,9 +32500,13 @@ function renderAdminIconButton({ icon, label, attrs = "", variant = "", busy = f
     settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"></path>',
     search: '<circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path>',
     x: '<path d="M18 6 6 18M6 6l12 12"></path>',
+    pencil: '<path d="M16.9 3.6a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19 4 20l1-4.5L16.9 3.6Z"></path><path d="m15 5.5 3.5 3.5"></path>',
+    trash: '<path d="M4 7h16"></path><path d="M10 11v6M14 11v6"></path><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"></path>',
   };
   const iconName = Object.prototype.hasOwnProperty.call(icons, icon) ? icon : "info";
-  const variantClass = variant === "primary" || variant === "is-primary" ? " is-primary" : "";
+  const variantClass = variant === "primary" || variant === "is-primary"
+    ? " is-primary"
+    : variant === "danger" || variant === "is-danger" ? " is-danger" : "";
   const busyAttributes = busy ? ' disabled aria-busy="true"' : "";
   const spinClass = busy && iconName === "refresh" ? " is-spinning" : "";
   return `<button type="button" class="admin-icon-btn${variantClass}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" ${attrs}${busyAttributes}>
@@ -34690,20 +34694,20 @@ function renderAdmin() {
               <span class="admin-question-status is-${status}">${escapeHtml(statusLabel)}</span>
             </td>
             <td class="admin-question-actions-cell">
-              ${renderAdminRowMenu({
-          id: `question-${questionId || idx}`,
-          label: `Actions for question ${idx + 1}`,
-          disabled: questionOpsLocked || !questionId,
-          items: [
-            { label: "Edit", attrs: `data-action="admin-edit" data-qid="${escapeHtml(questionId)}"` },
-            {
-              label: isDeleting ? "Deleting..." : "Delete",
-              attrs: `data-action="admin-delete" data-qid="${escapeHtml(questionId)}"`,
-              danger: true,
-              disabled: isDeleting,
-            },
-          ],
+              <div class="admin-question-row-actions">
+                ${renderAdminIconButton({
+          icon: "pencil",
+          label: `Edit question ${idx + 1}`,
+          attrs: `data-action="admin-edit" data-qid="${escapeHtml(questionId)}"${questionOpsLocked || !questionId ? " disabled" : ""}`,
         })}
+                ${renderAdminIconButton({
+          icon: "trash",
+          label: isDeleting ? `Deleting question ${idx + 1}...` : `Delete question ${idx + 1}`,
+          variant: "danger",
+          attrs: `data-action="admin-delete" data-qid="${escapeHtml(questionId)}"${(questionOpsLocked || !questionId) && !isDeleting ? " disabled" : ""}`,
+          busy: isDeleting,
+        })}
+              </div>
             </td>
           </tr>
         `;
