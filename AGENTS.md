@@ -189,6 +189,32 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-30 — Picking an instructor makes that creator the course owner
+Frontend only; no schema or RLS change (the admin insert/update policies
+already allow any `owner_id`). Static cache bust: `2026-09-30.13`.
+
+1. The instructor picker (`renderAdminInstructorPicker(name, ownerId)`) now has
+   a second hidden input, `owner_id`, set to the picked creator's profile id.
+   `getAdminCreatorOptions()` returns `id` and skips rows without a UUID.
+2. **What ownership grants** (migration `20260805120000_add_course_creator_role`):
+   the creator can read and update the course row and manage its modules,
+   lessons and resources. They cannot change `owner_id` or review fields (the
+   `platform_courses_creator_guard` trigger). Admin-created courses start
+   `approved`, so an owning creator's edits and publish/unpublish go live
+   without another review, the same as for any approved creator course.
+3. **Clearing** the instructor removes the owner only when the owner is a
+   creator. A course owned by an admin (older rows had `owner_id` backfilled
+   from `created_by`) keeps its owner.
+4. `coerceAdminCourseMetadataPayload` includes `owner_id` **only when the form
+   sent one**, so callers without the picker never touch ownership.
+5. **Verified** in the preview with stubbed creators: a pick sends the
+   creator's id, clearing a creator owner sends null, an admin owner survives
+   a clear, an untouched edit keeps the owner, and a payload built without the
+   field has no `owner_id` key. Not run against the hosted project.
+   `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-30 — Questions filters on the page; Bulk Import spacing; course code + instructor picker; Users role filter
 Frontend only; no schema, RLS or access change. Static cache bust:
 `2026-09-30.12`.

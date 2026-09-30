@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Instructor becomes the course owner
+- Choosing an instructor for a Video Course also makes that creator the
+  course's owner, so they can edit its details, modules, lessons and files in
+  the app. Removing the instructor removes a creator's ownership. Shipped as
+  `2026-09-30.13`.
+
 ### 2026-09-30 — Questions filters, Bulk Import spacing, course code and instructor
 - **Questions**: subject and topic are chosen on the page and apply straight
   away (no Filters pop-up).

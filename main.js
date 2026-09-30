@@ -53676,11 +53676,14 @@ function isCourseCodeConflictError(error) {
 function getAdminCreatorOptions() {
   const byKey = new Map();
   const add = (id, name, email, publicId) => {
+    const profileId = String(id || "").trim();
     const cleanEmail = String(email || "").trim().toLowerCase();
-    const key = cleanEmail || String(id || "").trim();
+    const key = cleanEmail || profileId;
     const cleanName = String(name || "").trim();
-    if (!key || !cleanName || byKey.has(key)) return;
+    // Only real profile rows: the id becomes platform_courses.owner_id.
+    if (!key || !cleanName || !isUuidValue(profileId) || byKey.has(key)) return;
     byKey.set(key, {
+      id: profileId,
       name: cleanName,
       email: cleanEmail,
       publicId: publicId === null || publicId === undefined ? "" : String(publicId).trim(),
@@ -53695,11 +53698,16 @@ function getAdminCreatorOptions() {
   return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Instructor field: search the creator accounts and pick one. The chosen name
-// goes into the hidden instructor_name input, so drafts and saves are unchanged.
-// A name already stored that is not a creator stays shown until replaced.
-function renderAdminInstructorPicker(currentName) {
+// Instructor field: search the creator accounts and pick one. The pick fills
+// two hidden inputs: instructor_name (the name students see) and owner_id (the
+// creator's profile id). owner_id is what lets that creator edit the course in
+// the app (RLS platform_courses_update_creator and the module/lesson/resource
+// policies); admins may set it freely, and the DB guard stops creators from
+// changing it. A name already stored that is not a creator stays shown until
+// replaced.
+function renderAdminInstructorPicker(currentName, currentOwnerId = "") {
   const name = String(currentName || "").trim();
+  const ownerId = isUuidValue(String(currentOwnerId || "").trim()) ? String(currentOwnerId).trim() : "";
   return `
     <div class="admin-instructor-picker" data-instructor-picker>
       <span class="admin-instructor-picker-label">Instructor</span>
@@ -53719,6 +53727,7 @@ function renderAdminInstructorPicker(currentName) {
         <div class="admin-user-suggestions" data-instructor-suggestions role="listbox" aria-label="Creator accounts" hidden></div>
       </div>
       <input type="hidden" name="instructor_name" value="${escapeHtml(name)}" />
+      <input type="hidden" name="owner_id" value="${escapeHtml(ownerId)}" />
     </div>
   `;
 }
@@ -53727,7 +53736,8 @@ function wireAdminInstructorPicker(pickerEl) {
   const search = pickerEl.querySelector("[data-instructor-search]");
   const list = pickerEl.querySelector("[data-instructor-suggestions]");
   const hidden = pickerEl.querySelector("input[type='hidden'][name='instructor_name']");
-  if (!search || !list || !hidden) return;
+  const ownerInput = pickerEl.querySelector("input[type='hidden'][name='owner_id']");
+  if (!search || !list || !hidden || !ownerInput) return;
   let matches = [];
   let activeIndex = -1;
 
@@ -53736,9 +53746,18 @@ function wireAdminInstructorPicker(pickerEl) {
     search.setAttribute("aria-expanded", "false");
     activeIndex = -1;
   };
-  const choose = (name) => {
+  // creator = an option, or null to clear. Clearing only drops an owner that
+  // is a creator: a course owned by an admin (older rows had owner_id backfilled
+  // from created_by) keeps its owner when the instructor is removed.
+  const choose = (creator) => {
+    const name = creator ? creator.name : "";
     hidden.value = name;
     search.value = name;
+    if (creator) {
+      ownerInput.value = creator.id;
+    } else if (getAdminCreatorOptions().some((option) => option.id === ownerInput.value)) {
+      ownerInput.value = "";
+    }
     close();
     hidden.dispatchEvent(new Event("change", { bubbles: true }));
   };
@@ -53786,7 +53805,7 @@ function wireAdminInstructorPicker(pickerEl) {
       paint();
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (activeIndex >= 0) choose(matches[activeIndex].name);
+      if (activeIndex >= 0) choose(matches[activeIndex]);
     }
   });
   // mousedown, not click: choosing must land before the input's blur.
@@ -53795,13 +53814,13 @@ function wireAdminInstructorPicker(pickerEl) {
     if (!option) return;
     event.preventDefault();
     const creator = matches[Number(option.getAttribute("data-instructor-index"))];
-    if (creator) choose(creator.name);
+    if (creator) choose(creator);
   });
   search.addEventListener("blur", () => {
     // Only a picked creator is kept. Emptying the field clears the instructor;
     // any other typed text falls back to the current choice.
     if (!String(search.value || "").trim()) {
-      if (hidden.value) choose("");
+      if (hidden.value) choose(null);
     } else {
       search.value = hidden.value;
     }
@@ -53827,6 +53846,11 @@ function coerceAdminCourseMetadataPayload(data) {
     price: Math.max(0, Number(data.price) || 0),
     is_active: data.is_active !== false,
     updated_at: nowISO(),
+    // Only forms with the instructor picker send owner_id; other callers leave
+    // the course owner untouched.
+    ...(Object.prototype.hasOwnProperty.call(data, "owner_id")
+      ? { owner_id: isUuidValue(String(data.owner_id || "").trim()) ? String(data.owner_id).trim() : null }
+      : {}),
   };
 }
 
@@ -57045,7 +57069,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           </label>
           <label>Priority<input name="priority" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "priority", 0))}" /></label>
           ${renderAdminCourseCoverUploadField(dk, "")}
-          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", ""))}
+          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", ""), getAdminCourseBuilderFieldValue(dk, "owner_id", ""))}
           <label>Estimated duration<input name="estimated_duration" placeholder="Example: 2 weeks" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "estimated_duration", ""))}" /></label>
           <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published</label>
           <label class="course-builder-wide">Description<textarea name="description" rows="2">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", ""))}</textarea></label>
@@ -57077,7 +57101,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           <label>Description<textarea name="description" rows="4">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", selectedCourse.description || ""))}</textarea></label>
           ${renderAdminCourseCoverUploadField(dk, selectedCourse.cover_image_url || "")}
           <label>Intro video URL<input name="intro_video_url" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "intro_video_url", selectedCourse.intro_video_url || ""))}" /></label>
-          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", selectedCourse.instructor_name || ""))}
+          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", selectedCourse.instructor_name || ""), getAdminCourseBuilderFieldValue(dk, "owner_id", selectedCourse.owner_id || ""))}
           <label>Instructor bio<textarea name="instructor_bio" rows="3">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "instructor_bio", selectedCourse.instructor_bio || ""))}</textarea></label>
           <label>Level<input name="level" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "level", selectedCourse.level || ""))}" /></label>
           <label>Estimated duration<input name="estimated_duration" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "estimated_duration", selectedCourse.estimated_duration || ""))}" /></label>
@@ -57543,7 +57567,7 @@ function adminRenderCourseBuilder(courseId) {
                   Instructor Information
                 </div>
                 <div class="course-metadata-card-body" style="display: flex; flex-direction: column; gap: 1rem;">
-                  ${renderAdminInstructorPicker(selectedCourse.instructor_name || "")}
+                  ${renderAdminInstructorPicker(selectedCourse.instructor_name || "", selectedCourse.owner_id || "")}
                   <label>Instructor bio<textarea name="instructor_bio" rows="3">${escapeHtml(selectedCourse.instructor_bio || "")}</textarea></label>
                 </div>
               </div>
