@@ -189,6 +189,69 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-30 — Admin pages: one box level (flatten pass)
+Frontend only; no schema, RLS, auth or access change. Static cache bust:
+`2026-09-30.10-local` (drop `-local` before shipping). Spec:
+`docs/admin-ui-style-guide.md` (rules F1–F6).
+
+1. **One CSS block, scoped to `.admin-main`**, appended at the end of
+   `styles.css` under `/* Admin flatten: one box level */`. Grouping
+   containers inside the page card lose border, background and shadow and are
+   separated by a hairline instead. Dialogs render in `adminGlobalOverlay`
+   (outside `.admin-main`), so they keep their own styling on purpose. Do not
+   widen these selectors to unscoped class names: `.admin-settings-row`, for
+   one, is also used in the Users settings dialog.
+2. **Shared pieces, reuse them:** `.admin-flat-toolbar` (one filter row, no
+   visible labels, `aria-label` on each control), `.admin-flat-list` /
+   `.admin-flat-row` (divided rows, chevron, hover `--brand-soft`),
+   `.admin-flat-stats` / `.admin-flat-stat` (number strip), `.admin-flat-warn`
+   with the new themed token `--admin-warn-fg` (amber; light/comfort/dark), and
+   `.admin-flat-grid`, which draws dividers between grid items whatever the
+   column count (each item has a `-1px -1px` hairline shadow, and the grid's
+   `overflow: hidden` clips the ones on its outer edge). An automated box
+   counter will count those shadows as boxes; they are dividers.
+3. **Markup changes (handlers untouched; ids and data-actions kept):**
+   MCQ Subjects is the approved target: filters in one toolbar row and the
+   subjects as a divided list (`.admin-course-picker-row`, "4 topics ·
+   8 questions", amber "no questions yet", chevron instead of OPEN). Activity
+   stats are a `.admin-flat-stats` strip. The Video Courses catalog filters are
+   one toolbar row, the Course Builder context bar shows "3 modules · 9 lessons
+   · …" as muted text instead of pills. The `card` class was removed from boxes
+   nested inside the page card (Bulk Import tool cards, coupon stats/report/
+   insights, approval cards), per F6.
+4. **Deliberately kept as the one inner surface:** the Site Access student
+   preview, the Hermes setup panel, the Pop-ups phone mock-up, the Course
+   Builder editor panel, the "save these codes" coupon notice, and error
+   notices. Status badges (PENDING, PUBLISHED…) were left as they are; turning
+   them into dot + text across every page is a separate pass.
+5. **Three pre-existing bugs fixed on the way (all also on `main`):**
+   - Notifications: a failed Video Course options load (no session, timeout,
+     network) re-rendered the page, which retried the load at once — a tight
+     loop that froze the tab and would hammer Supabase while the query kept
+     failing. It now re-renders only after a successful load.
+   - Activation Coupons: with no Supabase client the coupon load returned
+     `false` without recording an error, so the same re-render loop ran. It
+     now re-renders after a load or a recorded error only.
+   - Catalog filters: all three selects share
+     `data-action="admin-course-table-filter"` and the handler matched that
+     attribute in its Year branch, so choosing a Semester or Status wrote that
+     value into the Year filter (Status → Draft emptied the table). It now
+     dispatches by id only.
+6. **Verified** in the preview as the local demo admin, with a stubbed Video
+   Courses dataset (7 courses, modules, lessons, requests, enrollments,
+   announcements, suggestions, one course awaiting review), at 1366, 768 and
+   375px: box depth inside `.admin-main` is ≤ 2 on every page except Site
+   Access (the badge inside the student preview) and Course Builder (the
+   editor panel's own icon and quick-action buttons); no horizontal overflow
+   at any width. Clicked through: a subject row opens the subject dialog,
+   Year/Semester/search filter the list (search keeps focus), the Catalog
+   Year/Semester/Status filters and search narrow the table. Warn colour
+   checked in comfort and dark. Not verified with a real Supabase admin
+   session. `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`docs/admin-ui-style-guide.md`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-30 — Admin pages: Dashboard, top-bar notice, Users toolbar, Universities
 Frontend only; no schema, RLS, auth or access change. Static cache bust:
 `2026-09-30.07-local` (drop `-local` before shipping).

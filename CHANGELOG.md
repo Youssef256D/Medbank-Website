@@ -9,6 +9,22 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Admin pages: no more boxes inside boxes
+- Inside every admin page, groups are now separated by spacing and a thin
+  line instead of nested bordered boxes; lists are plain rows.
+- **MCQ Subjects**: Year, Semester and search sit in one row; subjects are a
+  list showing "4 topics · 8 questions", with "no questions yet" in amber and
+  a › to open.
+- **Dashboard**, **Bulk Import**, **Site Access**, **Activity** and all
+  **Video Courses** pages (Catalog, Course Builder outline, requests,
+  enrollments, coupons, approvals, suggestions, announcements) follow the same
+  flat look. Pop-ups (dialogs) are unchanged.
+- **Fixed:** the Catalog Semester and Status filters changed the Year filter
+  instead (choosing Draft emptied the table).
+- **Fixed:** the Notifications page could freeze the tab, retrying a failed
+  Video Course list load in a loop; Activation Coupons had the same loop
+  without a Supabase connection.
+
 ### 2026-09-30 — Bulk Import: pick the year before the subject
 - Step 1 is now Year → Subject → Topic. The Subject list shows only that
   year's subjects, grouped by semester (subjects missing from the curriculum

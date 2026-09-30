@@ -31251,7 +31251,7 @@ function renderAdminImportHistoryCard() {
     `;
   }
   return `
-    <div class="card admin-import-tool-card" id="admin-import-history-card">
+    <div class="admin-import-tool-card" id="admin-import-history-card">
       <div class="admin-import-card-heading">
         <div>
           <h4>Upload history</h4>
@@ -31388,7 +31388,7 @@ function renderAdminBulkImportSection(allCourses, options = {}) {
 
       <details class="admin-bulk-import-secondary">
         <summary>Export questions to CSV</summary>
-        <div class="card admin-import-tool-card" id="admin-question-export-card">
+        <div class="admin-import-tool-card" id="admin-question-export-card">
           <p class="subtle">Download a re-importable backup for one MCQ subject or topic.</p>
           <div class="form-row">
             <label>
@@ -34433,23 +34433,23 @@ function renderAdmin() {
         const topicCount = topicCountByCourse[course] || 0;
         const questionCount = getAdminCourseQuestionCount(course, "total");
         const isActive = state.adminCourseTopicModalCourse === course;
+        const courseMeta = `${topicCount} ${topicCount === 1 ? "topic" : "topics"} · ${questionCount} ${questionCount === 1 ? "question" : "questions"}`;
         return `
-          <button
-            class="admin-course-picker-card${isActive ? " is-active" : ""}"
-            type="button"
-            data-action="admin-focus-course"
-            data-course-index="${idx}"
-            aria-pressed="${isActive ? "true" : "false"}"
-          >
-            <div class="admin-course-picker-card-head">
-              <b class="admin-course-picker-card-title">${escapeHtml(course)}</b>
-              <span class="admin-course-picker-card-status">${isActive ? "Opened" : "Open"}</span>
-            </div>
-            <p class="admin-course-picker-card-copy">
-              <span>${topicCount} topics</span>
-              <span>${questionCount} questions</span>
-            </p>
-          </button>
+          <li>
+            <button
+              class="admin-flat-row admin-course-picker-row${isActive ? " is-active" : ""}"
+              type="button"
+              data-action="admin-focus-course"
+              data-course-index="${idx}"
+              aria-pressed="${isActive ? "true" : "false"}"
+            >
+              <span class="admin-flat-row-main">
+                <span class="admin-flat-row-title">${escapeHtml(course)}</span>
+                <span class="admin-flat-row-meta">${escapeHtml(courseMeta)}${questionCount ? "" : ` · <span class="admin-flat-warn">no questions yet</span>`}</span>
+              </span>
+              <span class="admin-flat-row-chevron" aria-hidden="true">›</span>
+            </button>
+          </li>
         `;
       })
       .join("");
@@ -34571,39 +34571,24 @@ function renderAdmin() {
       <section class="card admin-section" id="admin-courses-section">
         ${subjectsPageHeaderHtml}
 
-        <div class="admin-courses-minimal-controls" style="margin-top: 0.8rem;">
-              <form id="admin-curriculum-filter-form" class="admin-course-toolbar-card" autocomplete="off">
-                <div class="form-row">
-                  <label>Year
-                    <select name="curriculumYear">
-                      <option value="1" ${curriculumYear === 1 ? "selected" : ""}>Year 1</option>
-                      <option value="2" ${curriculumYear === 2 ? "selected" : ""}>Year 2</option>
-                      <option value="3" ${curriculumYear === 3 ? "selected" : ""}>Year 3</option>
-                      <option value="4" ${curriculumYear === 4 ? "selected" : ""}>Year 4</option>
-                      <option value="5" ${curriculumYear === 5 ? "selected" : ""}>Year 5</option>
-                    </select>
-                  </label>
-                  <label>Semester
-                    <select name="curriculumSemester">
-                      <option value="1" ${curriculumSemester === 1 ? "selected" : ""}>Semester 1</option>
-                      <option value="2" ${curriculumSemester === 2 ? "selected" : ""}>Semester 2</option>
-                    </select>
-                  </label>
-                  <label class="admin-course-search-field">Search course
-                    <input id="admin-curriculum-search" type="search" value="${escapeHtml(courseSearchQuery)}" placeholder="Filter by course name..." />
-                  </label>
-                </div>
-              </form>
-            </div>
+        <form id="admin-curriculum-filter-form" class="admin-flat-toolbar" autocomplete="off">
+          <select name="curriculumYear" aria-label="Year">
+            ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${curriculumYear === year ? "selected" : ""}>Year ${year}</option>`).join("")}
+          </select>
+          <select name="curriculumSemester" aria-label="Semester">
+            <option value="1" ${curriculumSemester === 1 ? "selected" : ""}>Semester 1</option>
+            <option value="2" ${curriculumSemester === 2 ? "selected" : ""}>Semester 2</option>
+          </select>
+          <label class="admin-users-toolbar-search admin-flat-toolbar-search">
+            <span class="sr-only">Search subjects</span>
+            <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+            <input id="admin-curriculum-search" type="search" value="${escapeHtml(courseSearchQuery)}" placeholder="Search subjects" />
+          </label>
+        </form>
 
-            <div class="admin-course-grid" style="margin-top: 0.95rem;">
-              ${courseCards || `
-                <div class="admin-course-empty-state">
-                  <h4 style="margin: 0;">No matching courses</h4>
-                  <p class="subtle" style="margin: 0;">Try a different search term or switch the year/semester filter.</p>
-                </div>
-              `}
-            </div>
+        ${courseCards
+    ? `<ul class="admin-flat-list admin-course-picker-list">${courseCards}</ul>`
+    : `<p class="admin-flat-empty">No matching subjects. Try a different search or switch the year or semester.</p>`}
       </section>
     `;
 
@@ -35626,12 +35611,12 @@ function renderAdmin() {
       <section class="card admin-section" id="admin-activity-section">
         ${activityHeader}
         <p class="subtle admin-activity-sync-line">Last sync: <b>${escapeHtml(lastSyncLabel)}</b> \u00B7 \u25CF Auto-refresh active</p>
-        <div class="stats-grid" style="margin-top: 0.85rem;">
-          <article class="card"><p class="metric">${rows.length}<small>Total tracked</small></p></article>
-          <article class="card"><p class="metric">${onlineRows.length}<small>Online now</small></p></article>
-          <article class="card"><p class="metric">${solvingRows.length}<small>Solving now</small></p></article>
-          <article class="card"><p class="metric">${studentOnline}<small>Students online</small></p></article>
-          <article class="card"><p class="metric">${offlineRows.length}<small>Offline</small></p></article>
+        <div class="admin-flat-stats admin-flat-grid">
+          <div class="admin-flat-stat"><b>${rows.length}</b><span>Total tracked</span></div>
+          <div class="admin-flat-stat"><b>${onlineRows.length}</b><span>Online now</span></div>
+          <div class="admin-flat-stat"><b>${solvingRows.length}</b><span>Solving now</span></div>
+          <div class="admin-flat-stat"><b>${studentOnline}</b><span>Students online</span></div>
+          <div class="admin-flat-stat"><b>${offlineRows.length}</b><span>Offline</span></div>
         </div>
         ${state.adminPresenceError
         ? `<p class="subtle" style="margin-top:0.9rem;">${escapeHtml(state.adminPresenceError)}</p>`
@@ -36811,8 +36796,10 @@ function wireAdmin() {
     });
 
     if (!state.adminNotificationVideoCoursesLoadedAt && !state.adminNotificationVideoCoursesLoading) {
-      loadAdminNotificationVideoCourseOptions().then(() => {
-        if (state.route === "admin" && state.adminPage === "notifications") {
+      // Re-render only after a successful load: a failed load leaves LoadedAt
+      // unset, so re-rendering on failure would retry at once, in a loop.
+      loadAdminNotificationVideoCourseOptions().then((loaded) => {
+        if (loaded && state.route === "admin" && state.adminPage === "notifications") {
           state.skipNextRouteAnimation = true;
           render();
         }
@@ -55207,7 +55194,7 @@ function renderAdminCoursesEmptyState() {
 function renderAdminCourseStatsCards(aggregates) {
   const stats = aggregates || getAdminCoursesPlatformAggregates();
   return `
-    <div class="admin-course-table-stats">
+    <div class="admin-course-table-stats admin-flat-grid">
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Total courses</span><b>${stats.totalCourses}</b></div>
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Published</span><b>${stats.publishedCourses}</b></div>
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Total enrollments</span><b>${stats.totalEnrollments}</b></div>
@@ -55234,7 +55221,7 @@ function renderAdminCourseApprovalsSection(courses) {
       menuItems.push({ label: "Request changes", attrs: `data-action="admin-reject-course" data-course-id="${escapeHtml(course.id)}"`, danger: true });
     }
     return `
-      <article class="card admin-approval-card" style="display: flex; flex-direction: column; gap: 0.65rem;">
+      <article class="admin-approval-card" style="display: flex; flex-direction: column; gap: 0.65rem;">
         <div class="flex-between">
           <div>
             <b>${escapeHtml(getCoursePlatformCourseTitle(course))}</b>
@@ -55298,30 +55285,26 @@ function renderAdminCourseTableToolbar() {
   const semesterFilter = String(state.adminCourseTableFilterSemester || "");
   const statusFilter = String(state.adminCourseTableFilterStatus || "all");
   return `
-    <div class="admin-course-table-toolbar">
-      <input class="admin-course-search-input" type="search" id="admin-course-table-search" placeholder="Search courses, codes, instructors..." value="${escapeHtml(state.adminCourseTableSearch || "")}" />
-      <div class="admin-course-filter-row">
-        <label>Year
-          <select id="admin-course-table-filter-year" data-action="admin-course-table-filter">
-            <option value="" ${!yearFilter ? "selected" : ""}>All years</option>
-            ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${yearFilter === String(year) ? "selected" : ""}>Year ${year}</option>`).join("")}
-          </select>
-        </label>
-        <label>Semester
-          <select id="admin-course-table-filter-semester" data-action="admin-course-table-filter">
-            <option value="" ${!semesterFilter ? "selected" : ""}>All semesters</option>
-            <option value="1" ${semesterFilter === "1" ? "selected" : ""}>Semester 1</option>
-            <option value="2" ${semesterFilter === "2" ? "selected" : ""}>Semester 2</option>
-          </select>
-        </label>
-        <label>Status
-          <select id="admin-course-table-filter-status" data-action="admin-course-table-filter">
-            <option value="all" ${statusFilter === "all" ? "selected" : ""}>All</option>
-            <option value="published" ${statusFilter === "published" ? "selected" : ""}>Published</option>
-            <option value="draft" ${statusFilter === "draft" ? "selected" : ""}>Draft</option>
-          </select>
-        </label>
-      </div>
+    <div class="admin-course-table-toolbar admin-flat-toolbar">
+      <label class="admin-users-toolbar-search admin-flat-toolbar-search">
+        <span class="sr-only">Search courses</span>
+        <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input class="admin-course-search-input" type="search" id="admin-course-table-search" placeholder="Search courses, codes, instructors" value="${escapeHtml(state.adminCourseTableSearch || "")}" />
+      </label>
+      <select id="admin-course-table-filter-year" data-action="admin-course-table-filter" aria-label="Year">
+        <option value="" ${!yearFilter ? "selected" : ""}>All years</option>
+        ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${yearFilter === String(year) ? "selected" : ""}>Year ${year}</option>`).join("")}
+      </select>
+      <select id="admin-course-table-filter-semester" data-action="admin-course-table-filter" aria-label="Semester">
+        <option value="" ${!semesterFilter ? "selected" : ""}>All semesters</option>
+        <option value="1" ${semesterFilter === "1" ? "selected" : ""}>Semester 1</option>
+        <option value="2" ${semesterFilter === "2" ? "selected" : ""}>Semester 2</option>
+      </select>
+      <select id="admin-course-table-filter-status" data-action="admin-course-table-filter" aria-label="Status">
+        <option value="all" ${statusFilter === "all" ? "selected" : ""}>All statuses</option>
+        <option value="published" ${statusFilter === "published" ? "selected" : ""}>Published</option>
+        <option value="draft" ${statusFilter === "draft" ? "selected" : ""}>Draft</option>
+      </select>
     </div>
   `;
 }
@@ -55418,12 +55401,12 @@ function renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingReq
           `).join("")}
         </select>
       </label>
-      <div class="admin-course-selector-pills">
-        <span class="admin-course-meta-pill"><b>${rows.modules.length}</b><small>Modules</small></span>
-        <span class="admin-course-meta-pill"><b>${rows.lessons.length}</b><small>Lessons</small></span>
-        <span class="admin-course-meta-pill"><b>${profileCount}</b><small>Enrollments</small></span>
-        <span class="admin-course-meta-pill"><b>${pendingRequestCount}</b><small>Pending requests</small></span>
-      </div>
+      <p class="admin-course-context-meta">${escapeHtml([
+        `${rows.modules.length} ${rows.modules.length === 1 ? "module" : "modules"}`,
+        `${rows.lessons.length} ${rows.lessons.length === 1 ? "lesson" : "lessons"}`,
+        `${profileCount} ${profileCount === 1 ? "enrollment" : "enrollments"}`,
+        `${pendingRequestCount} pending ${pendingRequestCount === 1 ? "request" : "requests"}`,
+      ].join(" · "))}</p>
       <button class="btn ghost admin-btn-sm admin-course-context-all" type="button" data-action="admin-course-platform-section" data-section="overview">All courses</button>
     </div>
   `;
@@ -56556,8 +56539,11 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
   const selectedId = String(state.adminCourseCouponCourseId || selectedCourseId || courses[0]?.id || "").trim();
   if (selectedId && state.adminCourseCouponCourseId !== selectedId) state.adminCourseCouponCourseId = selectedId;
   if (selectedId && !state.adminCourseCouponLoading && !state.adminCourseCouponStats && !state.adminCourseCouponError) {
-    loadAdminCourseCouponData({ courseId: selectedId }).then(() => {
-      if (state.route === "admin" && getAdminCoursePlatformSection() === "coupons") { state.skipNextRouteAnimation = true; render(); }
+    // Re-render after a load or a recorded error (the error stops the next
+    // attempt). With no client the load returns false and records nothing, so
+    // re-rendering then would retry in a loop.
+    loadAdminCourseCouponData({ courseId: selectedId }).then((loaded) => {
+      if ((loaded || state.adminCourseCouponError) && state.route === "admin" && getAdminCoursePlatformSection() === "coupons") { state.skipNextRouteAnimation = true; render(); }
     });
   }
   const stats = state.adminCourseCouponStats || {};
@@ -56571,11 +56557,11 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
     <div class="admin-coupon-page">
       ${generated.length ? `<section class="card admin-coupon-generated" role="status"><div class="flex-between"><div><h3>New codes — save now</h3><p class="subtle">These plaintext values cannot be recovered after leaving this screen.</p></div><div class="stack"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-copy-generated-coupons">Copy all</button><button class="btn ghost admin-btn-sm" type="button" data-action="admin-download-generated-coupons">Download CSV</button></div></div><textarea readonly rows="${Math.min(12, generated.length + 1)}">${escapeHtml(generated.map((row) => row.coupon_code).join("\n"))}</textarea></section>` : ""}
 
-      <section class="admin-coupon-stats" aria-label="Coupon statistics">
-        ${[["Total", stats.total], ["Full course", stats.full_course], ["Module", stats.module_access], ["Redeemed", stats.redeemed], ["Students", stats.students], ["Unused", stats.unused], ["Expired", stats.expired], ["Disabled", stats.disabled], ["Rate", `${Number(stats.redemption_rate || 0)}%`]].map(([label, value]) => `<article class="card"><b>${escapeHtml(String(value ?? 0))}</b><span>${escapeHtml(label)}</span></article>`).join("")}
+      <section class="admin-coupon-stats admin-flat-grid" aria-label="Coupon statistics">
+        ${[["Total", stats.total], ["Full course", stats.full_course], ["Module", stats.module_access], ["Redeemed", stats.redeemed], ["Students", stats.students], ["Unused", stats.unused], ["Expired", stats.expired], ["Disabled", stats.disabled], ["Rate", `${Number(stats.redemption_rate || 0)}%`]].map(([label, value]) => `<article><b>${escapeHtml(String(value ?? 0))}</b><span>${escapeHtml(label)}</span></article>`).join("")}
       </section>
 
-      <section class="card admin-coupon-report">
+      <section class="admin-coupon-report">
         <div class="flex-between"><div><h3>Coupon records</h3><p class="subtle">Search previews, batches, student names, or MedBank IDs.</p></div></div>
         <form id="admin-course-coupon-filter-form" class="admin-coupon-filters" autocomplete="off">
           <input name="search" type="search" value="${escapeHtml(state.adminCourseCouponSearch)}" placeholder="Preview, batch, student ID..." />
@@ -56588,8 +56574,8 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
         ${state.adminCourseCouponLoading ? `<div class="courses-empty"><span class="inline-loader"></span><p>Loading coupons...</p></div>` : state.adminCourseCouponError ? `<p class="form-error">${escapeHtml(state.adminCourseCouponError)}</p>` : renderedCoupons.length ? `<div class="table-wrap"><table><thead><tr><th>Preview</th><th>Type / modules</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead><tbody>${renderedCoupons.map((coupon) => `<tr><td><code>••••-${escapeHtml(coupon.code_preview)}</code></td><td>${escapeHtml(coupon.coupon_type === "full_course" ? "Full course" : (coupon.module_titles || []).join(", ") || "Modules")}</td><td><span class="status-badge is-${coupon.status === "used" ? "approved" : coupon.status === "unused" ? "pending" : "rejected"}">${escapeHtml(coupon.status)}</span></td><td>${escapeHtml(coupon.batch_name || "—")}</td><td>${escapeHtml(formatReportDateTime(coupon.created_at))}</td><td>${coupon.redeemed_public_user_id ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(coupon.redeemed_public_user_id)}">${escapeHtml(coupon.redeemed_name || "Student")} · ${escapeHtml(coupon.redeemed_public_user_id)}</button><small>${escapeHtml(formatReportDateTime(coupon.redeemed_at))}</small>` : "—"}</td><td>${coupon.status === "unused" ? renderAdminRowMenu({ id: `coupon-${coupon.id}`, label: "More actions", items: [{ label: "Disable", attrs: `data-action="admin-disable-coupon" data-coupon-id="${escapeHtml(coupon.id)}"`, danger: true }] }) : ""}</td></tr>`).join("")}</tbody></table></div>${renderAdminCourseShowMoreButton(hiddenCouponCount, couponsLimitKey)}` : `<p class="subtle">No coupons match these filters.</p>`}
       </section>
 
-      <div class="grid-2 admin-coupon-insights"><section class="card"><h3>Redemptions over time</h3>${(stats.redemptions_over_time || []).length ? `<ul>${stats.redemptions_over_time.map((item) => `<li><span>${escapeHtml(item.day)}</span><b>${escapeHtml(item.count)}</b></li>`).join("")}</ul>` : `<p class="subtle">No redemptions yet.</p>`}</section><section class="card"><h3>Most activated modules</h3>${(stats.redemptions_by_module || []).length ? `<ul>${stats.redemptions_by_module.map((item) => `<li><span>${escapeHtml(item.module_title)}</span><b>${escapeHtml(item.redemptions)}</b></li>`).join("")}</ul>` : `<p class="subtle">No module redemptions yet.</p>`}</section></div>
-      <section class="card admin-coupon-insights"><h3>Recent redemptions</h3>${(stats.recent_redemptions || []).length ? `<ul>${stats.recent_redemptions.map((item) => `<li><span><button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(item.public_user_id)}">${escapeHtml(item.student_name || "Student")} · ${escapeHtml(item.public_user_id)}</button><small>${escapeHtml(item.course_name || "Video Course")} · ${escapeHtml(item.coupon_type === "module_access" ? "Module access" : "Full course")}</small></span><b>${escapeHtml(formatReportDateTime(item.redeemed_at))}</b></li>`).join("")}</ul>` : `<p class="subtle">No recent redemptions.</p>`}</section>
+      <div class="grid-2 admin-coupon-insights"><section><h3>Redemptions over time</h3>${(stats.redemptions_over_time || []).length ? `<ul>${stats.redemptions_over_time.map((item) => `<li><span>${escapeHtml(item.day)}</span><b>${escapeHtml(item.count)}</b></li>`).join("")}</ul>` : `<p class="subtle">No redemptions yet.</p>`}</section><section><h3>Most activated modules</h3>${(stats.redemptions_by_module || []).length ? `<ul>${stats.redemptions_by_module.map((item) => `<li><span>${escapeHtml(item.module_title)}</span><b>${escapeHtml(item.redemptions)}</b></li>`).join("")}</ul>` : `<p class="subtle">No module redemptions yet.</p>`}</section></div>
+      <section class="admin-coupon-insights"><h3>Recent redemptions</h3>${(stats.recent_redemptions || []).length ? `<ul>${stats.recent_redemptions.map((item) => `<li><span><button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(item.public_user_id)}">${escapeHtml(item.student_name || "Student")} · ${escapeHtml(item.public_user_id)}</button><small>${escapeHtml(item.course_name || "Video Course")} · ${escapeHtml(item.coupon_type === "module_access" ? "Module access" : "Full course")}</small></span><b>${escapeHtml(formatReportDateTime(item.redeemed_at))}</b></li>`).join("")}</ul>` : `<p class="subtle">No recent redemptions.</p>`}</section>
     </div>
   `;
 }
@@ -57734,10 +57720,9 @@ function wireAdminCoursesPlatformBuilder() {
       state.adminCourseBuilderActiveParentId = "";
       state.skipNextRouteAnimation = true;
       render();
-    } else if (
-      target.id === "admin-course-table-filter-year" ||
-      target.hasAttribute("data-action") && target.getAttribute("data-action") === "admin-course-table-filter"
-    ) {
+    } else if (target.id === "admin-course-table-filter-year") {
+      // Match by id only: all three filter selects share the data-action, so
+      // matching on it sent Semester and Status values into the Year filter.
       state.adminCourseTableFilterYear = String(target.value || "");
       rerenderAdminCourses();
     } else if (target.id === "admin-course-table-filter-semester") {

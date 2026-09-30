@@ -2,9 +2,11 @@
 
 Written 2026-09-30 during the admin redesign on branch `claude/admin-grouped-sidebar`, so the work can continue in another session. The history of what was built is in AGENTS.md (refactor log, 2026-09-29 and 2026-09-30 entries) and CHANGELOG.md.
 
-## Open task: flatten nested boxes on every admin page
+## Done: flatten nested boxes on every admin page
 
-The owner said the pages look like "boxes inside boxes inside boxes". Not started (three delegated runs were stopped before finishing; nothing from them was kept). Measured box depth inside `.admin-main` (1 = the page card): Course Builder 5, Bulk Import 3, Site Access 3; MCQ Subjects 2 with 14 boxed cards; Catalog 7 boxes; Activity 6; Dashboard 5. Target: depth <= 2 everywhere and no lists of boxed items. Approved target for MCQ Subjects: filters as one toolbar row, subjects as a divided list ("Name CODE", muted "4 topics · 8 questions", amber "no questions yet", chevron instead of OPEN). Suggested split: (A) Dashboard, MCQ Subjects, Questions, Bulk Import; (B) Users, Universities, Notifications, Pop-ups, Site Access, Hermes, Activity, Logs; (C) all Video Courses sections. The owner wants execution delegated (Codex preferred).
+**Status (2026-09-30): done** on this branch; see the AGENTS.md refactor-log entry "Admin pages: one box level (flatten pass)" for what changed, the shared `.admin-flat-*` classes to reuse, what was deliberately kept, and how it was verified. New admin pages must follow the "ONE BOX LEVEL" rule below. Original brief, kept for reference:
+
+The owner said the pages look like "boxes inside boxes inside boxes". The three delegated runs had been stopped before finishing and nothing from them was kept; the pass was then done directly in a cloud session (Codex was not available there). Measured box depth inside `.admin-main` (1 = the page card): Course Builder 5, Bulk Import 3, Site Access 3; MCQ Subjects 2 with 14 boxed cards; Catalog 7 boxes; Activity 6; Dashboard 5. Target: depth <= 2 everywhere and no lists of boxed items. Approved target for MCQ Subjects: filters as one toolbar row, subjects as a divided list ("Name CODE", muted "4 topics · 8 questions", amber "no questions yet", chevron instead of OPEN). Suggested split: (A) Dashboard, MCQ Subjects, Questions, Bulk Import; (B) Users, Universities, Notifications, Pop-ups, Site Access, Hermes, Activity, Logs; (C) all Video Courses sections. The owner wants execution delegated (Codex preferred).
 
 ```text
 === MEDBANK ADMIN UI STYLE GUIDE (applies to this task) ===
