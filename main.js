@@ -390,6 +390,7 @@ const ADMIN_QUESTION_RENDER_PAGE_SIZE = 100;
 const ADMIN_BULK_UI_YIELD_EVERY = 50;
 const PREVIOUS_TEST_ANALYSIS_LIMIT = 240;
 const PREVIOUS_TEST_RENDER_LIMIT = 120;
+const ADMIN_COURSE_LIST_RENDER_STEP = 100;
 const ENROLLMENT_SYNC_QUERY_TIMEOUT_MS = Math.max(SUPABASE_QUERY_TIMEOUT_MS, 15000);
 const ENROLLMENT_SYNC_WRITE_BATCH_SIZE = 100;
 const ENROLLMENT_BACKFILL_RETRY_COOLDOWN_MS = 60000;
@@ -607,6 +608,10 @@ const state = {
   adminRequestFilterStatus: "all",
   adminRequestGroupCollapsed: {},
   adminAnnouncementCourseFilter: "all",
+  adminCourseCouponGeneratorOpen: false,
+  adminCourseAnnouncementComposerOpen: false,
+  adminCourseSuggestionEditorOpen: false,
+  adminCoursePlatformListLimits: {},
   createTestSource: "all",
   previousTestFilters: {
     dateKey: "",
@@ -34575,6 +34580,7 @@ function renderAdmin() {
 
   if (activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE) {
     pageContent = adminRenderCourseBuilder(state.adminCourseBuilderCourseId);
+    adminGlobalOverlay = renderAdminCoursesPlatformDialogs();
   }
 
   if (activeAdminPage === "questions") {
@@ -37721,10 +37727,10 @@ function wireAdmin() {
       closeButton?.click();
     });
   });
-  document.body.classList.toggle(
-    "is-admin-dialog-open",
-    Boolean(state.adminUsersFiltersOpen || state.adminAddUserPanelOpen || state.adminUsersSettingsOpen || state.adminUserEditId || state.adminNotificationComposeOpen),
-  );
+  // is-admin-dialog-open was already set generically at the top of wireAdmin()
+  // from the rendered DOM (Boolean(appEl.querySelector(".admin-dialog"))); a
+  // second Users-only toggle here would incorrectly clear it while a
+  // Video-Courses dialog (or any future one) is the only dialog open.
   restoreAdminDialogFocusAfterRender();
 
   // Export the list exactly as currently filtered. downloadAdminUsersCsv and its
@@ -55110,6 +55116,28 @@ function filterAdminCoursesForTable(courses) {
   });
 }
 
+// Keyed by e.g. "enrollments:<courseId>" so switching course/section naturally
+// starts a fresh list instead of needing an explicit reset.
+function getAdminCourseListRenderLimit(key) {
+  const limits = state.adminCoursePlatformListLimits || (state.adminCoursePlatformListLimits = {});
+  return Number(limits[key]) || ADMIN_COURSE_LIST_RENDER_STEP;
+}
+
+function bumpAdminCourseListRenderLimit(key) {
+  if (!key) return;
+  const limits = state.adminCoursePlatformListLimits || (state.adminCoursePlatformListLimits = {});
+  limits[key] = getAdminCourseListRenderLimit(key) + ADMIN_COURSE_LIST_RENDER_STEP;
+}
+
+function renderAdminCourseShowMoreButton(hiddenCount, limitKey) {
+  if (!hiddenCount) return "";
+  return `<button class="btn ghost admin-btn-sm admin-course-show-more" type="button" data-action="admin-course-list-show-more" data-limit-key="${escapeHtml(limitKey)}">Show more (${escapeHtml(String(hiddenCount))})</button>`;
+}
+
+function renderAdminCoursesEmptyState() {
+  return `<p class="admin-course-empty-state-line">No platform courses yet — <button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">Create the first course</button></p>`;
+}
+
 function renderAdminCourseStatsCards(aggregates) {
   const stats = aggregates || getAdminCoursesPlatformAggregates();
   return `
@@ -55133,6 +55161,12 @@ function renderAdminCourseApprovalsSection(courses) {
 
   const courseCard = (course, showActions) => {
     const submitted = course.submitted_at ? formatReportDateTime(course.submitted_at) : "—";
+    const menuItems = [
+      { label: "Open in builder", attrs: `data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(course.id)}"` },
+    ];
+    if (showActions) {
+      menuItems.push({ label: "Request changes", attrs: `data-action="admin-reject-course" data-course-id="${escapeHtml(course.id)}"`, danger: true });
+    }
     return `
       <article class="card admin-approval-card" style="display: flex; flex-direction: column; gap: 0.65rem;">
         <div class="flex-between">
@@ -55143,19 +55177,16 @@ function renderAdminCourseApprovalsSection(courses) {
               ${course.instructor_name ? ` · ${escapeHtml(course.instructor_name)}` : ""}
             </p>
           </div>
-          <span class="status-badge is-${showActions ? "pending" : "rejected"}">${escapeHtml(showActions ? "In review" : "Changes requested")}</span>
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <span class="status-badge is-${showActions ? "pending" : "rejected"}">${escapeHtml(showActions ? "In review" : "Changes requested")}</span>
+            ${renderAdminRowMenu({ id: `course-approval-${course.id}`, label: `More actions for ${getCoursePlatformCourseTitle(course)}`, items: menuItems })}
+          </div>
         </div>
         ${course.description ? `<p class="subtle" style="margin: 0; font-size: 0.85rem;">${escapeHtml(course.description)}</p>` : ""}
         <small class="subtle">Submitted ${escapeHtml(submitted)}</small>
         ${course.review_note ? `<small class="subtle">Last note: ${escapeHtml(course.review_note)}</small>` : ""}
         <div class="stack">
-          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(course.id)}">Open in builder</button>
-          ${showActions ? `
-            <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">Approve</button>
-            <button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-reject-course" data-course-id="${escapeHtml(course.id)}">Request changes</button>
-          ` : `
-            <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">Approve now</button>
-          `}
+          <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">${showActions ? "Approve" : "Approve now"}</button>
         </div>
       </article>
     `;
@@ -55163,17 +55194,7 @@ function renderAdminCourseApprovalsSection(courses) {
 
   return `
     <div class="admin-approvals-page">
-      <section class="card">
-        <div class="flex-between">
-          <div>
-            <h3>Course approvals</h3>
-            <p class="subtle">Creators build courses in the MedBank app and submit them here. A course stays hidden from students until it is approved and published.</p>
-          </div>
-          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-courses-platform">Refresh</button>
-        </div>
-      </section>
-
-      <section style="margin-top: 1rem;">
+      <section>
         <h4 style="margin: 0 0 0.6rem;">Waiting for review${pending.length ? ` (${pending.length})` : ""}</h4>
         ${pending.length
           ? `<div class="grid-2">${pending.map((course) => courseCard(course, true)).join("")}</div>`
@@ -55351,8 +55372,6 @@ function renderAdminGlobalSuggestions() {
   });
   return `
     <div class="course-builder-form">
-      <h4>All course suggestions</h4>
-      <p class="subtle">Suggestions across every platform course. Select a course below to edit its settings.</p>
       <div class="course-builder-list">
         ${suggestions.length ? suggestions.map((suggestion) => {
           const course = courses.find((entry) => String(entry?.id || "") === String(suggestion?.course_id || ""));
@@ -55365,12 +55384,33 @@ function renderAdminGlobalSuggestions() {
                 <small>${escapeHtml(getAdminCourseBuilderCourseLabel(suggestion.course_id))}</small>
                 <small>${escapeHtml(statusLabel)}${featured ? " • Featured for all" : ""} • Priority ${escapeHtml(suggestion.priority || 0)}</small>
               </span>
-              <span class="${suggestion.is_active ? "admin-badge-published" : "admin-badge-draft"}">${escapeHtml(statusLabel)}</span>
+              <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <span class="${suggestion.is_active ? "admin-badge-published" : "admin-badge-draft"}">${escapeHtml(statusLabel)}</span>
+                ${renderAdminRowMenu({
+                  id: `course-suggestion-${suggestion.id}`,
+                  label: `More actions for ${suggestion.title || "this suggestion"}`,
+                  items: [
+                    { label: "Edit", attrs: `data-action="admin-edit-course-suggestion" data-course-id="${escapeHtml(suggestion.course_id)}"` },
+                    { label: "Delete", attrs: `data-action="admin-delete-course-suggestion" data-suggestion-id="${escapeHtml(suggestion.id)}"`, danger: true },
+                  ],
+                })}
+              </div>
             </div>
           `;
-        }).join("") : `<p class="subtle">No suggestions configured yet.</p>`}
+        }).join("") : `<p class="subtle">No suggestions configured yet. Select a course above and use Add suggestion.</p>`}
       </div>
     </div>
+  `;
+}
+
+function renderAdminCourseAnnouncementComposerForm(selectedCourseId) {
+  const dk = `admin-course-announcement-form_${selectedCourseId}`;
+  return `
+    <form id="admin-course-announcement-form" class="course-builder-form">
+      <label>Title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "title", ""))}" required /></label>
+      <label>Body<textarea name="body" rows="3" required>${escapeHtml(getAdminCourseBuilderFieldValue(dk, "body", ""))}</textarea></label>
+      <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published</label>
+    </form>
   `;
 }
 
@@ -55382,17 +55422,8 @@ function renderAdminAnnouncementsSection(courses, selectedCourseId, rows) {
   const filteredAnnouncements = filterCourseId === "all"
     ? allAnnouncements
     : allAnnouncements.filter((item) => String(item?.course_id || "").trim() === filterCourseId);
-  const dk = `admin-course-announcement-form_${selectedCourseId}`;
   return `
-    <form id="admin-course-announcement-form" class="course-builder-form">
-      <h4>Announcements</h4>
-      <p class="subtle">Post to the selected course. Browse announcements from all courses below.</p>
-      <label>Title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "title", ""))}" required /></label>
-      <label>Body<textarea name="body" rows="3" required>${escapeHtml(getAdminCourseBuilderFieldValue(dk, "body", ""))}</textarea></label>
-      <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published</label>
-      <button class="btn admin-btn-sm" type="submit">Post announcement</button>
-    </form>
-    <div class="course-builder-form" style="margin-top: 1rem;">
+    <div class="course-builder-form">
       <div class="admin-course-filter-row">
         <label>Filter by course
           <select id="admin-announcement-course-filter">
@@ -55410,12 +55441,16 @@ function renderAdminAnnouncementsSection(courses, selectedCourseId, rows) {
               <p class="subtle">${escapeHtml(item.body || "")}</p>
               <small class="admin-announcement-date">${escapeHtml(formatReportDateTime(item.created_at || ""))}</small>
             </div>
-            <div class="stack">
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
               <span class="${item.is_published ? "admin-badge-published" : "admin-badge-draft"}">${item.is_published ? "Published" : "Draft"}</span>
-              <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-announcement" data-announcement-id="${escapeHtml(item.id)}">Delete</button>
+              ${renderAdminRowMenu({
+                id: `course-announcement-${item.id}`,
+                label: `More actions for ${item.title || "this announcement"}`,
+                items: [{ label: "Delete", attrs: `data-action="admin-delete-announcement" data-announcement-id="${escapeHtml(item.id)}"`, danger: true }],
+              })}
             </div>
           </div>
-        `).join("") : `<p class="subtle">No announcements yet.</p>`}
+        `).join("") : `<p class="subtle">No announcements yet. Use New announcement to post one.</p>`}
       </div>
     </div>
   `;
@@ -55429,9 +55464,13 @@ function renderAdminRequestsSection(courses) {
   const filteredRequests = statusFilter === "all"
     ? allRequests
     : allRequests.filter((request) => String(request?.status || "").trim() === statusFilter);
+  const requestsLimitKey = `requests:${statusFilter}`;
+  const requestsLimit = getAdminCourseListRenderLimit(requestsLimitKey);
+  const renderedRequests = filteredRequests.slice(0, requestsLimit);
+  const hiddenRequestsCount = filteredRequests.length - renderedRequests.length;
   const globalPendingCount = allRequests.filter((request) => String(request?.status || "").trim() === "pending").length;
   const requestsByCourse = new Map();
-  filteredRequests.forEach((request) => {
+  renderedRequests.forEach((request) => {
     const courseId = String(request?.course_id || "").trim() || "unknown";
     if (!requestsByCourse.has(courseId)) requestsByCourse.set(courseId, []);
     requestsByCourse.get(courseId).push(request);
@@ -55450,10 +55489,7 @@ function renderAdminRequestsSection(courses) {
   ];
   return `
     <div class="course-builder-form">
-      <div class="admin-requests-head">
-        <h4>Enrollment requests</h4>
-        ${globalPendingCount ? `<button class="btn admin-btn-sm" type="button" data-action="admin-approve-all-pending-global" ${state.adminApproveAllPendingRunning ? "disabled" : ""}>${state.adminApproveAllPendingRunning ? "Approving..." : `Approve all pending (${globalPendingCount})`}</button>` : ""}
-      </div>
+      ${globalPendingCount ? `<div class="admin-requests-head"><button class="btn admin-btn-sm" type="button" data-action="admin-approve-all-pending-global" ${state.adminApproveAllPendingRunning ? "disabled" : ""}>${state.adminApproveAllPendingRunning ? "Approving..." : `Approve all pending (${globalPendingCount})`}</button></div>` : ""}
       <div class="admin-request-filter-tabs">
         ${filterTabs.map(([value, label]) => `
           <button class="btn ghost admin-btn-sm ${statusFilter === value ? "is-active" : ""}" type="button" data-action="admin-request-filter" data-status="${escapeHtml(value)}">${escapeHtml(label)}</button>
@@ -55479,20 +55515,19 @@ function renderAdminRequestsSection(courses) {
                 const label = getAdminCourseBuilderProfileLabel(request.user_id);
                 const status = String(request.status || "pending").toLowerCase();
                 let statusBadge = "";
-                let actionsHtml = "";
+                let inlineActionHtml = "";
+                let menuItems = [];
 
                 if (status === "approved") {
                   statusBadge = `<span class="status-badge is-approved">Approved</span>`;
-                  actionsHtml = `<button class="btn danger admin-btn-sm ghost" type="button" data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}">Reject</button>`;
+                  menuItems = [{ label: "Reject", attrs: `data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}"`, danger: true }];
                 } else if (status === "rejected") {
                   statusBadge = `<span class="status-badge is-rejected">Rejected</span>`;
-                  actionsHtml = `<button class="btn good admin-btn-sm ghost" type="button" data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}">Approve</button>`;
+                  menuItems = [{ label: "Approve", attrs: `data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}"` }];
                 } else {
                   statusBadge = `<span class="status-badge is-pending">Pending</span>`;
-                  actionsHtml = `
-                    <button class="btn good admin-btn-sm" type="button" data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}">Approve</button>
-                    <button class="btn danger admin-btn-sm outline" type="button" data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}">Reject</button>
-                  `;
+                  inlineActionHtml = `<button class="btn good admin-btn-sm" type="button" data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}">Approve</button>`;
+                  menuItems = [{ label: "Reject", attrs: `data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}"`, danger: true }];
                 }
 
                 return `
@@ -55505,8 +55540,9 @@ function renderAdminRequestsSection(courses) {
                         <div style="margin-top: 0.25rem;">${statusBadge}</div>
                       </span>
                     </div>
-                    <div class="stack" style="gap: 0.45rem;">
-                      ${actionsHtml}
+                    <div class="stack" style="gap: 0.45rem; align-items: center;">
+                      ${inlineActionHtml}
+                      ${renderAdminRowMenu({ id: `course-request-${request.id}`, label: `More actions for ${label}`, items: menuItems })}
                     </div>
                   </div>
                 `;
@@ -55515,6 +55551,7 @@ function renderAdminRequestsSection(courses) {
           </section>
         `;
       }).join("") : `<p class="subtle">No enrollment requests match this filter.</p>`}
+      ${renderAdminCourseShowMoreButton(hiddenRequestsCount, requestsLimitKey)}
     </div>
   `;
 }
@@ -55606,10 +55643,14 @@ function renderAdminCourseEnrollmentProfileRow(profile, options = {}) {
   const name = getAdminPlatformProfileDisplayName(profile);
   const meta = profile ? getAdminPlatformProfileMeta(profile) : "Profile details unavailable";
   const action = String(options.action || "").trim();
-  const buttonHtml = action === "add"
+  const actionHtml = action === "add"
     ? `<button class="btn admin-btn-sm" type="button" data-action="admin-enroll-course-user" data-user-id="${escapeHtml(profileId)}">Enroll</button>`
     : action === "remove"
-      ? `<button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-remove-course-user" data-user-id="${escapeHtml(profileId)}">Remove</button>`
+      ? renderAdminRowMenu({
+        id: `course-enrollment-${profileId}`,
+        label: `More actions for ${name}`,
+        items: [{ label: "Remove from course", attrs: `data-action="admin-remove-course-user" data-user-id="${escapeHtml(profileId)}"`, danger: true }],
+      })
       : "";
   const dateLabel = options.assignedAt
     ? `<small>Enrolled ${escapeHtml(formatReportDateTime(options.assignedAt))}</small>`
@@ -55627,9 +55668,9 @@ function renderAdminCourseEnrollmentProfileRow(profile, options = {}) {
           ${dateLabel}
         </span>
       </div>
-      <div class="stack">
+      <div class="stack" style="align-items: center;">
         ${profile ? statusBadge : `<span class="status-badge is-rejected">Missing profile</span>`}
-        ${buttonHtml}
+        ${actionHtml}
       </div>
     </div>
   `;
@@ -56329,36 +56370,25 @@ function renderAdminCourseEnrollmentsSection(courses, selectedCourseId, rows) {
       if (profile) return matchesAdminCourseEnrollmentQuery(profile, enrolledSearch);
       return !String(enrolledSearch || "").trim() || String(enrollment?.user_id || "").includes(String(enrolledSearch || "").trim());
     });
-  const selectedCourse = getAdminCourseBuilderCourse(selectedCourseId);
+  const enrollmentsLimitKey = `enrollments:${selectedCourseId}`;
+  const enrollmentsLimit = getAdminCourseListRenderLimit(enrollmentsLimitKey);
+  const renderedEnrollmentRows = enrollmentRows.slice(0, enrollmentsLimit);
+  const hiddenEnrollmentCount = enrollmentRows.length - renderedEnrollmentRows.length;
   return `
     <div class="course-builder-form admin-course-enrollments-panel">
-      <div class="admin-requests-head">
-        <div>
-          <h4>Enrolled users</h4>
-          <p class="subtle">Selected course: ${escapeHtml(getCoursePlatformCourseTitle(selectedCourse))}</p>
-        </div>
-        <div class="admin-enrollment-head-actions">
-          <button class="admin-enrollment-add-btn" type="button" data-action="admin-open-course-enrollment-picker" aria-label="Add users to this course" title="Add users to this course">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </button>
-          <span class="admin-enrollment-count-badge"><b>${rows.enrollments.length}</b> enrolled</span>
-        </div>
-      </div>
       <div class="admin-enrollment-search">
         <input id="admin-course-enrollment-search" type="search" value="${escapeHtml(enrolledSearch)}" placeholder="Search enrolled users..." autocomplete="off" />
       </div>
       <div class="course-builder-list">
-        ${enrollmentRows.length
-          ? enrollmentRows.map(({ enrollment, profile }) => renderAdminCourseEnrollmentProfileRow(profile, {
+        ${renderedEnrollmentRows.length
+          ? renderedEnrollmentRows.map(({ enrollment, profile }) => renderAdminCourseEnrollmentProfileRow(profile, {
             action: "remove",
             userId: enrollment.user_id,
             assignedAt: enrollment.assigned_at,
           })).join("")
           : `<p class="subtle">No enrolled users match this course and search.</p>`}
       </div>
+      ${renderAdminCourseShowMoreButton(hiddenEnrollmentCount, enrollmentsLimitKey)}
     </div>
   `;
 }
@@ -56438,6 +56468,24 @@ function exportAdminCourseCoupons(rows = state.adminCourseCoupons, options = {})
   downloadBlobFile(new Blob([[header.join(","), ...body].join("\n")], { type: "text/csv;charset=utf-8" }), generated ? "medbank-new-coupons.csv" : "medbank-coupon-report.csv");
 }
 
+function renderAdminCourseCouponGeneratorForm(courses, selectedId) {
+  const courseModules = (state.adminCoursesPlatformModules || []).filter((module) => String(module.course_id || "") === selectedId);
+  return `
+    <form id="admin-course-coupon-generate-form" autocomplete="off">
+      <p class="subtle">Plain codes are shown once. MedBank stores only a SHA-256 hash and a four-character preview.</p>
+      <div class="course-builder-grid compact">
+        <label>Course<select name="course_id" id="admin-coupon-course">${courses.map((course) => `<option value="${escapeHtml(course.id)}" ${String(course.id) === selectedId ? "selected" : ""}>${escapeHtml(getCoursePlatformCourseTitle(course))}</option>`).join("")}</select></label>
+        <label>Access type<select name="coupon_type" id="admin-coupon-type"><option value="full_course" ${state.adminCourseCouponType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponType === "module_access" ? "selected" : ""}>Selected modules</option></select></label>
+        <label>Quantity<input name="quantity" type="number" min="1" max="500" value="${escapeHtml(state.adminCourseCouponQuantity)}" required /></label>
+        <label>Expires at (optional)<input name="expires_at" type="datetime-local" value="${escapeHtml(state.adminCourseCouponExpiresAt)}" /></label>
+        <label>Batch name<input name="batch_name" maxlength="120" value="${escapeHtml(state.adminCourseCouponBatchName)}" /></label>
+        <label>Internal note<input name="note" maxlength="500" value="${escapeHtml(state.adminCourseCouponNote)}" /></label>
+      </div>
+      ${state.adminCourseCouponType === "module_access" ? `<fieldset class="admin-coupon-modules"><legend>Modules granted</legend>${courseModules.map((module) => `<label><input type="checkbox" name="module_ids" value="${escapeHtml(module.id)}" ${state.adminCourseCouponModuleIds.includes(String(module.id)) ? "checked" : ""} /> ${escapeHtml(module.title)}</label>`).join("") || `<p class="subtle">This course has no modules.</p>`}</fieldset>` : `<p class="subtle">Full-course coupons include all current and future published modules.</p>`}
+    </form>
+  `;
+}
+
 function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
   const selectedId = String(state.adminCourseCouponCourseId || selectedCourseId || courses[0]?.id || "").trim();
   if (selectedId && state.adminCourseCouponCourseId !== selectedId) state.adminCourseCouponCourseId = selectedId;
@@ -56446,28 +56494,15 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
       if (state.route === "admin" && getAdminCoursePlatformSection() === "coupons") { state.skipNextRouteAnimation = true; render(); }
     });
   }
-  const courseModules = (state.adminCoursesPlatformModules || []).filter((module) => String(module.course_id || "") === selectedId);
   const stats = state.adminCourseCouponStats || {};
   const generated = state.adminCourseCouponGenerated || [];
   const coupons = state.adminCourseCoupons || [];
+  const couponsLimitKey = `coupons:${selectedId}`;
+  const couponsLimit = getAdminCourseListRenderLimit(couponsLimitKey);
+  const renderedCoupons = coupons.slice(0, couponsLimit);
+  const hiddenCouponCount = coupons.length - renderedCoupons.length;
   return `
     <div class="admin-coupon-page">
-      <section class="card admin-coupon-generator">
-        <div class="flex-between"><div><h3>Activation coupons</h3><p class="subtle">Plain codes are displayed only once. MedBank stores only a SHA-256 hash and a four-character preview.</p></div><button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-coupons">Refresh</button></div>
-        <form id="admin-course-coupon-generate-form" autocomplete="off">
-          <div class="course-builder-grid compact">
-            <label>Course<select name="course_id" id="admin-coupon-course">${courses.map((course) => `<option value="${escapeHtml(course.id)}" ${String(course.id) === selectedId ? "selected" : ""}>${escapeHtml(getCoursePlatformCourseTitle(course))}</option>`).join("")}</select></label>
-            <label>Access type<select name="coupon_type" id="admin-coupon-type"><option value="full_course" ${state.adminCourseCouponType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponType === "module_access" ? "selected" : ""}>Selected modules</option></select></label>
-            <label>Quantity<input name="quantity" type="number" min="1" max="500" value="${escapeHtml(state.adminCourseCouponQuantity)}" required /></label>
-            <label>Expires at (optional)<input name="expires_at" type="datetime-local" value="${escapeHtml(state.adminCourseCouponExpiresAt)}" /></label>
-            <label>Batch name<input name="batch_name" maxlength="120" value="${escapeHtml(state.adminCourseCouponBatchName)}" /></label>
-            <label>Internal note<input name="note" maxlength="500" value="${escapeHtml(state.adminCourseCouponNote)}" /></label>
-          </div>
-          ${state.adminCourseCouponType === "module_access" ? `<fieldset class="admin-coupon-modules"><legend>Modules granted</legend>${courseModules.map((module) => `<label><input type="checkbox" name="module_ids" value="${escapeHtml(module.id)}" ${state.adminCourseCouponModuleIds.includes(String(module.id)) ? "checked" : ""} /> ${escapeHtml(module.title)}</label>`).join("") || `<p class="subtle">This course has no modules.</p>`}</fieldset>` : `<p class="subtle">Full-course coupons include all current and future published modules.</p>`}
-          <button class="btn" type="submit">Generate secure coupon${Number(state.adminCourseCouponQuantity) === 1 ? "" : "s"}</button>
-        </form>
-      </section>
-
       ${generated.length ? `<section class="card admin-coupon-generated" role="status"><div class="flex-between"><div><h3>New codes — save now</h3><p class="subtle">These plaintext values cannot be recovered after leaving this screen.</p></div><div class="stack"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-copy-generated-coupons">Copy all</button><button class="btn ghost admin-btn-sm" type="button" data-action="admin-download-generated-coupons">Download CSV</button></div></div><textarea readonly rows="${Math.min(12, generated.length + 1)}">${escapeHtml(generated.map((row) => row.coupon_code).join("\n"))}</textarea></section>` : ""}
 
       <section class="admin-coupon-stats" aria-label="Coupon statistics">
@@ -56475,7 +56510,7 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
       </section>
 
       <section class="card admin-coupon-report">
-        <div class="flex-between"><div><h3>Coupon records</h3><p class="subtle">Search previews, batches, student names, or MedBank IDs.</p></div><button class="btn ghost admin-btn-sm" type="button" data-action="admin-export-coupons">Export report</button></div>
+        <div class="flex-between"><div><h3>Coupon records</h3><p class="subtle">Search previews, batches, student names, or MedBank IDs.</p></div></div>
         <form id="admin-course-coupon-filter-form" class="admin-coupon-filters" autocomplete="off">
           <input name="search" type="search" value="${escapeHtml(state.adminCourseCouponSearch)}" placeholder="Preview, batch, student ID..." />
           <select name="coupon_type"><option value="all">All types</option><option value="full_course" ${state.adminCourseCouponFilterType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponFilterType === "module_access" ? "selected" : ""}>Module</option></select>
@@ -56484,7 +56519,7 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
           <label>Redeemed from<input name="redeemed_from" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedFrom)}" /></label><label>Redeemed to<input name="redeemed_to" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedTo)}" /></label>
           <button class="btn ghost admin-btn-sm" type="submit">Apply filters</button>
         </form>
-        ${state.adminCourseCouponLoading ? `<div class="courses-empty"><span class="inline-loader"></span><p>Loading coupons...</p></div>` : state.adminCourseCouponError ? `<p class="form-error">${escapeHtml(state.adminCourseCouponError)}</p>` : coupons.length ? `<div class="table-wrap"><table><thead><tr><th>Preview</th><th>Type / modules</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead><tbody>${coupons.map((coupon) => `<tr><td><code>••••-${escapeHtml(coupon.code_preview)}</code></td><td>${escapeHtml(coupon.coupon_type === "full_course" ? "Full course" : (coupon.module_titles || []).join(", ") || "Modules")}</td><td><span class="status-badge is-${coupon.status === "used" ? "approved" : coupon.status === "unused" ? "pending" : "rejected"}">${escapeHtml(coupon.status)}</span></td><td>${escapeHtml(coupon.batch_name || "—")}</td><td>${escapeHtml(formatReportDateTime(coupon.created_at))}</td><td>${coupon.redeemed_public_user_id ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(coupon.redeemed_public_user_id)}">${escapeHtml(coupon.redeemed_name || "Student")} · ${escapeHtml(coupon.redeemed_public_user_id)}</button><small>${escapeHtml(formatReportDateTime(coupon.redeemed_at))}</small>` : "—"}</td><td>${coupon.status === "unused" ? `<button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-disable-coupon" data-coupon-id="${escapeHtml(coupon.id)}">Disable</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="subtle">No coupons match these filters.</p>`}
+        ${state.adminCourseCouponLoading ? `<div class="courses-empty"><span class="inline-loader"></span><p>Loading coupons...</p></div>` : state.adminCourseCouponError ? `<p class="form-error">${escapeHtml(state.adminCourseCouponError)}</p>` : renderedCoupons.length ? `<div class="table-wrap"><table><thead><tr><th>Preview</th><th>Type / modules</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead><tbody>${renderedCoupons.map((coupon) => `<tr><td><code>••••-${escapeHtml(coupon.code_preview)}</code></td><td>${escapeHtml(coupon.coupon_type === "full_course" ? "Full course" : (coupon.module_titles || []).join(", ") || "Modules")}</td><td><span class="status-badge is-${coupon.status === "used" ? "approved" : coupon.status === "unused" ? "pending" : "rejected"}">${escapeHtml(coupon.status)}</span></td><td>${escapeHtml(coupon.batch_name || "—")}</td><td>${escapeHtml(formatReportDateTime(coupon.created_at))}</td><td>${coupon.redeemed_public_user_id ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(coupon.redeemed_public_user_id)}">${escapeHtml(coupon.redeemed_name || "Student")} · ${escapeHtml(coupon.redeemed_public_user_id)}</button><small>${escapeHtml(formatReportDateTime(coupon.redeemed_at))}</small>` : "—"}</td><td>${coupon.status === "unused" ? renderAdminRowMenu({ id: `coupon-${coupon.id}`, label: "More actions", items: [{ label: "Disable", attrs: `data-action="admin-disable-coupon" data-coupon-id="${escapeHtml(coupon.id)}"`, danger: true }] }) : ""}</td></tr>`).join("")}</tbody></table></div>${renderAdminCourseShowMoreButton(hiddenCouponCount, couponsLimitKey)}` : `<p class="subtle">No coupons match these filters.</p>`}
       </section>
 
       <div class="grid-2 admin-coupon-insights"><section class="card"><h3>Redemptions over time</h3>${(stats.redemptions_over_time || []).length ? `<ul>${stats.redemptions_over_time.map((item) => `<li><span>${escapeHtml(item.day)}</span><b>${escapeHtml(item.count)}</b></li>`).join("")}</ul>` : `<p class="subtle">No redemptions yet.</p>`}</section><section class="card"><h3>Most activated modules</h3>${(stats.redemptions_by_module || []).length ? `<ul>${stats.redemptions_by_module.map((item) => `<li><span>${escapeHtml(item.module_title)}</span><b>${escapeHtml(item.redemptions)}</b></li>`).join("")}</ul>` : `<p class="subtle">No module redemptions yet.</p>`}</section></div>
@@ -56984,71 +57019,103 @@ function adminRenderCourseBuilder(courseId) {
   ).length;
   const activePlatformSection = getAdminCoursePlatformSection();
   const showsCourseContextBar = ["builder", "enrollments", "suggestions", "announcements"].includes(activePlatformSection);
-  const sectionCopy = {
-    overview: {
-      title: "Course metadata",
-      description: "Review every course students can see, then edit the selected course details, cover, instructor, status, and enrollment mode.",
-    },
-    builder: {
-      title: "Course Builder",
-      description: "Create new student courses, then build their modules, video lessons, and lesson materials.",
-    },
-    approvals: {
-      title: "Course approvals",
-      description: "Review courses creators submitted from the app before they reach students.",
-    },
-    enrollments: {
-      title: "Enrolled users",
-      description: "Choose a course, review enrolled students, and manually enroll users into that course.",
-    },
-    coupons: {
-      title: "Activation coupons",
-      description: "Generate one-time activation codes and track redemptions for a course.",
-    },
-    suggestions: {
-      title: "Suggestions",
-      description: "Choose which courses appear on the Course Suggestions page and feature important courses first for students.",
-    },
-    announcements: {
-      title: "Announcements",
-      description: "Push course announcements to enrolled students from the selected course.",
-    },
-    requests: {
-      title: "Enrollment requests",
-      description: "Approve or reject student requests so approved courses move into their My Courses page.",
-    },
-    availability: {
-      title: "Course availability",
-      description: "Open or pause the student Courses learning portal without changing MCQ Bank access.",
-    },
-  }[activePlatformSection] || {
-    title: "Courses learning platform",
-    description: "Build modules, lessons, resources, announcements, and requests without changing MCQ question-bank tools.",
-  };
+
+  const refreshPlatformActionHtml = renderAdminIconButton({
+    icon: "refresh",
+    label: "Refresh platform",
+    attrs: `data-action="admin-courses-platform-refresh"`,
+    busy: Boolean(state.adminCoursesPlatformLoading),
+  });
+  const newCourseActionHtml = renderAdminIconButton({
+    icon: "plus",
+    label: "New course",
+    attrs: `data-action="admin-create-platform-course"`,
+    variant: "primary",
+  });
+  const pendingApprovalsCount = (courses || []).filter((course) => String(course?.review_status || "").trim() === "pending").length;
+
+  let headerTitle = "Video Courses";
+  let headerCount = null;
+  let headerActions = refreshPlatformActionHtml;
+  let headerNotes = [];
+  if (activePlatformSection === "overview") {
+    headerTitle = "Catalog";
+    headerCount = courses.length;
+    headerActions = `${refreshPlatformActionHtml}${newCourseActionHtml}`;
+    headerNotes = [
+      "Every course students can see, with modules, lessons, and enrollment counts.",
+      "Select a course below to edit its details, cover, instructor, status, and enrollment mode.",
+    ];
+  } else if (activePlatformSection === "builder") {
+    headerTitle = "Course Builder";
+    headerActions = `${refreshPlatformActionHtml}${newCourseActionHtml}`;
+    headerNotes = ["Create new student courses, then build their modules, video lessons, and lesson materials."];
+  } else if (activePlatformSection === "approvals") {
+    headerTitle = "Course approvals";
+    headerCount = pendingApprovalsCount;
+    headerNotes = [
+      "Creators build courses in the MedBank app and submit them here for review.",
+      "A course stays hidden from students until it is approved and published.",
+    ];
+  } else if (activePlatformSection === "enrollments") {
+    headerTitle = "Enrolled users";
+    headerCount = rows.enrollments.length;
+    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Enroll users", attrs: `data-action="admin-open-course-enrollment-picker"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Choose a course above, then review or search its enrolled students.",
+      "Use Enroll users to manually add students to this course.",
+    ];
+  } else if (activePlatformSection === "coupons") {
+    headerTitle = "Activation coupons";
+    headerCount = state.adminCourseCouponStats ? Number(state.adminCourseCouponStats.total) || 0 : (state.adminCourseCoupons || []).length;
+    headerActions = `${renderAdminIconButton({ icon: "refresh", label: "Refresh coupons", attrs: `data-action="admin-refresh-coupons"`, busy: Boolean(state.adminCourseCouponLoading) })}${renderAdminIconButton({ icon: "download", label: "Export report", attrs: `data-action="admin-export-coupons"` })}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Generate coupons", attrs: `data-action="admin-open-course-coupon-generator"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Generate one-time activation codes and track redemptions for a course.",
+      "Plain codes are shown once — MedBank stores only a SHA-256 hash and a four-character preview.",
+    ];
+  } else if (activePlatformSection === "suggestions") {
+    headerTitle = "Suggestions";
+    headerCount = (state.adminCoursesPlatformSuggestions || []).length;
+    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Add suggestion", attrs: `data-action="admin-open-course-suggestion-editor"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Choose which courses appear on the Course Suggestions page.",
+      "Feature important courses first for students by year and semester.",
+    ];
+  } else if (activePlatformSection === "announcements") {
+    headerTitle = "Announcements";
+    headerCount = (state.adminCoursesPlatformAnnouncements || []).length;
+    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "New announcement", attrs: `data-action="admin-open-course-announcement-composer"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Push announcements to enrolled students from the selected course.",
+      "Browse posts from every course in the feed below.",
+    ];
+  } else if (activePlatformSection === "requests") {
+    headerTitle = "Enrollment requests";
+    headerCount = (state.adminCoursesPlatformRequests || []).length;
+    headerNotes = [
+      "Approve or reject requests so courses move into a student's My Courses page.",
+      "Filter by status and expand a course group to review its requests.",
+    ];
+  } else if (activePlatformSection === "availability") {
+    headerTitle = "Course availability";
+    headerNotes = ["Open or pause the student Courses learning portal without changing MCQ Bank access."];
+  }
+  const coursesPlatformHeaderHtml = renderAdminPageHeader({
+    id: `video-courses-${activePlatformSection}`,
+    title: headerTitle,
+    count: headerCount,
+    actions: headerActions,
+    notes: headerNotes,
+  });
 
   return `
     <section class="card admin-section courses-admin-builder" id="admin-courses-platform-builder">
-      <div class="admin-courses-minimal-head">
-        <div>
-          <h3 style="margin: 0;">${escapeHtml(sectionCopy.title)}</h3>
-          <p class="subtle" style="margin: 0.22rem 0 0;">${escapeHtml(sectionCopy.description)}</p>
-        </div>
-        <div class="stack">
-          <button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.25rem; vertical-align: middle;">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            New course
-          </button>
-          <button class="btn ghost admin-btn-sm ${state.adminCoursesPlatformLoading ? "is-loading" : ""}" type="button" data-action="admin-courses-platform-refresh">${state.adminCoursesPlatformLoading ? "Refreshing..." : "Refresh platform"}</button>
-        </div>
-      </div>
+      ${coursesPlatformHeaderHtml}
 
       ${state.adminCoursesPlatformError ? `<div class="courses-error"><b>Courses platform admin error</b><p>${escapeHtml(state.adminCoursesPlatformError)}</p></div>` : ""}
       ${state.adminCoursesPlatformLoading && !state.adminCoursesPlatformLoadedAt ? `<p class="subtle loading-inline"><span class="inline-loader" aria-hidden="true"></span><span>Loading Courses platform builder...</span></p>` : ""}
-      
-      ${activePlatformSection === "availability" ? renderAdminCoursesComingSoonControl() : !selectedCourse && activePlatformSection !== "builder" && activePlatformSection !== "overview" ? `<div class="admin-course-empty-state"><h4 style="margin: 0;">No platform courses yet</h4><p class="subtle" style="margin: 0;">Create the first course for students.</p><button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">New course</button></div>` : `
+
+      ${activePlatformSection === "availability" ? renderAdminCoursesComingSoonControl() : !selectedCourse && activePlatformSection !== "builder" && activePlatformSection !== "overview" ? renderAdminCoursesEmptyState() : `
         ${showsCourseContextBar && selectedCourse ? renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingRequestCount) : ""}
 
         ${activePlatformSection === "overview" ? `
@@ -57173,10 +57240,10 @@ function adminRenderCourseBuilder(courseId) {
               <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
             </div>
             </form>
-          ` : `<div class="admin-course-empty-state"><h4 style="margin: 0;">No platform courses yet</h4><p class="subtle" style="margin: 0;">Create the first course for students.</p><button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">New course</button></div>`}
+          ` : renderAdminCoursesEmptyState()}
         ` : ""}
 
-        ${activePlatformSection === "suggestions" && selectedCourse ? `${renderAdminGlobalSuggestions()}${adminRenderSuggestionSettings(selectedCourseId)}` : ""}
+        ${activePlatformSection === "suggestions" ? renderAdminGlobalSuggestions() : ""}
 
         ${activePlatformSection === "builder" ? `
           <div class="course-builder-split-layout">
@@ -57199,6 +57266,57 @@ function adminRenderCourseBuilder(courseId) {
       `}
     </section>
   `;
+}
+
+// The coupon/announcement/suggestion "create" forms open as dialogs rendered
+// into adminGlobalOverlay (see renderAdminDialog's contract) rather than inside
+// #admin-courses-platform-builder, so a hovered card's transform or the admin
+// shell's backdrop-filter can never trap their position:fixed panel.
+function renderAdminCoursesPlatformDialogs() {
+  const courses = state.adminCoursesPlatformCourses || [];
+  const selectedCourseId = String(state.adminCourseBuilderCourseId || courses[0]?.id || "").trim();
+  let html = "";
+
+  if (state.adminCourseCouponGeneratorOpen) {
+    const couponCourseId = String(state.adminCourseCouponCourseId || selectedCourseId || courses[0]?.id || "").trim();
+    html += renderAdminDialog({
+      id: "course-coupon-generator",
+      title: "Generate activation coupons",
+      closeAction: "admin-close-course-coupon-generator",
+      body: renderAdminCourseCouponGeneratorForm(courses, couponCourseId),
+      actions: `
+        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-close-course-coupon-generator">Cancel</button>
+        <button class="btn admin-btn-sm" type="submit" form="admin-course-coupon-generate-form">Generate secure coupon${Number(state.adminCourseCouponQuantity) === 1 ? "" : "s"}</button>
+      `,
+    });
+  }
+
+  if (state.adminCourseAnnouncementComposerOpen) {
+    html += renderAdminDialog({
+      id: "course-announcement-composer",
+      title: "New announcement",
+      subtitle: getCoursePlatformCourseTitle(getAdminCourseBuilderCourse(selectedCourseId)),
+      closeAction: "admin-close-course-announcement-composer",
+      body: renderAdminCourseAnnouncementComposerForm(selectedCourseId),
+      actions: `
+        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-close-course-announcement-composer">Cancel</button>
+        <button class="btn admin-btn-sm" type="submit" form="admin-course-announcement-form">Post announcement</button>
+      `,
+    });
+  }
+
+  if (state.adminCourseSuggestionEditorOpen) {
+    html += renderAdminDialog({
+      id: "course-suggestion-editor",
+      title: "Course suggestion",
+      subtitle: getCoursePlatformCourseTitle(getAdminCourseBuilderCourse(selectedCourseId)),
+      closeAction: "admin-close-course-suggestion-editor",
+      body: adminRenderSuggestionSettings(selectedCourseId),
+      actions: `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-close-course-suggestion-editor">Close</button>`,
+    });
+  }
+
+  return html;
 }
 
 function readFormDataObject(form) {
@@ -57227,7 +57345,43 @@ function readFormDataObject(form) {
   return payload;
 }
 
+// The announcement/suggestion forms move into a body-level dialog (see
+// renderAdminCoursesPlatformDialogs), outside #admin-courses-platform-builder,
+// so the generic root-scoped draft-persist listener below never sees their
+// keystrokes. This is wired once (guarded), delegated on appEl, so it survives
+// every dialog open/close without ever being re-attached.
+let adminCoursePlatformDialogFormDraftWired = false;
+function wireAdminCoursePlatformDialogFormDrafts() {
+  if (adminCoursePlatformDialogFormDraftWired) return;
+  adminCoursePlatformDialogFormDraftWired = true;
+  const draftFormIds = new Set(["admin-course-announcement-form", "admin-course-suggestion-form"]);
+  const draftTimers = new WeakMap();
+  const persist = (form) => {
+    if (!form) return;
+    const draftKey = getAdminCourseBuilderDraftKey(form);
+    if (!draftKey) return;
+    if (!state.adminCourseBuilderDrafts) state.adminCourseBuilderDrafts = {};
+    state.adminCourseBuilderDrafts[draftKey] = readFormDataObject(form);
+  };
+  const handle = (event) => {
+    const target = event.target;
+    if (!target) return;
+    const form = target.closest("form");
+    if (!form || !draftFormIds.has(form.id)) return;
+    if (event.type === "input") {
+      window.clearTimeout(draftTimers.get(form));
+      draftTimers.set(form, window.setTimeout(() => persist(form), 140));
+      return;
+    }
+    window.clearTimeout(draftTimers.get(form));
+    persist(form);
+  };
+  appEl.addEventListener("input", handle);
+  appEl.addEventListener("change", handle);
+}
+
 function wireAdminCoursesPlatformBuilder() {
+  wireAdminCoursePlatformDialogFormDrafts();
   const root = document.getElementById("admin-courses-platform-builder");
   if (!root) return;
 
@@ -57398,9 +57552,6 @@ function wireAdminCoursesPlatformBuilder() {
     } else if (id === "admin-course-metadata-form") {
       event.preventDefault();
       runAdminCourseAction("Course metadata saved.", () => adminSaveCourseMetadata(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);
-    } else if (id === "admin-course-suggestion-form") {
-      event.preventDefault();
-      runAdminCourseAction("Course suggestion saved.", () => adminSaveCourseSuggestion(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);
     } else if (id === "admin-course-module-create-form") {
       event.preventDefault();
       runAdminCourseAction("Module created.", async () => {
@@ -57450,9 +57601,6 @@ function wireAdminCoursesPlatformBuilder() {
       } else if (courseResourceId) {
         runAdminCourseAction("Resource added.", () => adminCreateCourseResource(courseResourceId, readFormDataObject(form)), form);
       }
-    } else if (id === "admin-course-coupon-generate-form") {
-      event.preventDefault();
-      runAdminCourseAction("Coupon codes generated. Save the plaintext codes now.", () => generateAdminCourseCoupons(form), form);
     } else if (id === "admin-course-coupon-filter-form") {
       event.preventDefault();
       const data = new FormData(form);
@@ -57464,9 +57612,6 @@ function wireAdminCoursesPlatformBuilder() {
       state.adminCourseCouponRedeemedFrom = String(data.get("redeemed_from") || "");
       state.adminCourseCouponRedeemedTo = String(data.get("redeemed_to") || "");
       runAdminCourseAction("Coupon filters applied.", () => loadAdminCourseCouponData({ courseId: state.adminCourseCouponCourseId }), form);
-    } else if (id === "admin-course-announcement-form") {
-      event.preventDefault();
-      runAdminCourseAction("Announcement posted.", () => adminCreateAnnouncement(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);
     }
   });
 
@@ -57523,21 +57668,8 @@ function wireAdminCoursesPlatformBuilder() {
       state.adminCourseBuilderActiveParentId = "";
       state.skipNextRouteAnimation = true;
       render();
-    } else if (target.id === "admin-coupon-course") {
-      state.adminCourseCouponCourseId = String(target.value || "");
-      state.adminCourseBuilderCourseId = state.adminCourseCouponCourseId;
-      state.adminCourseCouponStats = null;
-      state.adminCourseCoupons = [];
-      state.adminCourseCouponGenerated = [];
-      state.adminCourseCouponModuleIds = [];
-      rerenderAdminCourses();
-    } else if (target.id === "admin-coupon-type") {
-      state.adminCourseCouponType = String(target.value || "full_course");
-      rerenderAdminCourses();
-    } else if (target.name === "module_ids") {
-      state.adminCourseCouponModuleIds = [...root.querySelectorAll("input[name='module_ids']:checked")].map((input) => String(input.value || ""));
     } else if (
-      target.id === "admin-course-table-filter-year" || 
+      target.id === "admin-course-table-filter-year" ||
       target.hasAttribute("data-action") && target.getAttribute("data-action") === "admin-course-table-filter"
     ) {
       state.adminCourseTableFilterYear = String(target.value || "");
@@ -57801,6 +57933,18 @@ function wireAdminCoursesPlatformBuilder() {
           state.adminApproveAllPendingRunning = false;
         }
       });
+    } else if (action === "admin-course-list-show-more") {
+      bumpAdminCourseListRenderLimit(button.getAttribute("data-limit-key") || "");
+      rerenderAdminCourses();
+    } else if (action === "admin-edit-course-suggestion") {
+      const courseId = button.getAttribute("data-course-id") || "";
+      if (isUuidValue(courseId)) {
+        state.adminCourseBuilderCourseId = courseId;
+      }
+      state.adminCourseSuggestionEditorOpen = true;
+      state.skipNextRouteAnimation = true;
+      render();
+      focusIntoAdminDialog("course-suggestion-editor");
     }
   });
 
@@ -57817,6 +57961,95 @@ function wireAdminCoursesPlatformBuilder() {
     state.adminCourseBuilderActiveId = "";
     state.adminCourseBuilderActiveParentId = "";
     rerenderAdminCourses();
+  });
+
+  // The coupon generator, announcement composer, and suggestion editor render
+  // via adminGlobalOverlay (renderAdminCoursesPlatformDialogs), outside `root`,
+  // so their open/close controls and form submissions need their own
+  // appEl-scoped wiring instead of the root-scoped delegation above. These
+  // attach to freshly rendered elements every call, so nothing accumulates.
+  const coursePlatformDialogSpecs = [
+    { dialogId: "course-coupon-generator", openAction: "admin-open-course-coupon-generator", closeAction: "admin-close-course-coupon-generator", openField: "adminCourseCouponGeneratorOpen" },
+    { dialogId: "course-announcement-composer", openAction: "admin-open-course-announcement-composer", closeAction: "admin-close-course-announcement-composer", openField: "adminCourseAnnouncementComposerOpen" },
+    { dialogId: "course-suggestion-editor", openAction: "admin-open-course-suggestion-editor", closeAction: "admin-close-course-suggestion-editor", openField: "adminCourseSuggestionEditorOpen" },
+  ];
+  coursePlatformDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
+    appEl.querySelectorAll(`[data-action='${openAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        state[openField] = true;
+        state.skipNextRouteAnimation = true;
+        render();
+        focusIntoAdminDialog(dialogId);
+      });
+    });
+    appEl.querySelectorAll(`[data-action='${closeAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        state[openField] = false;
+        state.skipNextRouteAnimation = true;
+        render();
+      });
+    });
+  });
+
+  appEl.querySelector("#admin-course-coupon-generate-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    // The dialog's submit button lives outside <form> (associated via
+    // form="..."), so runAdminCourseAction's own button-disabling can't reach
+    // it. It still toggles "is-saving" on the form itself, so reuse that as
+    // the double-submit guard.
+    if (form.classList.contains("is-saving")) return;
+    runAdminCourseAction("Coupon codes generated. Save the plaintext codes now.", async () => {
+      await generateAdminCourseCoupons(form);
+      state.adminCourseCouponGeneratorOpen = false;
+    }, form);
+  });
+  appEl.querySelector("#admin-coupon-course")?.addEventListener("change", (event) => {
+    state.adminCourseCouponCourseId = String(event.target.value || "");
+    state.adminCourseBuilderCourseId = state.adminCourseCouponCourseId;
+    state.adminCourseCouponStats = null;
+    state.adminCourseCoupons = [];
+    state.adminCourseCouponGenerated = [];
+    state.adminCourseCouponModuleIds = [];
+    rerenderAdminCourses();
+  });
+  appEl.querySelector("#admin-coupon-type")?.addEventListener("change", (event) => {
+    state.adminCourseCouponType = String(event.target.value || "full_course");
+    rerenderAdminCourses();
+  });
+  appEl.querySelectorAll("#admin-course-coupon-generate-form input[name='module_ids']").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      state.adminCourseCouponModuleIds = [...appEl.querySelectorAll("#admin-course-coupon-generate-form input[name='module_ids']:checked")].map((input) => String(input.value || ""));
+    });
+  });
+
+  appEl.querySelector("#admin-course-announcement-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    if (form.classList.contains("is-saving")) return;
+    runAdminCourseAction("Announcement posted.", async () => {
+      await adminCreateAnnouncement(state.adminCourseBuilderCourseId, readFormDataObject(form));
+      state.adminCourseAnnouncementComposerOpen = false;
+    }, form);
+  });
+
+  appEl.querySelector("#admin-course-suggestion-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    if (form.classList.contains("is-saving")) return;
+    runAdminCourseAction("Course suggestion saved.", async () => {
+      await adminSaveCourseSuggestion(state.adminCourseBuilderCourseId, readFormDataObject(form));
+      state.adminCourseSuggestionEditorOpen = false;
+    }, form);
+  });
+  // "Delete suggestion" inside adminRenderSuggestionSettings() is part of the
+  // dialog body, so it never reaches root's click delegation above.
+  appEl.querySelector("#admin-dialog-course-suggestion-editor")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-action='admin-delete-course-suggestion']");
+    if (!button) return;
+    const suggestionId = button.getAttribute("data-suggestion-id") || "";
+    if (!window.confirm("Delete this course suggestion?")) return;
+    runAdminCourseAction("Course suggestion deleted.", () => adminDeleteCourseSuggestion(suggestionId));
   });
 }
 
