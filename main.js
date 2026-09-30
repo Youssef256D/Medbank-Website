@@ -384,9 +384,9 @@ const SESSION_BROWSER_STORAGE_PARSE_CHAR_LIMIT = 3_000_000;
 const SESSION_BROWSER_STORAGE_RECENT_SNAPSHOT_LIMIT = 25;
 const ADMIN_USER_RENDER_LIMIT = 80;
 const ADMIN_ENROLLMENT_AUTOSAVE_MS = 900;
-const ADMIN_QUESTION_RENDER_LIMIT = 220;
 const ADMIN_NOTIFICATION_RENDER_CAP = 200; // same ceiling as before the redesign
 const ADMIN_NOTIFICATION_RENDER_PAGE_SIZE = 50;
+const ADMIN_QUESTION_RENDER_PAGE_SIZE = 100;
 const ADMIN_BULK_UI_YIELD_EVERY = 50;
 const PREVIOUS_TEST_ANALYSIS_LIMIT = 240;
 const PREVIOUS_TEST_RENDER_LIMIT = 120;
@@ -505,9 +505,13 @@ const state = {
   adminCourseTopicModalCourse: "",
   adminCourseTopicGroupCreateModalOpen: false,
   adminCourseTopicInlineCreateOpen: false,
+  adminCourseAddDialogOpen: false,
   adminEditorCourse: "",
   adminEditorTopic: "",
   adminQuestionModalOpen: false,
+  adminQuestionsFiltersOpen: false,
+  adminQuestionsFilterKey: "",
+  adminQuestionsVisibleLimit: 0,
   qbankFilters: {
     course: "",
     topics: [],
@@ -31236,114 +31240,137 @@ function renderAdminBulkImportSection(allCourses, options = {}) {
     : "";
   const exportStatus = state.adminQuestionExportStatus === "published" ? "published" : "all";
   const exportRunning = Boolean(state.adminQuestionExportRunning);
+  const bulkImportHeaderHtml = renderAdminPageHeader({
+    id: "bulk-import",
+    title: "Bulk Import",
+    actions: "",
+    notes: [
+      "Import many questions at once from a CSV or JSON file, or by pasting rows directly.",
+      "Any row without its own course/topic uses the default subject and topic chosen in step 1.",
+      "CSV headers: stem, choiceA, choiceB, choiceC, choiceD, choiceE, correct, explanation, course, topic, system, difficulty, status, tags, questionImage, explanationImage.",
+    ],
+  });
 
   return `
     <section class="card admin-section" id="admin-bulk-import-section">
-      <h3 style="margin: 0;">Bulk Import</h3>
-      <p class="subtle">Upload or paste CSV/JSON and import questions by default course/topic.</p>
-      <form id="admin-import-form" style="margin-top: 0.7rem;" autocomplete="off">
-        <div class="form-row">
-          <label>
-            Default course
-            <select name="defaultCourse" id="admin-import-course">
-              ${allCourses
+      ${bulkImportHeaderHtml}
+      <form id="admin-import-form" class="admin-bulk-import-steps" autocomplete="off">
+        <section class="admin-bulk-import-step">
+          <h4><span class="admin-bulk-import-step-num">1</span> Choose subject &amp; topic</h4>
+          <div class="form-row">
+            <label>
+              Default course
+              <select name="defaultCourse" id="admin-import-course">
+                ${allCourses
       .map((course) => `<option value="${escapeHtml(course)}" ${importCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
       .join("")}
-            </select>
-          </label>
-          <label>
-            Default topic
-            <select name="defaultTopic" id="admin-import-topic">
-              ${importTopics
+              </select>
+            </label>
+            <label>
+              Default topic
+              <select name="defaultTopic" id="admin-import-topic">
+                ${importTopics
       .map((topic) => `<option value="${escapeHtml(topic)}" ${importTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
       .join("")}
-            </select>
+              </select>
+            </label>
+          </div>
+          <label class="admin-course-check" style="width: fit-content;">
+            <input type="checkbox" name="importAsDraft" ${importAsDraft ? "checked" : ""} />
+            <span>Save all imported questions as draft (hide from students)</span>
           </label>
-        </div>
-        <label class="admin-course-check" style="width: fit-content;">
-          <input type="checkbox" name="importAsDraft" ${importAsDraft ? "checked" : ""} />
-          <span>Save all imported questions as draft (hide from students)</span>
-        </label>
-        <label>Upload file(s)
-          <input type="file" id="admin-import-file" accept=".csv,.json,text/csv,application/json" multiple />
-        </label>
-        <label>Paste CSV rows or JSON array
-          <textarea id="admin-import-text" name="importText" placeholder='CSV headers example: stem,choiceA,choiceB,choiceC,choiceD,choiceE,correct,explanation,course,topic,system,difficulty,status,tags,questionImage,explanationImage'>${escapeHtml(importDraft)}</textarea>
-        </label>
-        <div class="stack">
-          <button class="btn ${importRunning ? "is-loading" : ""}" type="submit" ${importRunning ? "disabled" : ""}>
-            ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Importing questions...</span>` : "Run bulk import"}
-          </button>
-          <button class="btn ghost ${importRunning ? "is-loading" : ""}" type="button" id="admin-sync-questions-now" ${importRunning ? "disabled" : ""}>
-            ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Syncing cloud data...</span>` : "Sync existing questions to cloud"}
-          </button>
-          <button class="btn ghost" type="button" id="admin-download-template">Download Excel template (.csv)</button>
-        </div>
-      </form>
-      ${importStatus
+        </section>
+
+        <section class="admin-bulk-import-step">
+          <h4><span class="admin-bulk-import-step-num">2</span> Paste or upload</h4>
+          <label>Upload file(s)
+            <input type="file" id="admin-import-file" accept=".csv,.json,text/csv,application/json" multiple />
+          </label>
+          <label>Paste CSV rows or JSON array
+            <textarea id="admin-import-text" name="importText" placeholder='CSV headers example: stem,choiceA,choiceB,choiceC,choiceD,choiceE,correct,explanation,course,topic,system,difficulty,status,tags,questionImage,explanationImage'>${escapeHtml(importDraft)}</textarea>
+          </label>
+          <button class="btn ghost admin-btn-sm" type="button" id="admin-download-template">Download Excel template (.csv)</button>
+        </section>
+
+        <section class="admin-bulk-import-step">
+          <h4><span class="admin-bulk-import-step-num">3</span> Preview &amp; import</h4>
+          <div class="stack">
+            <button class="btn ${importRunning ? "is-loading" : ""}" type="submit" ${importRunning ? "disabled" : ""}>
+              ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Importing questions...</span>` : "Run bulk import"}
+            </button>
+            <button class="btn ghost ${importRunning ? "is-loading" : ""}" type="button" id="admin-sync-questions-now" ${importRunning ? "disabled" : ""}>
+              ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Syncing cloud data...</span>` : "Sync existing questions to cloud"}
+            </button>
+          </div>
+          ${importStatus
       ? `<p class="subtle import-status is-${importStatusTone}" aria-live="polite">${escapeHtml(importStatus)}</p>`
       : ""
     }
-      ${importReport
+          ${importReport
       ? `
-            <div class="admin-import-report card" style="margin-top: 0.7rem;">
-              <p style="margin: 0;"><b>Last import:</b> ${new Date(importReport.createdAt).toLocaleString()}</p>
-              <p class="subtle">Imported ${importReport.added}/${importReport.total} rows. ${importReport.errors.length} error(s).</p>
-              ${importErrorPreview.length
+                <div class="admin-import-report card" style="margin-top: 0.7rem;">
+                  <p style="margin: 0;"><b>Last import:</b> ${new Date(importReport.createdAt).toLocaleString()}</p>
+                  <p class="subtle">Imported ${importReport.added}/${importReport.total} rows. ${importReport.errors.length} error(s).</p>
+                  ${importErrorPreview.length
         ? `
-                    <ol class="admin-import-error-list">
-                      ${importErrorPreview.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}
-                    </ol>
-                    <small class="subtle">Showing first ${importErrorPreview.length} errors.</small>
-                  `
+                        <ol class="admin-import-error-list">
+                          ${importErrorPreview.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}
+                        </ol>
+                        <small class="subtle">Showing first ${importErrorPreview.length} errors.</small>
+                      `
         : `<p class="subtle">No errors in last import.</p>`
       }
-              <div class="stack">
-                <button class="btn ghost admin-btn-sm" type="button" id="admin-download-import-errors" ${importReport.errors.length ? "" : "disabled"}>Download full error report</button>
-                <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-import-report">Clear report</button>
-              </div>
-            </div>
-          `
+                  <div class="stack">
+                    <button class="btn ghost admin-btn-sm" type="button" id="admin-download-import-errors" ${importReport.errors.length ? "" : "disabled"}>Download full error report</button>
+                    <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-import-report">Clear report</button>
+                  </div>
+                </div>
+              `
       : ""
     }
-      <div class="card admin-import-tool-card" id="admin-question-export-card">
-        <div class="admin-import-card-heading">
-          <div>
-            <h4>Export questions to CSV</h4>
-            <p class="subtle">Download a re-importable backup for one MCQ subject or topic.</p>
-          </div>
-        </div>
-        <div class="form-row">
-          <label>
-            MCQ subject
-            <select id="admin-question-export-course" ${exportRunning ? "disabled" : ""}>
-              ${allCourses
+        </section>
+      </form>
+
+      <details class="admin-bulk-import-secondary">
+        <summary>Export questions to CSV</summary>
+        <div class="card admin-import-tool-card" id="admin-question-export-card">
+          <p class="subtle">Download a re-importable backup for one MCQ subject or topic.</p>
+          <div class="form-row">
+            <label>
+              MCQ subject
+              <select id="admin-question-export-course" ${exportRunning ? "disabled" : ""}>
+                ${allCourses
       .map((course) => `<option value="${escapeHtml(course)}" ${exportCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
       .join("")}
-            </select>
-          </label>
-          <label>
-            Topic
-            <select id="admin-question-export-topic" ${exportRunning ? "disabled" : ""}>
-              <option value="">All topics</option>
-              ${exportTopics
+              </select>
+            </label>
+            <label>
+              Topic
+              <select id="admin-question-export-topic" ${exportRunning ? "disabled" : ""}>
+                <option value="">All topics</option>
+                ${exportTopics
       .map((topic) => `<option value="${escapeHtml(topic)}" ${exportTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
       .join("")}
-            </select>
-          </label>
-          <label>
-            Status
-            <select id="admin-question-export-status" ${exportRunning ? "disabled" : ""}>
-              <option value="all" ${exportStatus === "all" ? "selected" : ""}>All statuses</option>
-              <option value="published" ${exportStatus === "published" ? "selected" : ""}>Published only</option>
-            </select>
-          </label>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="admin-question-export-status" ${exportRunning ? "disabled" : ""}>
+                <option value="all" ${exportStatus === "all" ? "selected" : ""}>All statuses</option>
+                <option value="published" ${exportStatus === "published" ? "selected" : ""}>Published only</option>
+              </select>
+            </label>
+          </div>
+          <button class="btn ${exportRunning ? "is-loading" : ""}" type="button" id="admin-question-export-download" ${exportRunning || !exportCourse ? "disabled" : ""}>
+            ${exportRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Preparing CSV...</span>` : "Download CSV"}
+          </button>
         </div>
-        <button class="btn ${exportRunning ? "is-loading" : ""}" type="button" id="admin-question-export-download" ${exportRunning || !exportCourse ? "disabled" : ""}>
-          ${exportRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Preparing CSV...</span>` : "Download CSV"}
-        </button>
-      </div>
-      ${renderAdminImportHistoryCard()}
+      </details>
+
+      <details class="admin-bulk-import-secondary">
+        <summary>Show upload history</summary>
+        ${renderAdminImportHistoryCard()}
+      </details>
     </section>
   `;
 }
@@ -34445,20 +34472,45 @@ function renderAdmin() {
         `
       : "";
 
-    pageContent = `
-      <section class="card admin-section" id="admin-courses-section">
-        <div class="admin-courses-minimal-head">
-          <div>
-            <h3 style="margin: 0;">MCQ Subjects</h3>
-            <p class="subtle" style="margin: 0.22rem 0 0;">MCQ Bank curriculum • Year ${curriculumYear} • Semester ${curriculumSemester}</p>
-          </div>
-          <form id="admin-curriculum-add-form" class="admin-courses-head-add-form" autocomplete="off">
-            <label class="admin-courses-head-add-label">Add new course
+    const subjectsHeaderActions = renderAdminIconButton({
+      icon: "plus",
+      label: "Add MCQ Subject",
+      attrs: `data-action="admin-mcq-subjects-open-add"`,
+      variant: "primary",
+    });
+    const subjectsPageHeaderHtml = renderAdminPageHeader({
+      id: "mcq-subjects",
+      title: "MCQ Subjects",
+      count: filteredCourseEntries.length,
+      actions: subjectsHeaderActions,
+      notes: [
+        `Subjects belong to a Year and Semester of the curriculum — this list shows Year ${curriculumYear} · Semester ${curriculumSemester}.`,
+        "Open a subject to manage its topics, an Ask AI/notebook link, and destructive actions like clearing its questions.",
+      ],
+    });
+    const addCourseDialogHtml = state.adminCourseAddDialogOpen
+      ? renderAdminDialog({
+        id: "mcq-subjects-add",
+        title: "Add MCQ Subject",
+        subtitle: `Adds a course to Year ${curriculumYear} · Semester ${curriculumSemester}.`,
+        closeAction: "admin-mcq-subjects-close-add",
+        body: `
+          <form id="admin-curriculum-add-form" autocomplete="off">
+            <label>Course name
               <input name="newCourseName" placeholder="e.g., New Clinical Module (NCM 999)" required />
             </label>
-            <button class="btn" type="submit">Add new course</button>
           </form>
-        </div>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-mcq-subjects-close-add">Cancel</button>
+          <button class="btn admin-btn-sm" type="submit" form="admin-curriculum-add-form">Add course</button>
+        `,
+      })
+      : "";
+
+    pageContent = `
+      <section class="card admin-section" id="admin-courses-section">
+        ${subjectsPageHeaderHtml}
 
         <div class="admin-courses-minimal-controls" style="margin-top: 0.8rem;">
               <form id="admin-curriculum-filter-form" class="admin-course-toolbar-card" autocomplete="off">
@@ -34496,7 +34548,7 @@ function renderAdmin() {
       </section>
     `;
 
-    adminGlobalOverlay = focusedCourseWorkspace && state.adminCourseTopicModalCourse
+    const courseDetailsModalHtml = focusedCourseWorkspace && state.adminCourseTopicModalCourse
       ? `
           <div class="admin-course-topic-modal admin-course-details-modal">
             <button class="admin-course-topic-modal-backdrop" type="button" data-action="course-topic-manager-close" aria-label="Close course details"></button>
@@ -34518,6 +34570,7 @@ function renderAdmin() {
           </div>
         `
       : "";
+    adminGlobalOverlay = `${addCourseDialogHtml}${courseDetailsModalHtml}`;
   }
 
   if (activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE) {
@@ -34552,7 +34605,13 @@ function renderAdmin() {
     }
     const questionOpsLocked = questionSaveRunning || Boolean(questionDeleteQid) || bulkActionRunning;
     const courseQuestions = questionView.filteredQuestions;
-    const renderedCourseQuestions = courseQuestions.slice(0, ADMIN_QUESTION_RENDER_LIMIT);
+    const questionsFilterKey = `${selectedCourse}::${selectedTopic}`;
+    if (state.adminQuestionsFilterKey !== questionsFilterKey) {
+      state.adminQuestionsFilterKey = questionsFilterKey;
+      state.adminQuestionsVisibleLimit = ADMIN_QUESTION_RENDER_PAGE_SIZE;
+    }
+    const questionsVisibleLimit = Math.max(ADMIN_QUESTION_RENDER_PAGE_SIZE, Number(state.adminQuestionsVisibleLimit) || 0);
+    const renderedCourseQuestions = courseQuestions.slice(0, questionsVisibleLimit);
     const hiddenFilteredQuestionCount = Math.max(0, courseQuestions.length - renderedCourseQuestions.length);
     const visibleQuestionIds = renderedCourseQuestions
       .map((question) => String(question.id || "").trim())
@@ -34587,7 +34646,9 @@ function renderAdmin() {
         }
         const meta = getQbankCourseTopicMeta(question);
         const stem = String(question.stem || "").trim();
-        const stemPreview = stem.length > 160 ? `${stem.slice(0, 157)}...` : stem;
+        const stemPreview = stem.length > 220 ? `${stem.slice(0, 217)}...` : stem;
+        const status = String(question.status || "draft").trim().toLowerCase();
+        const statusLabel = status === "published" ? "Published" : status === "archived" ? "Archived" : "Draft";
         return `
           <tr
             class="${rowClassNames.join(" ")}"
@@ -34615,17 +34676,28 @@ function renderAdmin() {
               </span>
             </td>
             <td>${idx + 1}</td>
-            <td>${escapeHtml(meta.topic)}</td>
-            <td>${escapeHtml(stemPreview || "(No stem)")}</td>
-            <td>${escapeHtml(String(question.correct?.[0] || "A").toUpperCase())}</td>
-            <td>${escapeHtml(String(question.status || "draft"))}</td>
+            <td class="admin-question-stem-cell">
+              <p class="admin-question-stem-preview">${escapeHtml(stemPreview || "(No stem)")}</p>
+              <p class="admin-question-stem-meta">${escapeHtml(meta.course)} · ${escapeHtml(meta.topic)} · Correct: ${escapeHtml(String(question.correct?.[0] || "A").toUpperCase())}</p>
+            </td>
             <td>
-              <div class="stack">
-                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-edit" data-qid="${escapeHtml(questionId)}" ${questionOpsLocked || !questionId ? "disabled" : ""}>Edit</button>
-                <button class="btn danger admin-btn-sm ${isDeleting ? "is-loading" : ""}" type="button" data-action="admin-delete" data-qid="${escapeHtml(questionId)}" ${questionOpsLocked || !questionId ? "disabled" : ""}>
-                  ${isDeleting ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete"}
-                </button>
-              </div>
+              <span class="admin-question-status is-${status}">${escapeHtml(statusLabel)}</span>
+            </td>
+            <td class="admin-question-actions-cell">
+              ${renderAdminRowMenu({
+          id: `question-${questionId || idx}`,
+          label: `Actions for question ${idx + 1}`,
+          disabled: questionOpsLocked || !questionId,
+          items: [
+            { label: "Edit", attrs: `data-action="admin-edit" data-qid="${escapeHtml(questionId)}"` },
+            {
+              label: isDeleting ? "Deleting..." : "Delete",
+              attrs: `data-action="admin-delete" data-qid="${escapeHtml(questionId)}"`,
+              danger: true,
+              disabled: isDeleting,
+            },
+          ],
+        })}
             </td>
           </tr>
         `;
@@ -34649,93 +34721,123 @@ function renderAdmin() {
     });
     const answerKey = String(editing?.correct?.[0] || "A").toUpperCase();
     const saveQuestionLabel = editing ? "Save changes" : "Save question";
+    const activeQuestionFilterCount = (selectedTopic ? 1 : 0);
+    const questionsHeaderActions = `
+      <span class="admin-icon-btn-wrap">
+        ${renderAdminIconButton({
+      icon: "filter",
+      label: activeQuestionFilterCount ? `Filters (${activeQuestionFilterCount} active)` : "Filters",
+      attrs: `data-action="admin-questions-open-filters" aria-haspopup="dialog"`,
+      variant: activeQuestionFilterCount ? "is-active" : "",
+    })}
+        ${activeQuestionFilterCount ? `<span class="admin-icon-btn-badge">${activeQuestionFilterCount}</span>` : ""}
+      </span>
+      ${renderAdminIconButton({
+      icon: "plus",
+      label: "New question",
+      attrs: `data-action="admin-open-editor-new"${questionOpsLocked ? " disabled" : ""}`,
+      variant: "primary",
+    })}
+    `;
+    const questionsPageHeaderHtml = renderAdminPageHeader({
+      id: "questions",
+      title: "Questions",
+      count: courseQuestions.length,
+      actions: questionsHeaderActions,
+      notes: [
+        "Filter by MCQ subject and topic, then edit the stem, choices, and explanation for a question.",
+        "Select rows with the checkboxes to draft, publish, or delete several questions at once.",
+        "Drag and drop rows (or swipe up/down on touch) to reorder them.",
+      ],
+    });
+    const questionsFiltersDialogHtml = state.adminQuestionsFiltersOpen
+      ? renderAdminDialog({
+        id: "questions-filters",
+        title: "Filters",
+        subtitle: "Choose the MCQ subject and topic to work on.",
+        closeAction: "admin-questions-close-filters",
+        body: `
+          <form id="admin-question-filter-form" autocomplete="off">
+            <div class="form-row">
+              <label>Course
+                <select id="admin-filter-course" name="course">
+                  ${allCourses
+            .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+            .join("")}
+                </select>
+              </label>
+              <label>Topic
+                <select id="admin-filter-topic" name="topic">
+                  <option value="" ${selectedTopic ? "" : "selected"}>All topics</option>
+                  ${selectedCourseTopics
+            .map((topic) => `<option value="${escapeHtml(topic)}" ${selectedTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
+            .join("")}
+                </select>
+              </label>
+            </div>
+          </form>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-filters">Reset</button>
+          <button class="btn admin-btn-sm" type="submit" form="admin-question-filter-form">Apply filter</button>
+        `,
+      })
+      : "";
 
     pageContent = `
       <section class="card admin-section" id="admin-questions-section">
-        <div class="flex-between">
-          <div>
-            <h3 style="margin: 0;">Course Question Editor</h3>
-            <p class="subtle">Open each course, see all uploaded questions, and edit stem, answers, and explanation.</p>
-          </div>
-          <div class="stack" style="align-items: flex-end; gap: 0.35rem;">
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-editor-new" ${questionOpsLocked ? "disabled" : ""}>New question</button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-courses">Back to courses</button>
-          </div>
-        </div>
-        <form id="admin-question-filter-form" style="margin-top: 0.7rem;" autocomplete="off">
-          <div class="form-row">
-            <label>Course
-              <select id="admin-filter-course" name="course">
-                ${allCourses
-        .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
-        .join("")}
-              </select>
-            </label>
-            <label>Topic
-              <select id="admin-filter-topic" name="topic">
-                <option value="" ${selectedTopic ? "" : "selected"}>All topics</option>
-                ${selectedCourseTopics
-        .map((topic) => `<option value="${escapeHtml(topic)}" ${selectedTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
-        .join("")}
-              </select>
-            </label>
-          </div>
-          <div class="stack">
-            <button class="btn ghost admin-btn-sm" type="submit">Apply filter</button>
-            <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-filters">Reset</button>
-          </div>
-        </form>
-        <div class="admin-question-bulk-bar" style="margin-top: 0.74rem;">
-          <label class="admin-question-select-all">
-            <input
-              type="checkbox"
-              name="selectAllQuestionsVisible"
-              data-action="admin-select-all-questions"
-              aria-label="Select all questions in this list"
-              data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
-              ${allVisibleSelected ? "checked" : ""}
-              ${questionOpsLocked || !visibleQuestionIds.length ? "disabled" : ""}
-            />
-            <span>Select all in this view</span>
-          </label>
-          <p class="admin-question-selection-count">Selected: <b>${selectedQuestionCount}</b></p>
-          <div class="stack">
-            <button class="btn ghost admin-btn-sm ${isBulkDrafting ? "is-loading" : ""}" type="button" data-action="admin-bulk-draft" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
-              ${isBulkDrafting ? `<span class="inline-loader" aria-hidden="true"></span><span>Drafting...</span>` : "Draft selected"}
-            </button>
-            <button class="btn ghost admin-btn-sm ${isBulkPublishing ? "is-loading" : ""}" type="button" data-action="admin-bulk-publish" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
-              ${isBulkPublishing ? `<span class="inline-loader" aria-hidden="true"></span><span>Publishing...</span>` : "Publish selected"}
-            </button>
-            <button class="btn danger admin-btn-sm ${isBulkDeleting ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
-              ${isBulkDeleting ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete selected"}
-            </button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-selection" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>Clear selection</button>
-          </div>
-        </div>
-        ${hiddenFilteredQuestionCount
-        ? `<p class="subtle" style="margin: 0.7rem 0 0;">Showing the first ${ADMIN_QUESTION_RENDER_LIMIT} questions in this filter to keep editing responsive. Choose a topic to narrow the list.</p>`
+        ${questionsPageHeaderHtml}
+        ${selectedQuestionCount
+        ? `<div class="admin-question-bulk-bar" style="margin-top: 0.74rem;">
+            <p class="admin-question-selection-count">Selected: <b>${selectedQuestionCount}</b></p>
+            <div class="stack">
+              <button class="btn ghost admin-btn-sm ${isBulkDrafting ? "is-loading" : ""}" type="button" data-action="admin-bulk-draft" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+                ${isBulkDrafting ? `<span class="inline-loader" aria-hidden="true"></span><span>Drafting...</span>` : "Draft selected"}
+              </button>
+              <button class="btn ghost admin-btn-sm ${isBulkPublishing ? "is-loading" : ""}" type="button" data-action="admin-bulk-publish" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+                ${isBulkPublishing ? `<span class="inline-loader" aria-hidden="true"></span><span>Publishing...</span>` : "Publish selected"}
+              </button>
+              <button class="btn danger admin-btn-sm ${isBulkDeleting ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+                ${isBulkDeleting ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete selected"}
+              </button>
+              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-selection" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>Clear selection</button>
+            </div>
+          </div>`
         : ""
       }
-        <p class="subtle admin-question-reorder-hint">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>
-        <div class="table-wrap" style="margin-top: 0.9rem;">
+        <p class="subtle admin-question-reorder-hint" style="margin-top: 0.7rem;">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>
+        <div class="table-wrap" style="margin-top: 0.6rem;">
           <table>
             <thead>
               <tr>
-                <th class="admin-question-select-cell">Select</th>
+                <th class="admin-question-select-cell">
+                  <input
+                    type="checkbox"
+                    name="selectAllQuestionsVisible"
+                    data-action="admin-select-all-questions"
+                    aria-label="Select all questions in this list"
+                    title="Select all questions in this list"
+                    data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
+                    ${allVisibleSelected ? "checked" : ""}
+                    ${questionOpsLocked || !visibleQuestionIds.length ? "disabled" : ""}
+                  />
+                </th>
                 <th class="admin-question-order-cell">Move</th>
                 <th>#</th>
-                <th>Topic</th>
                 <th>Question</th>
-                <th>Correct</th>
                 <th>Status</th>
-                <th>Actions</th>
+                <th><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              ${questionRows || `<tr><td colspan="8" class="subtle">No questions found for this course/topic.</td></tr>`}
+              ${questionRows || `<tr><td colspan="6" class="subtle">No questions found for this course/topic.</td></tr>`}
             </tbody>
           </table>
         </div>
+        ${hiddenFilteredQuestionCount
+        ? `<p class="admin-question-show-more"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-questions-show-more">Show more (${hiddenFilteredQuestionCount})</button></p>`
+        : ""
+      }
       </section>
 
       ${state.adminQuestionModalOpen
@@ -34854,6 +34956,7 @@ function renderAdmin() {
         : ""
       }
     `;
+    adminGlobalOverlay = questionsFiltersDialogHtml;
   }
 
   if (activeAdminPage === "bulk-import") {
@@ -35644,14 +35747,13 @@ function renderAdminCourseTopicControls(course) {
                         >
                           Save
                         </button>
-                        <button
-                          class="btn danger admin-btn-sm"
-                          type="button"
-                          data-action="course-topic-remove"
-                          data-topic-index="${topicIdx}"
-                        >
-                          Remove
-                        </button>
+                        ${renderAdminRowMenu({
+          id: `course-topic-${topicIdx}`,
+          label: `More actions for topic ${topicIdx + 1}`,
+          items: [
+            { label: "Remove topic", attrs: `data-action="course-topic-remove" data-topic-index="${topicIdx}"`, danger: true },
+          ],
+        })}
                       </div>
                     </td>
                   </tr>
@@ -37085,6 +37187,7 @@ function wireAdmin() {
     applyCurriculumUpdate(nextCurriculum);
     state.adminCourseSearch = "";
     state.adminCourseFocus = newCourseName;
+    state.adminCourseAddDialogOpen = false;
     toast("Course added.");
     state.skipNextRouteAnimation = true;
     render();
@@ -37574,18 +37677,21 @@ function wireAdmin() {
   });
   wireAdminCoursesPlatformBuilder();
 
-  // Users page dialogs (Filters, Add user, Approval settings): each is a
-  // renderAdminDialog() driven by one state boolean, so open/close is just
-  // flipping that flag and re-rendering. Content itself (draft, filters,
-  // counts) is derived from state the same way it always was, so a re-render
-  // while a dialog is open (e.g. the 30s admin poll) reopens it unchanged.
-  const adminUsersDialogSpecs = [
+  // Simple admin dialogs (Users Filters/Add user/Approval settings, MCQ
+  // Subjects Add course, Questions Filters): each is a renderAdminDialog()
+  // driven by one state boolean, so open/close is just flipping that flag and
+  // re-rendering. Content itself (draft, filters, counts) is derived from
+  // state the same way it always was, so a re-render while a dialog is open
+  // (e.g. the 30s admin poll) reopens it unchanged.
+  const adminSimpleDialogSpecs = [
     { dialogId: "users-filters", openAction: "admin-users-open-filters", closeAction: "admin-users-close-filters", openField: "adminUsersFiltersOpen" },
     { dialogId: "users-add-user", openAction: "admin-users-open-add-user", closeAction: "admin-users-close-add-user", openField: "adminAddUserPanelOpen" },
     { dialogId: "users-settings", openAction: "admin-users-open-settings", closeAction: "admin-users-close-settings", openField: "adminUsersSettingsOpen" },
     { dialogId: "notification-compose", openAction: "admin-notifications-open-compose", closeAction: "admin-notifications-close-compose", openField: "adminNotificationComposeOpen" },
+    { dialogId: "mcq-subjects-add", openAction: "admin-mcq-subjects-open-add", closeAction: "admin-mcq-subjects-close-add", openField: "adminCourseAddDialogOpen" },
+    { dialogId: "questions-filters", openAction: "admin-questions-open-filters", closeAction: "admin-questions-close-filters", openField: "adminQuestionsFiltersOpen" },
   ];
-  adminUsersDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
+  adminSimpleDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
     appEl.querySelectorAll(`[data-action='${openAction}']`).forEach((button) => {
       button.addEventListener("click", () => {
         adminUsersDialogReturnFocusSelector = `[data-action='${openAction}']`;
@@ -39597,6 +39703,7 @@ function wireAdmin() {
     state.adminFilters.course = String(data.get("course") || "");
     state.adminFilters.topic = String(data.get("topic") || "");
     state.adminSelectedQuestionIds = [];
+    state.adminQuestionsFiltersOpen = false;
     render();
   });
 
@@ -39609,6 +39716,13 @@ function wireAdmin() {
   adminClearFilters?.addEventListener("click", () => {
     state.adminFilters = { course: "", topic: "" };
     state.adminSelectedQuestionIds = [];
+    state.adminQuestionsFiltersOpen = false;
+    render();
+  });
+
+  appEl.querySelector("[data-action='admin-questions-show-more']")?.addEventListener("click", () => {
+    state.adminQuestionsVisibleLimit = (Number(state.adminQuestionsVisibleLimit) || ADMIN_QUESTION_RENDER_PAGE_SIZE) + ADMIN_QUESTION_RENDER_PAGE_SIZE;
+    state.skipNextRouteAnimation = true;
     render();
   });
 
