@@ -10,6 +10,7 @@ hosted Supabase is the source of truth.
 ## [Unreleased]
 
 ### 2026-09-30 — Admin pages: no more boxes inside boxes
+- Shipped as `2026-09-30.10`.
 - Inside every admin page, groups are now separated by spacing and a thin
   line instead of nested bordered boxes; lists are plain rows.
 - **MCQ Subjects**: Year, Semester and search sit in one row; subjects are a

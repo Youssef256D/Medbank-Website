@@ -191,7 +191,7 @@ can reactivate them.
 
 ### 2026-09-30 — Admin pages: one box level (flatten pass)
 Frontend only; no schema, RLS, auth or access change. Static cache bust:
-`2026-09-30.10-local` (drop `-local` before shipping). Spec:
+`2026-09-30.10` (shipped to `main` 2026-09-30). Spec:
 `docs/admin-ui-style-guide.md` (rules F1–F6).
 
 1. **One CSS block, scoped to `.admin-main`**, appended at the end of
