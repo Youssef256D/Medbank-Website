@@ -385,6 +385,8 @@ const SESSION_BROWSER_STORAGE_RECENT_SNAPSHOT_LIMIT = 25;
 const ADMIN_USER_RENDER_LIMIT = 80;
 const ADMIN_ENROLLMENT_AUTOSAVE_MS = 900;
 const ADMIN_QUESTION_RENDER_LIMIT = 220;
+const ADMIN_NOTIFICATION_RENDER_CAP = 200; // same ceiling as before the redesign
+const ADMIN_NOTIFICATION_RENDER_PAGE_SIZE = 50;
 const ADMIN_BULK_UI_YIELD_EVERY = 50;
 const PREVIOUS_TEST_ANALYSIS_LIMIT = 240;
 const PREVIOUS_TEST_RENDER_LIMIT = 120;
@@ -714,6 +716,8 @@ const state = {
   adminNotificationTitle: "",
   adminNotificationBody: "",
   adminNotificationSending: false,
+  adminNotificationComposeOpen: false,
+  adminNotificationsVisibleCount: ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
   studentDataRefreshing: false,
   studentDataLastSyncAt: 0,
   studentDataLastFullSyncAt: 0,
@@ -33115,7 +33119,7 @@ function renderAdminPopupsSection() {
     .map((course) => [course.id, getCoursePlatformCourseTitle(course)]);
   if (draft?.target_video_course_id && !courses.some(([id]) => id === draft.target_video_course_id)) courses.push([draft.target_video_course_id, "Previously selected course (unavailable)"]);
   return `<section class="card admin-section" id="admin-popups-section">
-    <div class="flex-between"><div><h3>Pop-ups</h3><p class="subtle">Full-screen campaigns for the MedBank mobile app.</p></div><div class="admin-popup-actions">
+    <div class="flex-between"><div class="admin-popup-actions">
     <button type="button" class="btn ghost" data-popup-refresh ${state.adminPopupsLoading || state.adminPopupSaving ? "disabled" : ""}>${state.adminPopupsLoading ? "Loading…" : "Refresh"}</button>
     <button type="button" class="btn" data-popup-new ${blocked ? "disabled" : ""}>New campaign</button></div></div>
     ${!utils ? '<p role="status">Pop-up tools could not load. Reload this page to enable editing.</p>' : ""}
@@ -34899,8 +34903,14 @@ function renderAdmin() {
       .filter((course) => course?.is_active !== false && course?.is_published !== false);
     const targetVideoCourseId = String(state.adminNotificationTargetVideoCourseId || "").trim();
     const notificationSending = Boolean(state.adminNotificationSending);
-    const notificationRows = getNotifications()
-      .slice(0, 200)
+    const allNotifications = getNotifications();
+    const notificationVisibleCount = Math.min(
+      Math.max(ADMIN_NOTIFICATION_RENDER_PAGE_SIZE, Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE),
+      ADMIN_NOTIFICATION_RENDER_CAP,
+    );
+    const notificationsToRender = allNotifications.slice(0, notificationVisibleCount);
+    const notificationsRemaining = Math.min(allNotifications.length, ADMIN_NOTIFICATION_RENDER_CAP) - notificationsToRender.length;
+    const notificationRows = notificationsToRender
       .map((notification) => {
         const targetLabel = getNotificationTargetLabel(notification, users);
         const senderLabel = String(notification.createdByName || "Admin").trim() || "Admin";
@@ -34921,19 +34931,7 @@ function renderAdmin() {
       })
       .join("");
 
-    pageContent = `
-      <section class="card admin-section" id="admin-notifications-section">
-        <div class="flex-between">
-          <div>
-            <h3 style="margin: 0;">Notifications</h3>
-            <p class="subtle">Send in-app and device push notifications to all users, one user, or students by academic year.</p>
-          </div>
-          <div class="stack" style="align-items: flex-end;">
-            <p class="subtle" style="margin: 0;">Last sync: <b>${state.adminDataLastSyncAt ? new Date(state.adminDataLastSyncAt).toLocaleTimeString() : "Not yet"}</b></p>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-notifications" ${notificationSending ? "disabled" : ""}>Refresh list</button>
-          </div>
-        </div>
-
+    const notificationComposeFormHtml = `
         <form id="admin-notification-form" autocomplete="off">
           <div class="form-row admin-notification-target-row">
             <label class="admin-notification-target-type-field ${targetType === "year" ? "" : "is-full-width"}" id="admin-notification-target-type-field-wrap">Audience
@@ -35050,6 +35048,33 @@ function renderAdmin() {
             </button>
           </div>
         </form>
+    `;
+
+    const notificationsHeaderActions = `${renderAdminIconButton({
+      icon: "refresh",
+      label: "Refresh list",
+      attrs: `data-action="admin-refresh-notifications"${notificationSending ? " disabled" : ""}`,
+    })}${renderAdminIconButton({
+      icon: "plus",
+      label: "New notification",
+      attrs: `data-action="admin-notifications-open-compose"`,
+      variant: "primary",
+    })}`;
+
+    const notificationsPageHeader = renderAdminPageHeader({
+      id: "notifications",
+      title: "Notifications",
+      count: notificationsToRender.length,
+      actions: notificationsHeaderActions,
+      notes: [
+        "Send in-app and device push notifications to all users, one user, or students by academic year.",
+        "Choose what opens when a student taps the notification, including a specific MCQ Subject, topic, or Video Course.",
+      ],
+    });
+
+    pageContent = `
+      <section class="card admin-section" id="admin-notifications-section">
+        ${notificationsPageHeader}
 
         <div class="table-wrap" style="margin-top: 0.9rem;">
           <table>
@@ -35068,8 +35093,23 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
+        ${notificationsRemaining > 0 ? `
+          <div class="admin-list-show-more">
+            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-notifications-show-more">Show more (${notificationsRemaining})</button>
+          </div>
+        ` : ""}
       </section>
     `;
+
+    if (state.adminNotificationComposeOpen) {
+      adminGlobalOverlay = renderAdminDialog({
+        id: "notification-compose",
+        title: "New notification",
+        subtitle: "Choose an audience, a destination, and a message.",
+        closeAction: "admin-notifications-close-compose",
+        body: notificationComposeFormHtml,
+      });
+    }
   }
 
   if (activeAdminPage === "site-access") {
@@ -35207,7 +35247,13 @@ function renderAdmin() {
   }
 
   if (activeAdminPage === "popups") {
-    pageContent = renderAdminPopupsSection();
+    const popupsPageHeader = renderAdminPageHeader({
+      id: "popups",
+      title: "Pop-ups",
+      count: (state.adminPopups || []).length,
+      notes: ["Full-screen campaigns for the MedBank mobile app."],
+    });
+    pageContent = `${popupsPageHeader}${renderAdminPopupsSection()}`;
   }
 
   if (activeAdminPage === "universities") {
@@ -35649,6 +35695,10 @@ function applyAdminPageTransition(previousPage, nextPage) {
   }
   if (nextPage !== "logs") {
     state.adminLogsVisibleCount = 100;
+  }
+  if (nextPage !== "notifications") {
+    state.adminNotificationComposeOpen = false;
+    state.adminNotificationsVisibleCount = ADMIN_NOTIFICATION_RENDER_PAGE_SIZE;
   }
   if (nextPage === "activity") {
     refreshAdminPresenceSnapshot({ force: true })
@@ -36783,6 +36833,15 @@ function wireAdmin() {
       render();
     });
 
+    appEl.querySelector("[data-action='admin-notifications-show-more']")?.addEventListener("click", () => {
+      state.adminNotificationsVisibleCount = Math.min(
+        (Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE) + ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+        ADMIN_NOTIFICATION_RENDER_CAP,
+      );
+      state.skipNextRouteAnimation = true;
+      render();
+    });
+
     notificationForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (state.adminNotificationSending) {
@@ -36930,6 +36989,7 @@ function wireAdmin() {
       state.adminNotificationTargetVideoCourseId = "";
       state.adminNotificationTitle = "";
       state.adminNotificationBody = "";
+      state.adminNotificationComposeOpen = false;
       state.adminDataLastSyncAt = Date.now();
       state.skipNextRouteAnimation = true;
       render();
@@ -37523,6 +37583,7 @@ function wireAdmin() {
     { dialogId: "users-filters", openAction: "admin-users-open-filters", closeAction: "admin-users-close-filters", openField: "adminUsersFiltersOpen" },
     { dialogId: "users-add-user", openAction: "admin-users-open-add-user", closeAction: "admin-users-close-add-user", openField: "adminAddUserPanelOpen" },
     { dialogId: "users-settings", openAction: "admin-users-open-settings", closeAction: "admin-users-close-settings", openField: "adminUsersSettingsOpen" },
+    { dialogId: "notification-compose", openAction: "admin-notifications-open-compose", closeAction: "admin-notifications-close-compose", openField: "adminNotificationComposeOpen" },
   ];
   adminUsersDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
     appEl.querySelectorAll(`[data-action='${openAction}']`).forEach((button) => {
@@ -37556,7 +37617,7 @@ function wireAdmin() {
   });
   document.body.classList.toggle(
     "is-admin-dialog-open",
-    Boolean(state.adminUsersFiltersOpen || state.adminAddUserPanelOpen || state.adminUsersSettingsOpen || state.adminUserEditId),
+    Boolean(state.adminUsersFiltersOpen || state.adminAddUserPanelOpen || state.adminUsersSettingsOpen || state.adminUserEditId || state.adminNotificationComposeOpen),
   );
   restoreAdminDialogFocusAfterRender();
 
