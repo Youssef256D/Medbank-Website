@@ -22165,6 +22165,10 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
 }
 @media (max-width: 640px) {
   .admin-logs-show-more .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}
 
 /* Admin Messaging pages */
 .admin-list-show-more {
