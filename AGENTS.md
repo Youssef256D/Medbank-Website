@@ -189,6 +189,88 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-30 — Questions filters on the page; Bulk Import spacing; course code + instructor picker; Users role filter
+Frontend only; no schema, RLS or access change. Static cache bust:
+`2026-09-30.12`.
+
+1. **Questions**: the Course/Topic filter dialog is gone. The same
+   `#admin-question-filter-form` / `#admin-filter-course` /
+   `#admin-filter-topic` now render as an `.admin-flat-toolbar` under the
+   header and **apply on change** (a new subject resets the topic; both clear
+   the question selection). "Reset" (`#admin-clear-filters`) shows only while a
+   topic is set and clears the topic, keeping the subject. The
+   `questions-filters` entry was removed from `adminSimpleDialogSpecs`;
+   `state.adminQuestionsFiltersOpen` is now unused.
+2. **Bulk Import spacing**: CSS only, in the `.admin-main` scope. Each step is a
+   grid with a 1.1rem gap and 1.6rem vertical padding, labels sit 0.45rem
+   above their control, and buttons keep their natural width.
+3. **Video Course codes are generated.** `buildNextAdminCourseCode(year,
+   semester, courses, skip)` returns `VC-Y{year}S{semester}-{NN}`, the lowest
+   number not used in that term (case-insensitive, matching the DB's unique
+   index `platform_courses_course_code_uniq` on `upper(course_code)`).
+   `adminCreatePlatformCourse` ignores any submitted code, inserts with the
+   generated one and, on a 23505 that names `course_code`
+   (`isCourseCodeConflictError`), retries with the next free code (up to 5
+   attempts). The create form shows the code read-only and keeps it in step
+   with Year/Semester. In the two edit forms the code is read-only, but it is
+   still submitted, so saves leave it unchanged. Hosted DB had **0** Video
+   Courses when this was written, so there were no older codes to migrate.
+4. **Instructor = a creator account.** `renderAdminInstructorPicker(name)` +
+   `wireAdminInstructorPicker(el)` (wired in `wireAdminCoursesPlatformBuilder`)
+   replace the free-text Instructor field in the create form and both edit
+   forms. The list comes from `getAdminCreatorOptions()` (users cache + Video
+   Courses profiles, role `creator`, one entry per email) and is searchable by
+   name, email or MedBank ID, with keyboard support. The chosen **name** goes
+   into a hidden `instructor_name` input, so drafts and the existing save path
+   are unchanged. Typed text that is not a pick reverts on blur; an empty
+   field clears the instructor. **It does not set `platform_courses.owner_id`**:
+   that column carries creator edit rights, and changing it from here was left
+   as a separate decision.
+4a. **Users: Role filter** (All roles / Students / Creators / Admins, with
+   counts) in the Filters dialog: `state.adminUserFilterRole`,
+   `normalizeAdminUserRoleFilter`, a removable chip, included in Reset, the
+   filtered CSV export and the active-filter count. The check is written
+   **inline** in `matchesAdminUserFilters`, not as a helper, because
+   `tests/auto-mcq-access.test.js` loads that function alone. Verified with a
+   demo creator: each option shows only that role and the chip clears it.
+5. **Verified** in the preview with stubbed data (2 creators, a course already
+   holding `VC-Y1S1-01`): the preview shows `-02`, follows the year, the list
+   filters and picks by mouse and keyboard, free text reverts, the pick
+   survives a re-render, and a stubbed 23505 on the first insert retried with
+   the next code. No overflow at 375px. Not run against the hosted project.
+   `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`,
+`AGENTS.md`.
+
+### 2026-09-30 — Admin Users: bulk Delete
+Frontend only; no schema, RLS or Edge Function change. Static cache bust:
+`2026-09-30.12` (shipped together with the entry above).
+
+1. **`deleteAdminUserAccount(target)`** (next to `deleteSupabaseAuthUserAsAdmin`)
+   is the single delete path: Supabase Auth via the `admin-delete-user` Edge
+   Function (which also removes the user's `app_state` rows), then the profile
+   row, with the existing queued "pending cloud cleanup" fallback. It has no
+   confirm, toast or flush. The row menu's **Remove** and the new bulk
+   **Delete** both call it, so they cannot diverge; do not re-inline it.
+2. **Bulk bar: Approve · Suspend · Delete · Clear.** Delete
+   (`data-action="admin-bulk-delete-users"`, handled in the
+   `#admin-users-section` delegated listener) acts only on rows that
+   `canBulkSelectAdminUser` allows, so admins and the signed-in account can
+   never be bulk-deleted. It asks the admin to type `DELETE` (case-insensitive)
+   in a `window.prompt`. Cancel or any other text deletes nothing. Accounts are
+   deleted **one at a time** (a parallel burst would hit the Edge Function's
+   rate limit), then one `flushAdminUserAccountSyncNow`, then a summary toast
+   (deleted / pending cleanup / failed with the first failure reason).
+3. Suspend's loading label now checks `adminBulkActionType === "suspend"`
+   instead of `!== "approve"`, so it does not spin during a delete.
+4. **Verified** in the preview as the local demo admin: the admin row is
+   pruned from the selection; Cancel and a wrong word delete nothing; `DELETE`
+   removes both students and clears the bar; row **Remove** still works.
+   Not run against real Supabase accounts. `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-30 — Admin pages: one box level (flatten pass)
 Frontend only; no schema, RLS, auth or access change. Static cache bust:
 `2026-09-30.10` (shipped to `main` 2026-09-30). Spec:

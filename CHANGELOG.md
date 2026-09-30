@@ -9,6 +9,23 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Questions filters, Bulk Import spacing, course code and instructor
+- **Questions**: subject and topic are chosen on the page and apply straight
+  away (no Filters pop-up).
+- **Bulk Import** has more space between fields and steps.
+- **New Video Courses** get their course code automatically
+  (e.g. `VC-Y1S1-01`); it is no longer typed.
+- **Instructor** is chosen from the creator accounts, with search by name,
+  email or MedBank ID.
+- **Users** Filters has a **Role** option (Students / Creators / Admins).
+  Shipped as `2026-09-30.12`.
+
+### 2026-09-30 — Users: delete selected accounts
+- The bulk bar on Admin → Users has a red **Delete** button next to Approve
+  and Suspend. It permanently deletes the selected accounts after you type
+  `DELETE` to confirm. Admin accounts and your own can't be selected, so they
+  can't be deleted this way. Shipped as `2026-09-30.12`.
+
 ### 2026-09-30 — Admin pages: no more boxes inside boxes
 - Shipped as `2026-09-30.10`.
 - Inside every admin page, groups are now separated by spacing and a thin
