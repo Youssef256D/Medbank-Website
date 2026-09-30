@@ -189,7 +189,7 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
-### 2026-09-30 — Questions filters on the page; Bulk Import spacing; course code + instructor picker
+### 2026-09-30 — Questions filters on the page; Bulk Import spacing; course code + instructor picker; Users role filter
 Frontend only; no schema, RLS or access change. Static cache bust:
 `2026-09-30.12`.
 
@@ -226,6 +226,13 @@ Frontend only; no schema, RLS or access change. Static cache bust:
    field clears the instructor. **It does not set `platform_courses.owner_id`**:
    that column carries creator edit rights, and changing it from here was left
    as a separate decision.
+4a. **Users: Role filter** (All roles / Students / Creators / Admins, with
+   counts) in the Filters dialog: `state.adminUserFilterRole`,
+   `normalizeAdminUserRoleFilter`, a removable chip, included in Reset, the
+   filtered CSV export and the active-filter count. The check is written
+   **inline** in `matchesAdminUserFilters`, not as a helper, because
+   `tests/auto-mcq-access.test.js` loads that function alone. Verified with a
+   demo creator: each option shows only that role and the chip clears it.
 5. **Verified** in the preview with stubbed data (2 creators, a course already
    holding `VC-Y1S1-01`): the preview shows `-02`, follows the year, the list
    filters and picks by mouse and keyboard, free text reverts, the pick

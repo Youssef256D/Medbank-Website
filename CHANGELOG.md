@@ -16,7 +16,9 @@ hosted Supabase is the source of truth.
 - **New Video Courses** get their course code automatically
   (e.g. `VC-Y1S1-01`); it is no longer typed.
 - **Instructor** is chosen from the creator accounts, with search by name,
-  email or MedBank ID. Shipped as `2026-09-30.12`.
+  email or MedBank ID.
+- **Users** Filters has a **Role** option (Students / Creators / Admins).
+  Shipped as `2026-09-30.12`.
 
 ### 2026-09-30 — Users: delete selected accounts
 - The bulk bar on Admin → Users has a red **Delete** button next to Approve

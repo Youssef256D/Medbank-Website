@@ -489,6 +489,7 @@ const state = {
   adminUserFilterSemester: "",
   adminUserFilterApproval: "",
   adminUserFilterProvider: "",
+  adminUserFilterRole: "",
   adminAddUserPanelOpen: false,
   adminAddUserDraft: createDefaultAdminAddUserDraft(),
   adminAddUserDraftDirty: false,
@@ -6230,6 +6231,7 @@ function resetAdminUserFilters() {
   state.adminUserFilterSemester = "";
   state.adminUserFilterApproval = "";
   state.adminUserFilterProvider = "";
+  state.adminUserFilterRole = "";
   state.adminUserFilterMcqHeld = false;
   state.adminSelectedUserIds = [];
 }
@@ -6632,6 +6634,13 @@ async function runStudentAutoApprovalSweep() {
 // certain. Treat this as a strong hint for finding accounts, not as proof that
 // someone cannot sign in with a password.
 const ADMIN_USER_PROVIDER_FILTERS = ["google", "email"];
+// Role filter values. Anything else (a stale or hand-edited value) means "all".
+const ADMIN_USER_ROLE_FILTERS = ["student", "creator", "admin"];
+
+function normalizeAdminUserRoleFilter(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ADMIN_USER_ROLE_FILTERS.includes(normalized) ? normalized : "";
+}
 
 function normalizeAdminUserProviderFilter(value) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -6732,6 +6741,10 @@ function matchesAdminUserFilters(account, filters = {}) {
     return false;
   }
   if (!matchesAdminUserProviderFilter(account, filters?.provider)) {
+    return false;
+  }
+  const targetRole = String(filters?.role || "").trim().toLowerCase();
+  if (["student", "creator", "admin"].includes(targetRole) && role !== targetRole) {
     return false;
   }
   if (filters?.mcqHeld === true && !isUserMcqAccessHeld(account)) {
@@ -33823,6 +33836,7 @@ function renderAdmin() {
     const userFilterSemester = normalizeAcademicSemesterOrNull(state.adminUserFilterSemester);
     const userFilterApproval = normalizeAdminUserApprovalFilter(state.adminUserFilterApproval);
     const userFilterProvider = normalizeAdminUserProviderFilter(state.adminUserFilterProvider);
+    const userFilterRole = normalizeAdminUserRoleFilter(state.adminUserFilterRole);
     const userFilterMcqHeld = state.adminUserFilterMcqHeld === true;
     const mcqHeldLocalCount = users.filter(isUserMcqAccessHeld).length;
     const filteredUsers = users.filter((account) => matchesAdminUserFilters(account, {
@@ -33831,8 +33845,14 @@ function renderAdmin() {
       semester: userFilterSemester,
       approval: userFilterApproval,
       provider: userFilterProvider,
+      role: userFilterRole,
       mcqHeld: userFilterMcqHeld,
     }));
+    const roleFilterCounts = users.reduce((acc, entry) => {
+      const entryRole = sanitizeUserRole(entry?.role);
+      acc[entryRole] = (acc[entryRole] || 0) + 1;
+      return acc;
+    }, { student: 0, creator: 0, admin: 0 });
     const providerFilterCounts = users.reduce((acc, entry) => {
       if (getAuthProviderFromUser(entry) === "google") {
         acc.google += 1;
@@ -33865,6 +33885,7 @@ function renderAdmin() {
       && userFilterSemester === null
       && !userFilterApproval
       && !userFilterProvider
+      && !userFilterRole
       && !userFilterMcqHeld;
     const addUserDraft = normalizeAdminAddUserDraft(state.adminAddUserDraft);
     const pendingCount = users.filter((entry) => entry.role === "student" && !isUserAccessApproved(entry)).length;
@@ -33999,6 +34020,7 @@ function renderAdmin() {
       Boolean(userFilterApproval),
       userFilterMcqHeld,
       Boolean(userFilterProvider),
+      Boolean(userFilterRole),
     ].filter(Boolean).length;
     const activeUserFilterChips = [];
     if (userFilterYear !== null) {
@@ -34017,6 +34039,9 @@ function renderAdmin() {
     }
     if (userFilterMcqHeld) {
       activeUserFilterChips.push({ key: "mcqHeld", label: "Waiting for MCQ" });
+    }
+    if (userFilterRole) {
+      activeUserFilterChips.push({ key: "role", label: { student: "Students", creator: "Creators", admin: "Admins" }[userFilterRole] });
     }
     if (userFilterProvider) {
       activeUserFilterChips.push({ key: "provider", label: userFilterProvider === "google" ? "Google" : "Email & password" });
@@ -34130,6 +34155,14 @@ function renderAdmin() {
                 <select id="admin-user-filter-mcq-held" name="mcqHeld">
                   <option value="" ${!userFilterMcqHeld ? "selected" : ""}>All accounts</option>
                   <option value="held" ${userFilterMcqHeld ? "selected" : ""}>Waiting for MCQ (${mcqHeldLocalCount})</option>
+                </select>
+              </label>
+              <label>Role
+                <select id="admin-user-filter-role" name="role">
+                  <option value="" ${!userFilterRole ? "selected" : ""}>All roles</option>
+                  <option value="student" ${userFilterRole === "student" ? "selected" : ""}>Students (${roleFilterCounts.student})</option>
+                  <option value="creator" ${userFilterRole === "creator" ? "selected" : ""}>Creators (${roleFilterCounts.creator})</option>
+                  <option value="admin" ${userFilterRole === "admin" ? "selected" : ""}>Admins (${roleFilterCounts.admin})</option>
                 </select>
               </label>
               <label>Sign-in method
@@ -37763,10 +37796,11 @@ function wireAdmin() {
         semester: normalizeAcademicSemesterOrNull(state.adminUserFilterSemester),
         approval: normalizeAdminUserApprovalFilter(state.adminUserFilterApproval),
         provider: normalizeAdminUserProviderFilter(state.adminUserFilterProvider),
+        role: normalizeAdminUserRoleFilter(state.adminUserFilterRole),
         mcqHeld: state.adminUserFilterMcqHeld === true,
       };
       const filtered = getUsers().filter((account) => matchesAdminUserFilters(account, filters));
-      const isFiltered = Boolean(filters.search || filters.year || filters.semester || filters.approval || filters.provider || filters.mcqHeld);
+      const isFiltered = Boolean(filters.search || filters.year || filters.semester || filters.approval || filters.provider || filters.role || filters.mcqHeld);
       downloadAdminUsersCsv(filtered, isFiltered ? "users-filtered" : "users");
     });
   });
@@ -37790,6 +37824,8 @@ function wireAdmin() {
         state.adminUserFilterMcqHeld = false;
       } else if (filterKey === "provider") {
         state.adminUserFilterProvider = "";
+      } else if (filterKey === "role") {
+        state.adminUserFilterRole = "";
       } else {
         return;
       }
@@ -38058,6 +38094,7 @@ function wireAdmin() {
   const adminUserFilterSemester = document.getElementById("admin-user-filter-semester");
   const adminUserFilterApproval = document.getElementById("admin-user-filter-approval");
   const adminUserFilterProvider = document.getElementById("admin-user-filter-provider");
+  const adminUserFilterRole = document.getElementById("admin-user-filter-role");
   const adminUserFilterMcqHeld = document.getElementById("admin-user-filter-mcq-held");
   const selectAllUsersInput = appEl.querySelector("[data-action='admin-select-all-users']");
   if (selectAllUsersInput instanceof HTMLInputElement) {
@@ -38100,6 +38137,7 @@ function wireAdmin() {
     state.adminUserFilterSemester = String(adminUserFilterSemester?.value || "");
     state.adminUserFilterApproval = normalizeAdminUserApprovalFilter(adminUserFilterApproval?.value);
     state.adminUserFilterProvider = normalizeAdminUserProviderFilter(adminUserFilterProvider?.value);
+    state.adminUserFilterRole = normalizeAdminUserRoleFilter(adminUserFilterRole?.value);
     state.adminUserFilterMcqHeld = adminUserFilterMcqHeld?.value === "held";
     state.skipNextRouteAnimation = true;
     render();
@@ -38108,6 +38146,7 @@ function wireAdmin() {
   adminUserFilterSemester?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterApproval?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterProvider?.addEventListener("change", syncAdminUserFilters);
+  adminUserFilterRole?.addEventListener("change", syncAdminUserFilters);
   adminUserFilterMcqHeld?.addEventListener("change", syncAdminUserFilters);
 
   adminUserSearchInput?.addEventListener("input", () => {
