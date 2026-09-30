@@ -22129,3 +22129,43 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
     min-height: 44px;
   }
 }
+
+/* Admin System pages */
+.admin-logs-show-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.9rem;
+}
+.admin-activity-sync-line {
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+}
+.admin-site-maintenance-preview-details {
+  margin-top: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  background: var(--surface-strong);
+}
+.admin-site-maintenance-preview-details summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--ink);
+}
+.admin-site-maintenance-preview-details[open] summary {
+  margin-bottom: 0.75rem;
+}
+.admin-site-maintenance-preview-details .admin-site-maintenance-preview {
+  margin: 0;
+}
+.admin-agent-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+@media (max-width: 640px) {
+  .admin-logs-show-more .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}

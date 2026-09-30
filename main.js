@@ -672,6 +672,7 @@ const state = {
   adminPresenceError: "",
   adminPresenceLastSyncAt: 0,
   adminActivityReportRunning: false,
+  adminLogsVisibleCount: 100,
   adminPopups: [],
   adminPopupMetrics: {},
   adminPopupsLoading: false,
@@ -31781,6 +31782,26 @@ function renderAdminAgentsSection() {
       .map((entry) => getAdminAgentPermissionLabel(entry.permission_key))
       .join(", ");
     const active = agent.status === "active";
+    const rowMenu = renderAdminRowMenu({
+      id: `agent-${agent.id}`,
+      label: `Actions for ${agent.name}`,
+      items: [
+        {
+          label: hasFullAccess ? "Remove full admin" : "Grant full admin",
+          attrs: `data-action="admin-agent-set-full-access" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}" data-enable="${hasFullAccess ? "false" : "true"}"`,
+          danger: hasFullAccess,
+        },
+        {
+          label: "Rotate token",
+          attrs: `data-action="admin-agent-rotate-token" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}"`,
+        },
+        {
+          label: active ? "Disable" : "Enable",
+          attrs: `data-action="admin-agent-set-status" data-agent-id="${escapeHtml(agent.id)}" data-next-status="${active ? "disabled" : "active"}"`,
+          danger: active,
+        },
+      ],
+    });
     return `
       <tr>
         <td><b>${escapeHtml(agent.name)}</b><small class="subtle admin-agent-detail">${escapeHtml(agent.description || "No description")}</small></td>
@@ -31788,13 +31809,7 @@ function renderAdminAgentsSection() {
         <td><small>${escapeHtml(permissions || "No permissions")}</small></td>
         <td><small>Ends ...${escapeHtml(agent.token_hint || "")}</small></td>
         <td><small>${agent.last_used_at ? escapeHtml(new Date(agent.last_used_at).toLocaleString()) : "Never"}</small></td>
-        <td>
-          <div class="stack">
-            <button class="btn ${hasFullAccess ? "danger" : "ghost"} admin-btn-sm" type="button" data-action="admin-agent-set-full-access" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}" data-enable="${hasFullAccess ? "false" : "true"}">${hasFullAccess ? "Remove full admin" : "Grant full admin"}</button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-agent-rotate-token" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}">Rotate token</button>
-            <button class="btn ${active ? "danger" : "ghost"} admin-btn-sm" type="button" data-action="admin-agent-set-status" data-agent-id="${escapeHtml(agent.id)}" data-next-status="${active ? "disabled" : "active"}">${active ? "Disable" : "Enable"}</button>
-          </div>
-        </td>
+        <td>${rowMenu}</td>
       </tr>
     `;
   }).join("");
@@ -31817,9 +31832,15 @@ function renderAdminAgentsSection() {
         <td><small>${escapeHtml(new Date(request.created_at).toLocaleString())}</small></td>
         <td>
           ${pending ? `
-            <div class="stack">
+            <div class="admin-agent-approval-actions">
               <button class="btn admin-btn-sm" type="button" data-action="admin-agent-approve-request" data-request-id="${escapeHtml(request.id)}">Approve</button>
-              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-agent-reject-request" data-request-id="${escapeHtml(request.id)}">Reject</button>
+              ${renderAdminRowMenu({
+        id: `approval-${request.id}`,
+        label: `Actions for this request`,
+        items: [
+          { label: "Reject", attrs: `data-action="admin-agent-reject-request" data-request-id="${escapeHtml(request.id)}"` },
+        ],
+      })}
             </div>
           ` : "-"}
         </td>
@@ -31837,15 +31858,25 @@ function renderAdminAgentsSection() {
       </tr>
     `;
   }).join("");
+  const agentsHeaderActions = renderAdminIconButton({
+    icon: "refresh",
+    label: state.adminAgentsLoading ? "Refreshing..." : "Refresh",
+    attrs: `data-action="admin-agents-refresh"`,
+    busy: Boolean(state.adminAgentsLoading),
+  });
+  const agentsHeader = renderAdminPageHeader({
+    id: "ai-agents",
+    title: "Hermes Assistant",
+    actions: agentsHeaderActions,
+    notes: [
+      "One permanent administrator connection for Hermes. Set it up once, then rotate its token or disable it when needed.",
+      "Approval requests are actions Hermes wants to take that need a human sign-off before they run.",
+      "Recent activity is a read-only log of what Hermes has already done (latest 40).",
+    ],
+  });
   return `
     <section class="card admin-section admin-agent-section" id="admin-agents-section">
-      <div class="flex-between">
-        <div>
-          <h3 style="margin:0;">Hermes Assistant</h3>
-          <p class="subtle">One permanent administrator connection for Hermes. Set it up once, then rotate its token or disable it when needed.</p>
-        </div>
-        <button class="btn ghost admin-btn-sm ${state.adminAgentsLoading ? "is-loading" : ""}" type="button" data-action="admin-agents-refresh">${state.adminAgentsLoading ? "Refreshing..." : "Refresh"}</button>
-      </div>
+      ${agentsHeader}
       ${state.adminAgentsError ? `<p class="subtle import-status is-error">${escapeHtml(state.adminAgentsError)}</p>` : ""}
       ${tokenPanel}
       ${hasLoadedAssistants && !hasAssistant ? `
@@ -35064,44 +35095,57 @@ function renderAdmin() {
     });
     const updatedLabel = config.updatedAt ? new Date(config.updatedAt).toLocaleString() : "Not yet";
     const updatedByLabel = String(config.updatedByName || "").trim() || "System";
+    const siteAccessHeader = renderAdminPageHeader({
+      id: "site-access",
+      title: "Site Access",
+      notes: [
+        "Closing the site hides it from non-admin users and shows a public message about updates or maintenance instead.",
+        "Admins keep access to the dashboard even while closure mode is active.",
+        "Add specific non-admin accounts as exceptions so they can still get in while the site is closed.",
+        "If you want signed-in students to reload and pick up the closure faster, use <b>Force student refresh</b> from the sidebar after saving.",
+      ],
+    });
     pageContent = `
       <section class="card admin-section" id="admin-site-access-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Temporary Website Closure</h3>
-            <p class="subtle">Close the website for non-admin users and leave a public message about updates or maintenance.</p>
-          </div>
-          <span class="badge ${config.enabled ? "bad" : "good"}">${config.enabled ? "Closed for users" : "Open to users"}</span>
-        </div>
+        ${siteAccessHeader}
 
         <form id="admin-site-maintenance-form" class="admin-site-maintenance-form" autocomplete="off">
-          <label class="toggle-switch-label admin-site-maintenance-toggle">
-            <input name="enabled" type="checkbox" class="toggle-switch-input" ${config.enabled ? "checked" : ""} />
-            <span class="toggle-switch-track" aria-hidden="true">
-              <span class="toggle-switch-thumb"></span>
-            </span>
-            <span class="toggle-switch-text">
-              <b>${config.enabled ? "Website is currently closed for users" : "Leave website open"}</b><br />
-              <span class="subtle">Admins keep access to the dashboard even while closure mode is active.</span>
-            </span>
-          </label>
-
-          <div class="form-row">
-            <label>Public title
-              <input name="title" maxlength="120" autocomplete="off" value="${escapeHtml(config.title)}" required />
-            </label>
-          </div>
-
-          <label>Public message
-            <textarea name="message" rows="6" maxlength="1200" autocomplete="off" required>${escapeHtml(config.message)}</textarea>
-          </label>
-
-          <div class="admin-site-maintenance-exceptions">
-            <div>
-              <h4 style="margin: 0;">Allowed users during closure</h4>
-              <p class="subtle" style="margin: 0.3rem 0 0;">Add specific non-admin accounts that should still be able to enter while the website is closed.</p>
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Website status</h4>
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">${config.enabled ? "Website is currently closed for users" : "Website is open"}</p>
+                <p class="admin-settings-row-desc">${config.enabled ? "Non-admin users see the public message below instead of the app." : "Non-admin users can use the site normally."}</p>
+              </div>
+              <div class="admin-settings-row-control">
+                <label class="toggle-switch-label">
+                  <input name="enabled" type="checkbox" class="toggle-switch-input" aria-label="Close the website for non-admin users" ${config.enabled ? "checked" : ""} />
+                  <span class="toggle-switch-track" aria-hidden="true">
+                    <span class="toggle-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
             </div>
+          </section>
 
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Public message</h4>
+            <div class="form-row">
+              <label>Public title
+                <input name="title" maxlength="120" autocomplete="off" value="${escapeHtml(config.title)}" required />
+              </label>
+            </div>
+            <label>Public message
+              <textarea name="message" rows="6" maxlength="1200" autocomplete="off" required>${escapeHtml(config.message)}</textarea>
+            </label>
+            <div class="admin-site-maintenance-actions">
+              <button class="btn" type="submit">Save site status</button>
+              <button class="btn ghost" type="button" data-action="admin-site-maintenance-reset">Reset default message</button>
+            </div>
+          </section>
+
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Allowed users during closure</h4>
             <div id="admin-site-maintenance-exception-form" class="admin-site-maintenance-exception-form">
               <input type="hidden" name="exceptionUserId" id="admin-site-maintenance-exception-user-id" value="" />
               <label>Search user
@@ -35144,23 +35188,20 @@ function renderAdmin() {
           : '<p class="subtle" style="margin: 0;">No user exceptions added.</p>'
         }
             </div>
-          </div>
-
-          <div class="admin-site-maintenance-actions">
-            <button class="btn" type="submit">Save site status</button>
-            <button class="btn ghost" type="button" data-action="admin-site-maintenance-reset">Reset default message</button>
-          </div>
+          </section>
         </form>
 
-        <div class="admin-site-maintenance-preview">
-          <div class="maintenance-card is-inline-preview">
-            <span class="maintenance-badge">${config.enabled ? "Public preview" : "Preview"}</span>
-            <h4 class="maintenance-title">${escapeHtml(config.title)}</h4>
-            <p class="maintenance-message">${escapeHtml(config.message)}</p>
-            <p class="maintenance-updated">Last saved ${escapeHtml(updatedLabel)} by ${escapeHtml(updatedByLabel)}.</p>
+        <details class="admin-site-maintenance-preview-details">
+          <summary>Preview</summary>
+          <div class="admin-site-maintenance-preview">
+            <div class="maintenance-card is-inline-preview">
+              <span class="maintenance-badge">${config.enabled ? "Public preview" : "Preview"}</span>
+              <h4 class="maintenance-title">${escapeHtml(config.title)}</h4>
+              <p class="maintenance-message">${escapeHtml(config.message)}</p>
+              <p class="maintenance-updated">Last saved ${escapeHtml(updatedLabel)} by ${escapeHtml(updatedByLabel)}.</p>
+            </div>
           </div>
-          <p class="subtle" style="margin: 0;">If you want signed-in students to reload and pick up the closure faster, use <b>Force student refresh</b> from the sidebar after saving.</p>
-        </div>
+        </details>
       </section>
     `;
   }
@@ -35181,7 +35222,11 @@ function renderAdmin() {
   }
 
   if (activeAdminPage === "logs") {
-    const logs = getSystemLogs().slice(0, 800);
+    const allLogs = getSystemLogs();
+    const totalLogsCount = allLogs.length;
+    const visibleLogsCount = Math.min(totalLogsCount, Math.max(100, Number(state.adminLogsVisibleCount) || 100));
+    const logs = allLogs.slice(0, visibleLogsCount);
+    const remainingLogsCount = totalLogsCount - logs.length;
     const logRows = logs
       .map((entry) => {
         const actorLabel = entry.actorName || entry.actorId || "System";
@@ -35208,22 +35253,33 @@ function renderAdmin() {
       })
       .join("");
 
+    const logsHeaderActions = `${renderAdminIconButton({
+      icon: "refresh",
+      label: "Refresh logs",
+      attrs: `data-action="admin-logs-refresh"`,
+    })}${renderAdminRowMenu({
+      id: "logs-actions",
+      label: "Log actions",
+      items: [
+        { label: "Export JSON", attrs: `data-action="admin-export-logs"` },
+        { label: "Clear logs", attrs: `data-action="admin-clear-logs"`, danger: true },
+      ],
+    })}`;
+    const logsHeader = renderAdminPageHeader({
+      id: "logs",
+      title: "System Logs",
+      count: totalLogsCount,
+      actions: logsHeaderActions,
+      notes: [
+        "Readable audit trail of admin-only interactions and system changes.",
+        "Newest entries are shown first; use Show more to load older ones.",
+        "Entries don't carry a severity (error/warning/info), so there's no level filter here.",
+      ],
+    });
+
     pageContent = `
       <section class="card admin-section" id="admin-logs-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">System Logs</h3>
-            <p class="subtle">Readable audit trail of admin-only interactions and system changes.</p>
-          </div>
-          <div class="stack" style="align-items: flex-end;">
-            <p class="subtle" style="margin: 0;">Showing latest <b>${logs.length}</b> record(s)</p>
-            <div class="stack">
-              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-export-logs">Export JSON</button>
-              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-logs-refresh">Refresh</button>
-              <button class="btn danger admin-btn-sm" type="button" data-action="admin-clear-logs">Clear logs</button>
-            </div>
-          </div>
-        </div>
+        ${logsHeader}
         <div class="table-wrap" style="margin-top: 0.9rem;">
           <table class="admin-users-table">
             <thead>
@@ -35241,6 +35297,12 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
+        ${remainingLogsCount > 0
+        ? `<div class="admin-logs-show-more">
+              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-logs-show-more">Show more (${remainingLogsCount} remaining)</button>
+            </div>`
+        : ""
+      }
       </section>
     `;
   }
@@ -35328,26 +35390,33 @@ function renderAdmin() {
       ? new Date(state.adminPresenceLastSyncAt).toLocaleTimeString()
       : "Not yet";
 
+    const activityHeaderActions = `${renderAdminIconButton({
+      icon: "refresh",
+      label: state.adminPresenceLoading ? "Refreshing..." : "Refresh now",
+      attrs: `data-action="refresh-admin-activity"`,
+      busy: Boolean(state.adminPresenceLoading),
+    })}${renderAdminIconButton({
+      icon: "download",
+      label: state.adminActivityReportRunning ? "Preparing report..." : "Download daily report",
+      attrs: `data-action="download-admin-activity-report"`,
+      busy: Boolean(state.adminActivityReportRunning),
+    })}`;
+    const activityHeader = renderAdminPageHeader({
+      id: "activity",
+      title: "Live User Activity",
+      count: `${onlineRows.length} online`,
+      actions: activityHeaderActions,
+      notes: [
+        "Real-time tracking of every signed-in user; this page auto-refreshes every 15 seconds.",
+        "\"Solving\" means the student currently has a test block open.",
+        "Download daily report exports a summary of today's activity as a spreadsheet.",
+      ],
+    });
+
     pageContent = `
       <section class="card admin-section" id="admin-activity-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Live User Activity</h3>
-            <p class="subtle">Real-time tracking of all users. Auto-refreshes every 15 seconds.</p>
-          </div>
-          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.45rem;">
-            <div style="display: flex; align-items: center; gap: 0.6rem;">
-              <span class="subtle" style="font-size: 0.8rem;">Last sync: <b>${lastSyncLabel}</b></span>
-              <button class="btn ghost admin-btn-sm ${state.adminActivityReportRunning ? "is-loading" : ""}" type="button" data-action="download-admin-activity-report" ${state.adminActivityReportRunning ? "disabled" : ""}>
-                ${state.adminActivityReportRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Preparing report...</span>` : "Download daily report"}
-              </button>
-              <button class="btn ghost admin-btn-sm ${state.adminPresenceLoading ? "is-loading" : ""}" type="button" data-action="refresh-admin-activity" ${state.adminPresenceLoading ? "disabled" : ""}>
-                ${state.adminPresenceLoading ? `<span class="inline-loader" aria-hidden="true"></span><span>Refreshing...</span>` : "Refresh now"}
-              </button>
-            </div>
-            <small class="subtle" style="font-size: 0.72rem;">\u25CF Auto-refresh active</small>
-          </div>
-        </div>
+        ${activityHeader}
+        <p class="subtle admin-activity-sync-line">Last sync: <b>${escapeHtml(lastSyncLabel)}</b> \u00B7 \u25CF Auto-refresh active</p>
         <div class="stats-grid" style="margin-top: 0.85rem;">
           <article class="card"><p class="metric">${rows.length}<small>Total tracked</small></p></article>
           <article class="card"><p class="metric">${onlineRows.length}<small>Online now</small></p></article>
@@ -35577,6 +35646,9 @@ function applyAdminPageTransition(previousPage, nextPage) {
   }
   if (nextPage !== "ai-agents") {
     state.adminAgentNewToken = null;
+  }
+  if (nextPage !== "logs") {
+    state.adminLogsVisibleCount = 100;
   }
   if (nextPage === "activity") {
     refreshAdminPresenceSnapshot({ force: true })
@@ -35823,6 +35895,12 @@ function wireAdmin() {
   });
 
   appEl.querySelector("[data-action='admin-logs-refresh']")?.addEventListener("click", () => {
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+
+  appEl.querySelector("[data-action='admin-logs-show-more']")?.addEventListener("click", () => {
+    state.adminLogsVisibleCount = (Number(state.adminLogsVisibleCount) || 100) + 100;
     state.skipNextRouteAnimation = true;
     render();
   });
