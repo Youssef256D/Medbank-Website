@@ -22829,3 +22829,72 @@ body.theme-dark {
     flex: 1 1 8rem;
   }
 }
+
+/* Bulk Import: breathing room (2026-09-30). Each step is a grid with one
+   consistent gap, labels sit a little above their control, and buttons keep
+   their natural width. */
+.admin-main .admin-bulk-import-step {
+  display: grid;
+  gap: 1.1rem;
+  padding: 1.6rem 0;
+}
+.admin-main .admin-bulk-import-step h4 {
+  margin: 0 0 0.2rem;
+}
+.admin-main .admin-bulk-import-step label {
+  display: grid;
+  gap: 0.45rem;
+}
+.admin-main .admin-bulk-import-step .form-row {
+  gap: 1rem 1.25rem;
+  margin: 0;
+}
+.admin-main .admin-bulk-import-step .admin-course-check {
+  display: inline-flex;
+  gap: 0.5rem;
+}
+.admin-main .admin-bulk-import-step > .btn {
+  justify-self: start;
+}
+.admin-main .admin-bulk-import-step textarea {
+  min-height: 7.5rem;
+}
+.admin-main .admin-bulk-import-step .import-status {
+  margin: 0;
+}
+.admin-main .admin-bulk-import-secondary > summary {
+  padding: 1rem 0;
+}
+
+/* Video Course forms: instructor picker (creator accounts) and generated code */
+.admin-instructor-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.admin-instructor-picker-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.admin-instructor-picker .admin-target-user-combobox input {
+  width: 100%;
+}
+.admin-instructor-picker .admin-user-suggestions {
+  background: var(--surface-strong);
+}
+.admin-instructor-picker-empty {
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.admin-course-code-hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.course-builder-form input[readonly] {
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}

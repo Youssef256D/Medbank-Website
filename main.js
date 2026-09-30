@@ -34771,15 +34771,6 @@ function renderAdmin() {
     const saveQuestionLabel = editing ? "Save changes" : "Save question";
     const activeQuestionFilterCount = (selectedTopic ? 1 : 0);
     const questionsHeaderActions = `
-      <span class="admin-icon-btn-wrap">
-        ${renderAdminIconButton({
-      icon: "filter",
-      label: activeQuestionFilterCount ? `Filters (${activeQuestionFilterCount} active)` : "Filters",
-      attrs: `data-action="admin-questions-open-filters" aria-haspopup="dialog"`,
-      variant: activeQuestionFilterCount ? "is-active" : "",
-    })}
-        ${activeQuestionFilterCount ? `<span class="admin-icon-btn-badge">${activeQuestionFilterCount}</span>` : ""}
-      </span>
       ${renderAdminIconButton({
       icon: "plus",
       label: "New question",
@@ -34798,43 +34789,29 @@ function renderAdmin() {
         "Drag and drop rows (or swipe up/down on touch) to reorder them.",
       ],
     });
-    const questionsFiltersDialogHtml = state.adminQuestionsFiltersOpen
-      ? renderAdminDialog({
-        id: "questions-filters",
-        title: "Filters",
-        subtitle: "Choose the MCQ subject and topic to work on.",
-        closeAction: "admin-questions-close-filters",
-        body: `
-          <form id="admin-question-filter-form" autocomplete="off">
-            <div class="form-row">
-              <label>Course
-                <select id="admin-filter-course" name="course">
-                  ${allCourses
-            .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
-            .join("")}
-                </select>
-              </label>
-              <label>Topic
-                <select id="admin-filter-topic" name="topic">
-                  <option value="" ${selectedTopic ? "" : "selected"}>All topics</option>
-                  ${selectedCourseTopics
-            .map((topic) => `<option value="${escapeHtml(topic)}" ${selectedTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
-            .join("")}
-                </select>
-              </label>
-            </div>
-          </form>
-        `,
-        actions: `
-          <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-filters">Reset</button>
-          <button class="btn admin-btn-sm" type="submit" form="admin-question-filter-form">Apply filter</button>
-        `,
-      })
-      : "";
+    // Course/Topic filters sit on the page (they used to be a dialog) and
+    // apply as soon as a select changes; see the change handlers in wireAdmin.
+    const questionsFiltersToolbarHtml = `
+      <form id="admin-question-filter-form" class="admin-flat-toolbar" autocomplete="off">
+        <select id="admin-filter-course" name="course" aria-label="MCQ subject">
+          ${allCourses
+      .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+      .join("")}
+        </select>
+        <select id="admin-filter-topic" name="topic" aria-label="Topic">
+          <option value="" ${selectedTopic ? "" : "selected"}>All topics</option>
+          ${selectedCourseTopics
+      .map((topic) => `<option value="${escapeHtml(topic)}" ${selectedTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
+      .join("")}
+        </select>
+        ${activeQuestionFilterCount ? `<button class="btn ghost admin-btn-sm" type="button" id="admin-clear-filters">Reset</button>` : ""}
+      </form>
+    `;
 
     pageContent = `
       <section class="card admin-section" id="admin-questions-section">
         ${questionsPageHeaderHtml}
+        ${questionsFiltersToolbarHtml}
         ${selectedQuestionCount
         ? `<div class="admin-question-bulk-bar" style="margin-top: 0.74rem;">
             <p class="admin-question-selection-count">Selected: <b>${selectedQuestionCount}</b></p>
@@ -35004,7 +34981,6 @@ function renderAdmin() {
         : ""
       }
     `;
-    adminGlobalOverlay = questionsFiltersDialogHtml;
   }
 
   if (activeAdminPage === "bulk-import") {
@@ -37739,7 +37715,6 @@ function wireAdmin() {
     { dialogId: "users-settings", openAction: "admin-users-open-settings", closeAction: "admin-users-close-settings", openField: "adminUsersSettingsOpen" },
     { dialogId: "notification-compose", openAction: "admin-notifications-open-compose", closeAction: "admin-notifications-close-compose", openField: "adminNotificationComposeOpen" },
     { dialogId: "mcq-subjects-add", openAction: "admin-mcq-subjects-open-add", closeAction: "admin-mcq-subjects-close-add", openField: "adminCourseAddDialogOpen" },
-    { dialogId: "questions-filters", openAction: "admin-questions-open-filters", closeAction: "admin-questions-close-filters", openField: "adminQuestionsFiltersOpen" },
   ];
   adminSimpleDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
     appEl.querySelectorAll(`[data-action='${openAction}']`).forEach((button) => {
@@ -39783,24 +39758,28 @@ function wireAdmin() {
 
   adminFilterForm?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const data = new FormData(adminFilterForm);
-    state.adminFilters.course = String(data.get("course") || "");
-    state.adminFilters.topic = String(data.get("topic") || "");
+  });
+
+  // The filters apply on change. A new subject resets the topic, and the
+  // selection is cleared because it only ever covers visible rows.
+  adminFilterCourse?.addEventListener("change", () => {
+    state.adminFilters.course = String(adminFilterCourse.value || "");
+    state.adminFilters.topic = "";
     state.adminSelectedQuestionIds = [];
-    state.adminQuestionsFiltersOpen = false;
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+  adminFilterTopic?.addEventListener("change", () => {
+    state.adminFilters.topic = String(adminFilterTopic.value || "");
+    state.adminSelectedQuestionIds = [];
+    state.skipNextRouteAnimation = true;
     render();
   });
 
-  adminFilterCourse?.addEventListener("change", () => {
-    const selected = adminFilterCourse.value || "";
-    const topics = selected ? QBANK_COURSE_TOPICS[selected] || [] : [];
-    setSelectOptions(adminFilterTopic, topics, true);
-  });
-
   adminClearFilters?.addEventListener("click", () => {
-    state.adminFilters = { course: "", topic: "" };
+    state.adminFilters = { course: state.adminFilters.course, topic: "" };
     state.adminSelectedQuestionIds = [];
-    state.adminQuestionsFiltersOpen = false;
+    state.skipNextRouteAnimation = true;
     render();
   });
 
@@ -53625,6 +53604,172 @@ function renderAdminCourseVideoUploadField(draftKey, labelText = "Upload video")
   `;
 }
 
+// Video Course codes are generated, never typed: VC-Y{year}S{semester}-{NN},
+// the lowest number not already used in that term. platform_courses has a
+// unique index on upper(course_code), so a code taken by a course created
+// elsewhere in the meantime is caught by the insert and retried (see
+// adminCreatePlatformCourse). `skip` returns the next free code after that many.
+const ADMIN_COURSE_CODE_PREFIX = "VC";
+function buildNextAdminCourseCode(year, semester, courses = state.adminCoursesPlatformCourses, skip = 0) {
+  const prefix = `${ADMIN_COURSE_CODE_PREFIX}-Y${sanitizeAcademicYear(year)}S${sanitizeAcademicSemester(semester)}-`;
+  const taken = new Set(
+    (Array.isArray(courses) ? courses : [])
+      .map((course) => String(course?.course_code || "").trim().toUpperCase())
+      .filter(Boolean),
+  );
+  let skipped = 0;
+  for (let number = 1; number < 10000; number += 1) {
+    const code = `${prefix}${String(number).padStart(2, "0")}`;
+    if (taken.has(code)) continue;
+    if (skipped >= skip) return code;
+    skipped += 1;
+  }
+  return `${prefix}${Date.now()}`;
+}
+
+function isCourseCodeConflictError(error) {
+  return String(error?.code || "").trim() === "23505"
+    && /course_code/i.test(`${error?.message || ""} ${error?.details || ""}`);
+}
+
+// Creator accounts an admin can pick as a course instructor. Merges the admin
+// users cache with the Video Courses profile rows, one entry per account.
+function getAdminCreatorOptions() {
+  const byKey = new Map();
+  const add = (id, name, email, publicId) => {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    const key = cleanEmail || String(id || "").trim();
+    const cleanName = String(name || "").trim();
+    if (!key || !cleanName || byKey.has(key)) return;
+    byKey.set(key, {
+      name: cleanName,
+      email: cleanEmail,
+      publicId: publicId === null || publicId === undefined ? "" : String(publicId).trim(),
+    });
+  };
+  getUsers()
+    .filter((user) => sanitizeUserRole(user?.role) === "creator")
+    .forEach((user) => add(getUserProfileId(user) || user.id, user.name, user.email, user.publicUserId));
+  (state.adminCoursesPlatformProfiles || [])
+    .filter((profile) => sanitizeUserRole(profile?.role) === "creator")
+    .forEach((profile) => add(profile.id, profile.full_name, profile.email, profile.public_user_id));
+  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Instructor field: search the creator accounts and pick one. The chosen name
+// goes into the hidden instructor_name input, so drafts and saves are unchanged.
+// A name already stored that is not a creator stays shown until replaced.
+function renderAdminInstructorPicker(currentName) {
+  const name = String(currentName || "").trim();
+  return `
+    <div class="admin-instructor-picker" data-instructor-picker>
+      <span class="admin-instructor-picker-label">Instructor</span>
+      <div class="admin-target-user-combobox">
+        <input
+          type="search"
+          data-instructor-search
+          value="${escapeHtml(name)}"
+          placeholder="Search creators by name, email or ID"
+          autocomplete="off"
+          spellcheck="false"
+          role="combobox"
+          aria-label="Instructor"
+          aria-autocomplete="list"
+          aria-expanded="false"
+        />
+        <div class="admin-user-suggestions" data-instructor-suggestions role="listbox" aria-label="Creator accounts" hidden></div>
+      </div>
+      <input type="hidden" name="instructor_name" value="${escapeHtml(name)}" />
+    </div>
+  `;
+}
+
+function wireAdminInstructorPicker(pickerEl) {
+  const search = pickerEl.querySelector("[data-instructor-search]");
+  const list = pickerEl.querySelector("[data-instructor-suggestions]");
+  const hidden = pickerEl.querySelector("input[type='hidden'][name='instructor_name']");
+  if (!search || !list || !hidden) return;
+  let matches = [];
+  let activeIndex = -1;
+
+  const close = () => {
+    list.hidden = true;
+    search.setAttribute("aria-expanded", "false");
+    activeIndex = -1;
+  };
+  const choose = (name) => {
+    hidden.value = name;
+    search.value = name;
+    close();
+    hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  const paint = () => {
+    list.innerHTML = matches.length
+      ? matches.map((creator, index) => `
+          <button type="button" class="admin-user-suggestion${index === activeIndex ? " is-active" : ""}" role="option" aria-selected="${index === activeIndex ? "true" : "false"}" data-instructor-index="${index}">
+            <span class="admin-user-suggestion-name">${escapeHtml(creator.name)}</span>
+            <span class="admin-user-suggestion-meta">${escapeHtml([creator.email, creator.publicId ? `ID ${creator.publicId}` : ""].filter(Boolean).join(" · "))}</span>
+          </button>
+        `).join("")
+      : `<p class="admin-instructor-picker-empty">${getAdminCreatorOptions().length
+        ? "No creator matches that search."
+        : "No creator accounts yet. Give a user the Creator role on the Users page."}</p>`;
+  };
+  const open = () => {
+    const query = String(search.value || "").trim().toLowerCase();
+    const showAll = !query || query === String(hidden.value || "").trim().toLowerCase();
+    matches = getAdminCreatorOptions().filter((creator) => showAll
+      || creator.name.toLowerCase().includes(query)
+      || creator.email.includes(query)
+      || creator.publicId === query);
+    activeIndex = matches.length ? 0 : -1;
+    paint();
+    list.hidden = false;
+    search.setAttribute("aria-expanded", "true");
+  };
+
+  search.addEventListener("focus", open);
+  search.addEventListener("input", open);
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if (!list.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        search.value = hidden.value;
+        close();
+      }
+      return;
+    }
+    if (list.hidden || !matches.length) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      activeIndex = (activeIndex + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+      paint();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (activeIndex >= 0) choose(matches[activeIndex].name);
+    }
+  });
+  // mousedown, not click: choosing must land before the input's blur.
+  list.addEventListener("mousedown", (event) => {
+    const option = event.target instanceof Element ? event.target.closest("[data-instructor-index]") : null;
+    if (!option) return;
+    event.preventDefault();
+    const creator = matches[Number(option.getAttribute("data-instructor-index"))];
+    if (creator) choose(creator.name);
+  });
+  search.addEventListener("blur", () => {
+    // Only a picked creator is kept. Emptying the field clears the instructor;
+    // any other typed text falls back to the current choice.
+    if (!String(search.value || "").trim()) {
+      if (hidden.value) choose("");
+    } else {
+      search.value = hidden.value;
+    }
+    close();
+  });
+}
+
 function coerceAdminCourseMetadataPayload(data) {
   return {
     course_code: String(data.course_code || "").trim() || null,
@@ -53786,11 +53931,20 @@ async function adminCreatePlatformCourse(data) {
     is_published: data.is_published !== false,
     enrollment_mode: data.enrollment_mode || "request",
   });
-  const createdCourse = await runRelationalQueryWithTimeout(
-    client.from("platform_courses").insert(payload).select("id").single(),
-    "Course create timed out.",
-    COURSE_PLATFORM_WRITE_TIMEOUT_MS,
-  );
+  let createdCourse = null;
+  for (let attempt = 0; ; attempt += 1) {
+    payload.course_code = buildNextAdminCourseCode(payload.academic_year, payload.academic_semester, state.adminCoursesPlatformCourses, attempt);
+    try {
+      createdCourse = await runRelationalQueryWithTimeout(
+        client.from("platform_courses").insert(payload).select("id").single(),
+        "Course create timed out.",
+        COURSE_PLATFORM_WRITE_TIMEOUT_MS,
+      );
+      break;
+    } catch (error) {
+      if (!isCourseCodeConflictError(error) || attempt >= 4) throw error;
+    }
+  }
   const courseId = String(createdCourse?.id || "").trim();
   if (isUuidValue(courseId)) {
     const coverImageUrl = await resolveAdminCourseCoverUrl(courseId, data);
@@ -56841,7 +56995,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
         <p class="subtle" style="margin-top: -0.35rem; margin-bottom: 1.25rem;">This creates a Courses platform course only. It does not create or edit MCQ bank courses.</p>
         <div class="course-builder-grid compact">
           <label>Course name<input name="course_name" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_name", ""))}" required /></label>
-          <label>Course code<input name="course_code" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_code", ""))}" /></label>
+          <label>Course code<input data-course-code-preview value="${escapeHtml(buildNextAdminCourseCode(getAdminCourseBuilderFieldValue(dk, "academic_year", 1), getAdminCourseBuilderFieldValue(dk, "academic_semester", 1)))}" readonly aria-readonly="true" tabindex="-1" /><small class="admin-course-code-hint">Assigned automatically</small></label>
           <label>Suggestion year<select name="academic_year">${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${getAdminCourseBuilderOptionSelected(dk, "academic_year", year, 1)}>Year ${year}</option>`).join("")}</select></label>
           <label>Suggestion semester<select name="academic_semester"><option value="1" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 1, 1)}>Semester 1</option><option value="2" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 2, 1)}>Semester 2</option></select></label>
           <label>Enrollment mode
@@ -56852,7 +57006,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           </label>
           <label>Priority<input name="priority" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "priority", 0))}" /></label>
           ${renderAdminCourseCoverUploadField(dk, "")}
-          <label>Instructor name<input name="instructor_name" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "instructor_name", ""))}" /></label>
+          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", ""))}
           <label>Estimated duration<input name="estimated_duration" placeholder="Example: 2 weeks" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "estimated_duration", ""))}" /></label>
           <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published</label>
           <label class="course-builder-wide">Description<textarea name="description" rows="2">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", ""))}</textarea></label>
@@ -56878,13 +57032,13 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
         </div>
         <div class="course-builder-grid">
           <label>Course name<input name="course_name" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_name", selectedCourse.course_name || ""))}" required /></label>
-          <label>Course code<input name="course_code" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_code", selectedCourse.course_code || ""))}" /></label>
+          <label>Course code<input name="course_code" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_code", selectedCourse.course_code || ""))}" readonly aria-readonly="true" /></label>
           <label>Suggestion year<select name="academic_year">${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${getAdminCourseBuilderOptionSelected(dk, "academic_year", year, selectedCourse.academic_year)}>Year ${year}</option>`).join("")}</select></label>
           <label>Suggestion semester<select name="academic_semester"><option value="1" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 1, selectedCourse.academic_semester)}>Semester 1</option><option value="2" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 2, selectedCourse.academic_semester)}>Semester 2</option></select></label>
           <label>Description<textarea name="description" rows="4">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", selectedCourse.description || ""))}</textarea></label>
           ${renderAdminCourseCoverUploadField(dk, selectedCourse.cover_image_url || "")}
           <label>Intro video URL<input name="intro_video_url" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "intro_video_url", selectedCourse.intro_video_url || ""))}" /></label>
-          <label>Instructor name<input name="instructor_name" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "instructor_name", selectedCourse.instructor_name || ""))}" /></label>
+          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", selectedCourse.instructor_name || ""))}
           <label>Instructor bio<textarea name="instructor_bio" rows="3">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "instructor_bio", selectedCourse.instructor_bio || ""))}</textarea></label>
           <label>Level<input name="level" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "level", selectedCourse.level || ""))}" /></label>
           <label>Estimated duration<input name="estimated_duration" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "estimated_duration", selectedCourse.estimated_duration || ""))}" /></label>
@@ -57292,7 +57446,7 @@ function adminRenderCourseBuilder(courseId) {
                 </div>
                 <div class="course-metadata-card-body grid-2col">
                   <label>Course name<input name="course_name" value="${escapeHtml(selectedCourse.course_name || "")}" required /></label>
-                  <label>Course code<input name="course_code" value="${escapeHtml(selectedCourse.course_code || "")}" /></label>
+                  <label>Course code<input name="course_code" value="${escapeHtml(selectedCourse.course_code || "")}" readonly aria-readonly="true" /></label>
                   <label>Level<input name="level" value="${escapeHtml(selectedCourse.level || "")}" /></label>
                   <label>Estimated duration<input name="estimated_duration" value="${escapeHtml(selectedCourse.estimated_duration || "")}" /></label>
                   <label>Price ($)<input name="price" type="number" min="0" step="0.01" value="${escapeHtml(selectedCourse.price || 0)}" /></label>
@@ -57350,7 +57504,7 @@ function adminRenderCourseBuilder(courseId) {
                   Instructor Information
                 </div>
                 <div class="course-metadata-card-body" style="display: flex; flex-direction: column; gap: 1rem;">
-                  <label>Instructor name<input name="instructor_name" value="${escapeHtml(selectedCourse.instructor_name || "")}" /></label>
+                  ${renderAdminInstructorPicker(selectedCourse.instructor_name || "")}
                   <label>Instructor bio<textarea name="instructor_bio" rows="3">${escapeHtml(selectedCourse.instructor_bio || "")}</textarea></label>
                 </div>
               </div>
@@ -57580,6 +57734,21 @@ function wireAdminCoursesPlatformBuilder() {
 
   root.addEventListener("input", handleFormDraftInput);
   root.addEventListener("change", handleFormDraftInput);
+  root.querySelectorAll("[data-instructor-picker]").forEach(wireAdminInstructorPicker);
+  // The create form shows the code it will get; keep it in step with the term.
+  const createForm = root.querySelector("#admin-course-create-form");
+  const codePreview = createForm?.querySelector("[data-course-code-preview]");
+  if (createForm && codePreview) {
+    const syncCodePreview = () => {
+      codePreview.value = buildNextAdminCourseCode(
+        createForm.querySelector("[name='academic_year']")?.value,
+        createForm.querySelector("[name='academic_semester']")?.value,
+      );
+    };
+    createForm.querySelectorAll("[name='academic_year'], [name='academic_semester']").forEach((select) => {
+      select.addEventListener("change", syncCodePreview);
+    });
+  }
   if (!state.adminCoursesPlatformLoadedAt && !state.adminCoursesPlatformLoading) {
     loadAdminCoursesPlatform().then((ok) => {
       if (ok && state.route === "admin" && state.adminPage === ADMIN_COURSES_PLATFORM_PAGE) {
