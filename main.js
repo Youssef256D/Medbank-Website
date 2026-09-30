@@ -43,6 +43,7 @@ const privateNavEl = document.getElementById("private-nav");
 const authActionsEl = document.getElementById("auth-actions");
 const adminLinkEl = document.getElementById("admin-link");
 const googleAuthLoadingEl = document.getElementById("google-auth-loading");
+let topbarSystemNoticeEl = null;
 const APP_VERSION = String(document.querySelector('meta[name="app-version"]')?.getAttribute("content") || "2026-05-20.05").trim();
 const REQUIRED_QUESTION_CATALOG_REFRESH_VERSION = "2026-06-29-full-question-repair-v2";
 const ROUTE_STATE_ROUTE_KEY = "mcq_last_route";
@@ -203,6 +204,64 @@ const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "mcq-subjects", 
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
+const ADMIN_NAV_GROUPS = [
+  {
+    id: "overview",
+    label: "Overview",
+    collapsible: false,
+    items: [{ page: "dashboard", label: "Dashboard" }],
+  },
+  {
+    id: "people",
+    label: "People",
+    items: [
+      { page: "users", label: "Users" },
+      { page: "universities", label: "Universities" },
+    ],
+  },
+  {
+    id: "mcq",
+    label: "MCQ Bank",
+    items: [
+      { page: "mcq-subjects", label: "Subjects" },
+      { page: "questions", label: "Questions" },
+      { page: "bulk-import", label: "Bulk Import" },
+    ],
+  },
+  {
+    id: "video-courses",
+    label: "Video Courses",
+    items: [
+      { section: "overview", label: "Catalog" },
+      { section: "builder", label: "Course Builder" },
+      { section: "enrollments", label: "Enrolled Users" },
+      { section: "requests", label: "Enrollment Requests" },
+      { section: "coupons", label: "Activation Coupons" },
+      { section: "approvals", label: "Course Approvals" },
+      { section: "suggestions", label: "Suggestions" },
+      { section: "announcements", label: "Announcements" },
+      { section: "availability", label: "Availability" },
+    ],
+  },
+  {
+    id: "messaging",
+    label: "Messaging",
+    items: [
+      { page: "notifications", label: "Notifications" },
+      { page: "popups", label: "Pop-ups" },
+    ],
+  },
+  {
+    id: "system",
+    label: "System",
+    items: [
+      { page: "site-access", label: "Site Access" },
+      { page: "ai-agents", label: "Hermes Assistant" },
+      { page: "activity", label: "Activity" },
+      { page: "logs", label: "Logs" },
+    ],
+  },
+];
 const ADMIN_AUTO_REFRESH_PAGES = new Set(["dashboard", "users"]);
 const PRIMARY_ADMIN_ASSISTANT_NAME = "Hermes Admin Assistant";
 const PRIMARY_ADMIN_ASSISTANT_DESCRIPTION = "Single connected administrator for Hermes";
@@ -235,6 +294,7 @@ const SUPABASE_BACKUP_RETRY_MAX_MS = 60000;
 const SESSION_SYNC_FLUSH_MS = 600;
 const SESSION_BROWSER_PERSIST_THROTTLE_MS = 10000;
 const ADMIN_DATA_REFRESH_MS = 30000;
+const ADMIN_DASHBOARD_COUNTS_TTL_MS = 60000;
 const BACKGROUND_SYNC_INTERVAL_MS = 15000;
 const ADMIN_QUESTION_BACKGROUND_REFRESH_MS = 180000;
 const ADMIN_BACKUP_RESTORE_CHECK_COOLDOWN_MS = 5 * 60 * 1000;
@@ -324,10 +384,13 @@ const SESSION_BROWSER_STORAGE_PARSE_CHAR_LIMIT = 3_000_000;
 const SESSION_BROWSER_STORAGE_RECENT_SNAPSHOT_LIMIT = 25;
 const ADMIN_USER_RENDER_LIMIT = 80;
 const ADMIN_ENROLLMENT_AUTOSAVE_MS = 900;
-const ADMIN_QUESTION_RENDER_LIMIT = 220;
+const ADMIN_NOTIFICATION_RENDER_CAP = 200; // same ceiling as before the redesign
+const ADMIN_NOTIFICATION_RENDER_PAGE_SIZE = 50;
+const ADMIN_QUESTION_RENDER_PAGE_SIZE = 100;
 const ADMIN_BULK_UI_YIELD_EVERY = 50;
 const PREVIOUS_TEST_ANALYSIS_LIMIT = 240;
 const PREVIOUS_TEST_RENDER_LIMIT = 120;
+const ADMIN_COURSE_LIST_RENDER_STEP = 100;
 const ENROLLMENT_SYNC_QUERY_TIMEOUT_MS = Math.max(SUPABASE_QUERY_TIMEOUT_MS, 15000);
 const ENROLLMENT_SYNC_WRITE_BATCH_SIZE = 100;
 const ENROLLMENT_BACKFILL_RETRY_COOLDOWN_MS = 60000;
@@ -408,6 +471,8 @@ function createDefaultAdminAddUserDraft() {
   };
 }
 
+const ADMIN_HELP_STORAGE_KEY = "medbank_admin_help_open_v1";
+
 const state = {
   route: INITIAL_ROUTE,
   sessionId: readPersistedActiveSessionId(),
@@ -427,6 +492,9 @@ const state = {
   adminAddUserPanelOpen: false,
   adminAddUserDraft: createDefaultAdminAddUserDraft(),
   adminAddUserDraftDirty: false,
+  adminUsersFiltersOpen: false,
+  adminUsersSettingsOpen: false,
+  adminUserEditId: null,
   adminUserEnrollmentDrafts: {},
   adminUserEnrollmentSaving: {},
   adminSelectedUserIds: [],
@@ -438,9 +506,13 @@ const state = {
   adminCourseTopicModalCourse: "",
   adminCourseTopicGroupCreateModalOpen: false,
   adminCourseTopicInlineCreateOpen: false,
+  adminCourseAddDialogOpen: false,
   adminEditorCourse: "",
   adminEditorTopic: "",
   adminQuestionModalOpen: false,
+  adminQuestionsFiltersOpen: false,
+  adminQuestionsFilterKey: "",
+  adminQuestionsVisibleLimit: 0,
   qbankFilters: {
     course: "",
     topics: [],
@@ -536,6 +608,10 @@ const state = {
   adminRequestFilterStatus: "all",
   adminRequestGroupCollapsed: {},
   adminAnnouncementCourseFilter: "all",
+  adminCourseCouponGeneratorOpen: false,
+  adminCourseAnnouncementComposerOpen: false,
+  adminCourseSuggestionEditorOpen: false,
+  adminCoursePlatformListLimits: {},
   createTestSource: "all",
   previousTestFilters: {
     dateKey: "",
@@ -573,6 +649,7 @@ const state = {
   adminDataRefreshing: false,
   adminDataLastSyncAt: 0,
   adminDataSyncError: "",
+  adminSystemNoticeDismissed: "",
   adminForceRefreshRunning: false,
   adminApproveAllPendingRunning: false,
   studentAutoApprovalEnabled: false,
@@ -595,6 +672,9 @@ const state = {
   adminQuestionCountLoading: false,
   adminQuestionCountError: "",
   adminQuestionCountLastSyncAt: 0,
+  adminDashboardCounts: null,
+  adminDashboardCountsLoading: false,
+  adminDashboardCountsLoadedAt: 0,
   adminCourseQuestionCountCache: null,
   adminCourseQuestionCountCacheRevision: 0,
   questionsRevision: 0,
@@ -603,6 +683,7 @@ const state = {
   adminPresenceError: "",
   adminPresenceLastSyncAt: 0,
   adminActivityReportRunning: false,
+  adminLogsVisibleCount: 100,
   adminPopups: [],
   adminPopupMetrics: {},
   adminPopupsLoading: false,
@@ -644,6 +725,8 @@ const state = {
   adminNotificationTitle: "",
   adminNotificationBody: "",
   adminNotificationSending: false,
+  adminNotificationComposeOpen: false,
+  adminNotificationsVisibleCount: ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
   studentDataRefreshing: false,
   studentDataLastSyncAt: 0,
   studentDataLastFullSyncAt: 0,
@@ -656,7 +739,12 @@ const state = {
   universitiesLoadedAt: 0,
   universitiesError: "",
   adminUniversityDraft: null,
+  adminUniversityDraftInitial: "",
+  adminUniversityDraftDirty: false,
+  adminUniversityDialogReturnFocus: "",
+  adminUniversityDialogNeedsFocus: false,
   adminUniversitySaving: false,
+  adminHelpOpen: loadAdminHelpOpenState(),
   userMenuOpen: false,
   notificationMenuOpen: false,
 };
@@ -881,6 +969,7 @@ function shouldDeferAdminUsersAutoRender() {
   }
   return (
     (Boolean(state.adminAddUserPanelOpen) && Boolean(state.adminAddUserDraftDirty))
+    || Boolean(state.adminUsersFiltersOpen)
     || hasAdminUserEnrollmentDrafts()
     || hasActiveAdminUserEnrollmentSaves()
     || adminUserMutationActiveCount > 0
@@ -895,6 +984,10 @@ let wasAdminCourseTopicGroupCreateModalOpen = false;
 let wasAdminCourseTopicInlineCreateOpen = false;
 let adminCourseSearchDebounce = null;
 let adminUserSearchDebounce = null;
+// Selector of the toolbar button that opened the currently-open Users
+// dialog, so closing it (backdrop, x, Escape, Cancel/Done) can return focus
+// there. Cleared once that focus restore happens.
+let adminUsersDialogReturnFocusSelector = null;
 let adminApprovedAccessRepairInFlight = false;
 let adminApprovedAccessRepairSignature = "";
 let adminApprovedAccessRepairCompletedSignature = "";
@@ -3993,11 +4086,15 @@ async function handleSupabaseAuthStateChange(event, session) {
     state.adminDataRefreshing = false;
     state.adminDataLastSyncAt = 0;
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
     state.adminForceRefreshRunning = false;
     state.adminQuestionCountSnapshot = null;
     state.adminQuestionCountLoading = false;
     state.adminQuestionCountError = "";
     state.adminQuestionCountLastSyncAt = 0;
+    state.adminDashboardCounts = null;
+    state.adminDashboardCountsLoading = false;
+    state.adminDashboardCountsLoadedAt = 0;
     state.adminPresenceLoading = false;
     state.adminPresenceError = "";
     state.adminPresenceRows = [];
@@ -6127,6 +6224,16 @@ function matchesAdminUserApprovalFilter(account, approvalFilter) {
   return !approved && !hasCompleteStudentApprovalProfile(account);
 }
 
+function resetAdminUserFilters() {
+  state.adminUserSearch = "";
+  state.adminUserFilterYear = "";
+  state.adminUserFilterSemester = "";
+  state.adminUserFilterApproval = "";
+  state.adminUserFilterProvider = "";
+  state.adminUserFilterMcqHeld = false;
+  state.adminSelectedUserIds = [];
+}
+
 // Names the specific fields blocking approval for one pending student.
 //
 // This decomposes the exact checks inside `hasCompleteStudentProfile` and
@@ -6952,6 +7059,89 @@ function formatAuthProviderLabel(provider) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+// Admin dashboard summary helpers. Keep these argument-driven so the dashboard
+// can render from cached data immediately and the counting rules can be tested
+// without a browser or Supabase client.
+function formatAdminCount(value, options = {}) {
+  if (value === null || value === undefined) {
+    return options?.loading === true ? "…" : "—";
+  }
+  const count = Number(value);
+  if (!Number.isFinite(count)) {
+    return "—";
+  }
+  return Math.max(0, Math.trunc(count)).toLocaleString();
+}
+
+function sumAdminDashboardCounts(...values) {
+  if (!values.every((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))) {
+    return null;
+  }
+  return values.reduce((sum, value) => sum + Math.max(0, Math.trunc(Number(value))), 0);
+}
+
+function buildAdminDashboardUserSnapshot(users = [], nowMs = Date.now(), options = {}) {
+  const accounts = Array.isArray(users) ? users : [];
+  const currentMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  const weekStartMs = currentMs - (7 * 24 * 60 * 60 * 1000);
+  const approvalPredicate = typeof options?.isApproved === "function"
+    ? options.isApproved
+    : isUserAccessApproved;
+  const missingFieldsFor = typeof options?.getMissingFields === "function"
+    ? options.getMissingFields
+    : describeMissingStudentApprovalFields;
+  const createdAtFor = typeof options?.getCreatedAtMs === "function"
+    ? options.getCreatedAtMs
+    : getUserCreatedAtMs;
+  const normalizeYear = typeof options?.normalizeAcademicYear === "function"
+    ? options.normalizeAcademicYear
+    : normalizeAcademicYearOrNull;
+  const academicYearCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let totalStudents = 0;
+  let newStudentsLast7Days = 0;
+  let pendingApprovalCount = 0;
+  let pendingMissingPhoneCount = 0;
+  let oldestPendingCreatedAtMs = null;
+
+  accounts.forEach((account) => {
+    if (account?.role !== "student") {
+      return;
+    }
+    totalStudents += 1;
+    const academicYear = normalizeYear(account?.academicYear);
+    if (academicYear !== null && Object.hasOwn(academicYearCounts, academicYear)) {
+      academicYearCounts[academicYear] += 1;
+    }
+    const createdAtMs = Number(createdAtFor(account));
+    if (Number.isFinite(createdAtMs) && createdAtMs > 0 && createdAtMs >= weekStartMs && createdAtMs <= currentMs) {
+      newStudentsLast7Days += 1;
+    }
+    if (approvalPredicate(account)) {
+      return;
+    }
+    pendingApprovalCount += 1;
+    if (missingFieldsFor(account).includes("phone number")) {
+      pendingMissingPhoneCount += 1;
+    }
+    if (
+      Number.isFinite(createdAtMs)
+      && createdAtMs > 0
+      && (oldestPendingCreatedAtMs === null || createdAtMs < oldestPendingCreatedAtMs)
+    ) {
+      oldestPendingCreatedAtMs = createdAtMs;
+    }
+  });
+
+  return {
+    totalStudents,
+    newStudentsLast7Days,
+    pendingApprovalCount,
+    pendingMissingPhoneCount,
+    oldestPendingCreatedAtMs,
+    academicYearCounts,
+  };
 }
 
 function buildAdminUserStatistics(users = []) {
@@ -8460,6 +8650,7 @@ function schedulePostAuthDataWarmup(user) {
   if (currentUser.role === "admin" && hasCachedAdminData) {
     state.adminDataLastSyncAt = Date.now();
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
   }
 
   postAuthWarmupRuntime.key = key;
@@ -8478,6 +8669,7 @@ function schedulePostAuthDataWarmup(user) {
       }
       state.adminDataLastSyncAt = Date.now();
       state.adminDataSyncError = "";
+      state.adminSystemNoticeDismissed = "";
     } else if (currentUser.role === "student") {
       await ensureFreshStudentDataAfterAuth(currentUser, {
         reason: "post-auth warmup",
@@ -21851,6 +22043,7 @@ async function refreshAdminDataSnapshot(user, options = {}) {
   state.adminDataRefreshing = true;
   if (surfaceErrors) {
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
   }
   if (renderLoadingState && state.route === "admin") {
     state.skipNextRouteAnimation = true;
@@ -22204,11 +22397,15 @@ function render() {
     state.adminDataRefreshing = false;
     state.adminDataLastSyncAt = 0;
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
     state.adminForceRefreshRunning = false;
     state.adminQuestionCountSnapshot = null;
     state.adminQuestionCountLoading = false;
     state.adminQuestionCountError = "";
     state.adminQuestionCountLastSyncAt = 0;
+    state.adminDashboardCounts = null;
+    state.adminDashboardCountsLoading = false;
+    state.adminDashboardCountsLoadedAt = 0;
     state.adminPresenceLoading = false;
     state.adminPresenceError = "";
     state.adminPresenceRows = [];
@@ -22772,6 +22969,52 @@ function syncTopbar() {
   const unreadNotificationLabel = unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount);
   const canOpenMcqBank = user?.role !== "student" || isUserMcqAccessEnabled(user);
 
+  if (!topbarSystemNoticeEl && topbarEl) {
+    topbarSystemNoticeEl = document.createElement("div");
+    topbarSystemNoticeEl.id = "topbar-system-notice";
+    topbarSystemNoticeEl.className = "topbar-notice";
+    topbarSystemNoticeEl.setAttribute("role", "status");
+    topbarSystemNoticeEl.setAttribute("aria-live", "polite");
+    topbarSystemNoticeEl.hidden = true;
+
+    const noticeTextEl = document.createElement("span");
+    noticeTextEl.className = "topbar-notice-text";
+
+    const noticeCloseEl = document.createElement("button");
+    noticeCloseEl.type = "button";
+    noticeCloseEl.className = "topbar-notice-close";
+    noticeCloseEl.setAttribute("aria-label", "Dismiss message");
+    noticeCloseEl.textContent = "×";
+    noticeCloseEl.addEventListener("click", () => {
+      state.adminSystemNoticeDismissed = noticeTextEl.textContent || "";
+      topbarSystemNoticeEl.hidden = true;
+    });
+
+    topbarSystemNoticeEl.append(noticeTextEl, noticeCloseEl);
+    topbarEl.insertBefore(topbarSystemNoticeEl, authActionsEl);
+  }
+
+  const adminSystemMessage = typeof state.adminDataSyncError === "string"
+    ? state.adminDataSyncError
+    : "";
+  if (!adminSystemMessage.trim()) {
+    state.adminSystemNoticeDismissed = "";
+  }
+  if (topbarSystemNoticeEl) {
+    const shouldShowAdminSystemNotice = Boolean(
+      isAdmin
+      && state.route === "admin"
+      && adminSystemMessage.trim()
+      && adminSystemMessage !== state.adminSystemNoticeDismissed
+    );
+    const noticeTextEl = topbarSystemNoticeEl.querySelector(".topbar-notice-text");
+    if (noticeTextEl) {
+      noticeTextEl.textContent = adminSystemMessage;
+    }
+    topbarSystemNoticeEl.title = adminSystemMessage;
+    topbarSystemNoticeEl.hidden = !shouldShowAdminSystemNotice;
+  }
+
   const brandButton = brandWrapEl?.querySelector(".brand");
   if (brandButton) {
     const nativeTitles = {
@@ -22813,12 +23056,7 @@ function syncTopbar() {
     const isAppLauncher = currentRoute === "app-launcher";
     privateNavEl.innerHTML = ``;
     if (isAdmin) {
-      const isCourseAdminPage = currentRoute === "admin" && String(state.adminPage || "").trim() === ADMIN_COURSES_PLATFORM_PAGE;
-      privateNavEl.innerHTML = `
-        <button data-action="admin-top-tab" data-tab="data" class="${!isCourseAdminPage ? "is-active" : ""}">Questions</button>
-        <button data-action="admin-top-tab" data-tab="video-courses" class="${isCourseAdminPage ? "is-active" : ""}">Video Courses</button>
-      `;
-      privateNavEl.classList.remove("hidden");
+      privateNavEl.classList.add("hidden");
     } else if (isAppLauncher || (isMcqRoute && !canOpenMcqBank)) {
       // Profile and Notifications count as MCQ routes for the nav; a student
       // without the MCQ Bank gets the launcher nav there instead of MCQ tabs.
@@ -30406,6 +30644,48 @@ function resolveAdminQuestionListView(questions, allCourses, preferredCourse = "
   };
 }
 
+// Bulk Import step 1: subjects grouped by curriculum year so the admin picks
+// the year first. A subject missing from the curriculum lands in "Other".
+function buildAdminCourseYearGroups(allCourses) {
+  const courses = Array.isArray(allCourses) ? allCourses.filter(Boolean) : [];
+  const placed = new Set();
+  const groups = [];
+  Object.keys(MEDBANK_CURRICULUM || {})
+    .map(Number)
+    .filter((year) => Number.isFinite(year))
+    .sort((a, b) => a - b)
+    .forEach((year) => {
+      const semesters = [];
+      Object.keys(MEDBANK_CURRICULUM[year] || {})
+        .map(Number)
+        .sort((a, b) => a - b)
+        .forEach((semester) => {
+          const termCourses = getCurriculumCourses(year, semester)
+            .filter((course) => courses.includes(course) && !placed.has(course));
+          termCourses.forEach((course) => placed.add(course));
+          if (termCourses.length) semesters.push({ label: `Semester ${semester}`, courses: termCourses });
+        });
+      if (semesters.length) groups.push({ key: String(year), label: `Year ${year}`, semesters });
+    });
+  const other = courses.filter((course) => !placed.has(course));
+  if (other.length) groups.push({ key: "other", label: "Other", semesters: [{ label: "", courses: other }] });
+  return groups;
+}
+
+function findAdminCourseYearGroup(groups, course) {
+  return groups.find((group) => group.semesters.some((term) => term.courses.includes(course))) || groups[0] || null;
+}
+
+function renderAdminCourseYearGroupOptions(group, selectedCourse) {
+  if (!group) return "";
+  return group.semesters.map((term) => {
+    const options = term.courses
+      .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+      .join("");
+    return term.label ? `<optgroup label="${escapeHtml(term.label)}">${options}</optgroup>` : options;
+  }).join("");
+}
+
 function resolveAdminImportView(allCourses, preferredCourse = "") {
   const configuredCourses = Array.isArray(allCourses) ? allCourses.filter(Boolean) : [];
   const fallbackCourse = configuredCourses.includes(preferredCourse) ? preferredCourse : (configuredCourses[0] || "");
@@ -30971,7 +31251,7 @@ function renderAdminImportHistoryCard() {
     `;
   }
   return `
-    <div class="card admin-import-tool-card" id="admin-import-history-card">
+    <div class="admin-import-tool-card" id="admin-import-history-card">
       <div class="admin-import-card-heading">
         <div>
           <h4>Upload history</h4>
@@ -31007,114 +31287,145 @@ function renderAdminBulkImportSection(allCourses, options = {}) {
     : "";
   const exportStatus = state.adminQuestionExportStatus === "published" ? "published" : "all";
   const exportRunning = Boolean(state.adminQuestionExportRunning);
+  const importYearGroups = buildAdminCourseYearGroups(allCourses);
+  const importYearGroup = findAdminCourseYearGroup(importYearGroups, importCourse);
+  const bulkImportHeaderHtml = renderAdminPageHeader({
+    id: "bulk-import",
+    title: "Bulk Import",
+    actions: "",
+    notes: [
+      "Import many questions at once from a CSV or JSON file, or by pasting rows directly.",
+      "Any row without its own course/topic uses the subject and topic chosen in step 1. Pick the year first; the subject list then shows only that year.",
+      "CSV headers: stem, choiceA, choiceB, choiceC, choiceD, choiceE, correct, explanation, course, topic, system, difficulty, status, tags, questionImage, explanationImage.",
+    ],
+  });
 
   return `
     <section class="card admin-section" id="admin-bulk-import-section">
-      <h3 style="margin: 0;">Bulk Import</h3>
-      <p class="subtle">Upload or paste CSV/JSON and import questions by default course/topic.</p>
-      <form id="admin-import-form" style="margin-top: 0.7rem;" autocomplete="off">
-        <div class="form-row">
-          <label>
-            Default course
-            <select name="defaultCourse" id="admin-import-course">
-              ${allCourses
-      .map((course) => `<option value="${escapeHtml(course)}" ${importCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+      ${bulkImportHeaderHtml}
+      <form id="admin-import-form" class="admin-bulk-import-steps" autocomplete="off">
+        <section class="admin-bulk-import-step">
+          <h4><span class="admin-bulk-import-step-num">1</span> Choose year, subject &amp; topic</h4>
+          <div class="form-row admin-bulk-import-target-row">
+            <label>
+              Year
+              <select id="admin-import-year">
+                ${importYearGroups
+      .map((group) => `<option value="${escapeHtml(group.key)}" ${importYearGroup?.key === group.key ? "selected" : ""}>${escapeHtml(group.label)}</option>`)
       .join("")}
-            </select>
-          </label>
-          <label>
-            Default topic
-            <select name="defaultTopic" id="admin-import-topic">
-              ${importTopics
+              </select>
+            </label>
+            <label>
+              Subject
+              <select name="defaultCourse" id="admin-import-course">
+                ${renderAdminCourseYearGroupOptions(importYearGroup, importCourse)}
+              </select>
+            </label>
+            <label>
+              Topic
+              <select name="defaultTopic" id="admin-import-topic">
+                ${importTopics
       .map((topic) => `<option value="${escapeHtml(topic)}" ${importTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
       .join("")}
-            </select>
+              </select>
+            </label>
+          </div>
+          <label class="admin-course-check" style="width: fit-content;">
+            <input type="checkbox" name="importAsDraft" ${importAsDraft ? "checked" : ""} />
+            <span>Save all imported questions as draft (hide from students)</span>
           </label>
-        </div>
-        <label class="admin-course-check" style="width: fit-content;">
-          <input type="checkbox" name="importAsDraft" ${importAsDraft ? "checked" : ""} />
-          <span>Save all imported questions as draft (hide from students)</span>
-        </label>
-        <label>Upload file(s)
-          <input type="file" id="admin-import-file" accept=".csv,.json,text/csv,application/json" multiple />
-        </label>
-        <label>Paste CSV rows or JSON array
-          <textarea id="admin-import-text" name="importText" placeholder='CSV headers example: stem,choiceA,choiceB,choiceC,choiceD,choiceE,correct,explanation,course,topic,system,difficulty,status,tags,questionImage,explanationImage'>${escapeHtml(importDraft)}</textarea>
-        </label>
-        <div class="stack">
-          <button class="btn ${importRunning ? "is-loading" : ""}" type="submit" ${importRunning ? "disabled" : ""}>
-            ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Importing questions...</span>` : "Run bulk import"}
-          </button>
-          <button class="btn ghost ${importRunning ? "is-loading" : ""}" type="button" id="admin-sync-questions-now" ${importRunning ? "disabled" : ""}>
-            ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Syncing cloud data...</span>` : "Sync existing questions to cloud"}
-          </button>
-          <button class="btn ghost" type="button" id="admin-download-template">Download Excel template (.csv)</button>
-        </div>
-      </form>
-      ${importStatus
+        </section>
+
+        <section class="admin-bulk-import-step">
+          <h4><span class="admin-bulk-import-step-num">2</span> Paste or upload</h4>
+          <label>Upload file(s)
+            <input type="file" id="admin-import-file" accept=".csv,.json,text/csv,application/json" multiple />
+          </label>
+          <label>Paste CSV rows or JSON array
+            <textarea id="admin-import-text" name="importText" placeholder='CSV headers example: stem,choiceA,choiceB,choiceC,choiceD,choiceE,correct,explanation,course,topic,system,difficulty,status,tags,questionImage,explanationImage'>${escapeHtml(importDraft)}</textarea>
+          </label>
+          <button class="btn ghost admin-btn-sm" type="button" id="admin-download-template">Download Excel template (.csv)</button>
+        </section>
+
+        <section class="admin-bulk-import-step">
+          <h4><span class="admin-bulk-import-step-num">3</span> Preview &amp; import</h4>
+          <div class="stack">
+            <button class="btn ${importRunning ? "is-loading" : ""}" type="submit" ${importRunning ? "disabled" : ""}>
+              ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Importing questions...</span>` : "Run bulk import"}
+            </button>
+            <button class="btn ghost ${importRunning ? "is-loading" : ""}" type="button" id="admin-sync-questions-now" ${importRunning ? "disabled" : ""}>
+              ${importRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Syncing cloud data...</span>` : "Sync existing questions to cloud"}
+            </button>
+          </div>
+          ${importStatus
       ? `<p class="subtle import-status is-${importStatusTone}" aria-live="polite">${escapeHtml(importStatus)}</p>`
       : ""
     }
-      ${importReport
+          ${importReport
       ? `
-            <div class="admin-import-report card" style="margin-top: 0.7rem;">
-              <p style="margin: 0;"><b>Last import:</b> ${new Date(importReport.createdAt).toLocaleString()}</p>
-              <p class="subtle">Imported ${importReport.added}/${importReport.total} rows. ${importReport.errors.length} error(s).</p>
-              ${importErrorPreview.length
+                <div class="admin-import-report card" style="margin-top: 0.7rem;">
+                  <p style="margin: 0;"><b>Last import:</b> ${new Date(importReport.createdAt).toLocaleString()}</p>
+                  <p class="subtle">Imported ${importReport.added}/${importReport.total} rows. ${importReport.errors.length} error(s).</p>
+                  ${importErrorPreview.length
         ? `
-                    <ol class="admin-import-error-list">
-                      ${importErrorPreview.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}
-                    </ol>
-                    <small class="subtle">Showing first ${importErrorPreview.length} errors.</small>
-                  `
+                        <ol class="admin-import-error-list">
+                          ${importErrorPreview.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}
+                        </ol>
+                        <small class="subtle">Showing first ${importErrorPreview.length} errors.</small>
+                      `
         : `<p class="subtle">No errors in last import.</p>`
       }
-              <div class="stack">
-                <button class="btn ghost admin-btn-sm" type="button" id="admin-download-import-errors" ${importReport.errors.length ? "" : "disabled"}>Download full error report</button>
-                <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-import-report">Clear report</button>
-              </div>
-            </div>
-          `
+                  <div class="stack">
+                    <button class="btn ghost admin-btn-sm" type="button" id="admin-download-import-errors" ${importReport.errors.length ? "" : "disabled"}>Download full error report</button>
+                    <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-import-report">Clear report</button>
+                  </div>
+                </div>
+              `
       : ""
     }
-      <div class="card admin-import-tool-card" id="admin-question-export-card">
-        <div class="admin-import-card-heading">
-          <div>
-            <h4>Export questions to CSV</h4>
-            <p class="subtle">Download a re-importable backup for one MCQ subject or topic.</p>
-          </div>
-        </div>
-        <div class="form-row">
-          <label>
-            MCQ subject
-            <select id="admin-question-export-course" ${exportRunning ? "disabled" : ""}>
-              ${allCourses
+        </section>
+      </form>
+
+      <details class="admin-bulk-import-secondary">
+        <summary>Export questions to CSV</summary>
+        <div class="admin-import-tool-card" id="admin-question-export-card">
+          <p class="subtle">Download a re-importable backup for one MCQ subject or topic.</p>
+          <div class="form-row">
+            <label>
+              MCQ subject
+              <select id="admin-question-export-course" ${exportRunning ? "disabled" : ""}>
+                ${allCourses
       .map((course) => `<option value="${escapeHtml(course)}" ${exportCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
       .join("")}
-            </select>
-          </label>
-          <label>
-            Topic
-            <select id="admin-question-export-topic" ${exportRunning ? "disabled" : ""}>
-              <option value="">All topics</option>
-              ${exportTopics
+              </select>
+            </label>
+            <label>
+              Topic
+              <select id="admin-question-export-topic" ${exportRunning ? "disabled" : ""}>
+                <option value="">All topics</option>
+                ${exportTopics
       .map((topic) => `<option value="${escapeHtml(topic)}" ${exportTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
       .join("")}
-            </select>
-          </label>
-          <label>
-            Status
-            <select id="admin-question-export-status" ${exportRunning ? "disabled" : ""}>
-              <option value="all" ${exportStatus === "all" ? "selected" : ""}>All statuses</option>
-              <option value="published" ${exportStatus === "published" ? "selected" : ""}>Published only</option>
-            </select>
-          </label>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="admin-question-export-status" ${exportRunning ? "disabled" : ""}>
+                <option value="all" ${exportStatus === "all" ? "selected" : ""}>All statuses</option>
+                <option value="published" ${exportStatus === "published" ? "selected" : ""}>Published only</option>
+              </select>
+            </label>
+          </div>
+          <button class="btn ${exportRunning ? "is-loading" : ""}" type="button" id="admin-question-export-download" ${exportRunning || !exportCourse ? "disabled" : ""}>
+            ${exportRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Preparing CSV...</span>` : "Download CSV"}
+          </button>
         </div>
-        <button class="btn ${exportRunning ? "is-loading" : ""}" type="button" id="admin-question-export-download" ${exportRunning || !exportCourse ? "disabled" : ""}>
-          ${exportRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Preparing CSV...</span>` : "Download CSV"}
-        </button>
-      </div>
-      ${renderAdminImportHistoryCard()}
+      </details>
+
+      <details class="admin-bulk-import-secondary">
+        <summary>Show upload history</summary>
+        ${renderAdminImportHistoryCard()}
+      </details>
     </section>
   `;
 }
@@ -31151,12 +31462,17 @@ function patchAdminUsersPendingSummaryUi() {
   const pendingCount = getUsers().filter((entry) => entry.role === "student" && !isUserAccessApproved(entry)).length;
   const pendingBadge = usersSection.querySelector("[data-admin-pending-count]");
   if (pendingBadge) {
-    pendingBadge.className = `badge ${pendingCount ? "bad" : "good"}`;
-    pendingBadge.innerHTML = `Pending: <b>${pendingCount}</b>`;
+    pendingBadge.className = `badge ${pendingCount ? "bad" : "good"} admin-users-pending-chip`;
+    pendingBadge.textContent = `${pendingCount} pending`;
+    pendingBadge.hidden = !pendingCount;
   }
-  const approveAllButton = usersSection.querySelector("[data-action='approve-all-pending']");
+  // The "Approve all pending" button only exists in the DOM while the
+  // Approval settings dialog is open, so it lives in adminGlobalOverlay
+  // (outside #admin-users-section) rather than usersSection.
+  const approveAllButton = appEl?.querySelector("[data-action='approve-all-pending']");
   if (approveAllButton && !state.adminUserBulkActionRunning && !state.adminApproveAllPendingRunning) {
     approveAllButton.disabled = !pendingCount;
+    approveAllButton.textContent = `Approve all pending (${pendingCount})`;
   }
   return true;
 }
@@ -31207,36 +31523,56 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
 
   const coursePreviewEl = row.querySelector(".admin-course-preview");
   if (coursePreviewEl) {
-    coursePreviewEl.textContent = coursePreview || "No MCQ subjects assigned";
+    coursePreviewEl.textContent = coursePreviewEl.hasAttribute("data-count-only")
+      ? `${visibleCourses.length} MCQ subject${visibleCourses.length === 1 ? "" : "s"}`
+      : (coursePreview || "No MCQ subjects assigned");
     coursePreviewEl.title = visibleCourses.join(", ");
+  }
+
+  const nameText = row.querySelector("[data-user-name-text]");
+  if (nameText) {
+    nameText.textContent = String(displayAccount.name ?? account.name ?? "") || "Unnamed user";
+  }
+
+  const termText = row.querySelector("[data-user-term]");
+  if (termText && displayAccount.role === "student") {
+    const hasTerm = year !== null && semester !== null;
+    termText.textContent = hasTerm ? `Y${year} · S${semester}` : "No term";
+    termText.classList.toggle("admin-user-term-missing", !hasTerm);
   }
 
   const statusBadge = row.querySelector("[data-user-status-badge]");
   if (statusBadge) {
-    statusBadge.className = `badge ${isApproved ? "good" : "bad"}`;
-    statusBadge.textContent = isApproved ? "approved" : "pending";
+    statusBadge.className = `admin-user-status ${isApproved ? "is-approved" : "is-pending"}`;
+    statusBadge.textContent = isApproved ? "Approved" : "Pending";
   }
 
   const mcqStatusBadge = row.querySelector("[data-user-mcq-status-badge]");
   if (mcqStatusBadge) {
-    mcqStatusBadge.className = `badge ${mcqAccessEnabled ? "good" : "neutral"}`;
-    mcqStatusBadge.textContent = `MCQ ${mcqAccessEnabled ? "on" : "off"}`;
+    mcqStatusBadge.className = `admin-user-access-tag ${mcqAccessEnabled ? "is-on" : "is-off"}`;
+    mcqStatusBadge.title = `MCQ Bank ${mcqAccessEnabled ? "on" : "off"}`;
   }
 
   const coursesStatusBadge = row.querySelector("[data-user-courses-status-badge]");
   if (coursesStatusBadge) {
-    coursesStatusBadge.className = `badge ${coursesAccessEnabled ? "good" : "neutral"}`;
-    coursesStatusBadge.textContent = `Video Courses ${coursesAccessEnabled ? "on" : "off"}`;
+    coursesStatusBadge.className = `admin-user-access-tag ${coursesAccessEnabled ? "is-on" : "is-off"}`;
+    coursesStatusBadge.title = `Video Courses ${coursesAccessEnabled ? "on" : "off"}`;
   }
 
-  const approvalButton = row.querySelector("[data-action='toggle-user-approval']");
-  if (approvalButton) {
+  // Two approval controls per row: the ⋯ menu item (Approve/Suspend) and, for
+  // pending students, an inline "Approve" that disappears once approved.
+  row.querySelectorAll("[data-action='toggle-user-approval']").forEach((approvalButton) => {
     const isBusy = approvalButton.dataset.busy === "1";
     approvalButton.disabled = isBusy || account.role === "admin";
-    if (!isBusy) {
+    if (approvalButton.hasAttribute("data-admin-inline-approve")) {
+      approvalButton.hidden = isApproved;
+      if (!isBusy) {
+        approvalButton.textContent = "Approve";
+      }
+    } else if (!isBusy) {
       approvalButton.textContent = isApproved ? "Suspend" : "Approve";
     }
-  }
+  });
 
   const mcqHold = row.querySelector("[data-user-mcq-hold]");
   if (mcqHold && mcqHold.querySelector("[data-action='activate-user-mcq']")?.dataset.busy !== "1") {
@@ -31247,9 +31583,16 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
   if (mcqAccessButton) {
     const isBusy = mcqAccessButton.dataset.busy === "1";
     mcqAccessButton.disabled = isBusy || account.role === "admin" || isAdminUserMcqIneligible(account);
-    mcqAccessButton.setAttribute("aria-checked", mcqAccessEnabled ? "true" : "false");
-    if (!isBusy) {
-      mcqAccessButton.innerHTML = renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled);
+    if (mcqAccessButton.hasAttribute("data-admin-access-item")) {
+      if (!isBusy) {
+        mcqAccessButton.textContent = mcqAccessEnabled ? "Turn MCQ access off" : "Turn MCQ access on";
+        mcqAccessButton.classList.remove("is-loading");
+      }
+    } else {
+      mcqAccessButton.setAttribute("aria-checked", mcqAccessEnabled ? "true" : "false");
+      if (!isBusy) {
+        mcqAccessButton.innerHTML = renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled);
+      }
     }
   }
 
@@ -31257,9 +31600,16 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
   if (coursesAccessButton) {
     const isBusy = coursesAccessButton.dataset.busy === "1";
     coursesAccessButton.disabled = isBusy || account.role === "admin";
-    coursesAccessButton.setAttribute("aria-checked", coursesAccessEnabled ? "true" : "false");
-    if (!isBusy) {
-      coursesAccessButton.innerHTML = renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled);
+    if (coursesAccessButton.hasAttribute("data-admin-access-item")) {
+      if (!isBusy) {
+        coursesAccessButton.textContent = coursesAccessEnabled ? "Turn Video Courses off" : "Turn Video Courses on";
+        coursesAccessButton.classList.remove("is-loading");
+      }
+    } else {
+      coursesAccessButton.setAttribute("aria-checked", coursesAccessEnabled ? "true" : "false");
+      if (!isBusy) {
+        coursesAccessButton.innerHTML = renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled);
+      }
     }
   }
 
@@ -31518,6 +31868,26 @@ function renderAdminAgentsSection() {
       .map((entry) => getAdminAgentPermissionLabel(entry.permission_key))
       .join(", ");
     const active = agent.status === "active";
+    const rowMenu = renderAdminRowMenu({
+      id: `agent-${agent.id}`,
+      label: `Actions for ${agent.name}`,
+      items: [
+        {
+          label: hasFullAccess ? "Remove full admin" : "Grant full admin",
+          attrs: `data-action="admin-agent-set-full-access" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}" data-enable="${hasFullAccess ? "false" : "true"}"`,
+          danger: hasFullAccess,
+        },
+        {
+          label: "Rotate token",
+          attrs: `data-action="admin-agent-rotate-token" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}"`,
+        },
+        {
+          label: active ? "Disable" : "Enable",
+          attrs: `data-action="admin-agent-set-status" data-agent-id="${escapeHtml(agent.id)}" data-next-status="${active ? "disabled" : "active"}"`,
+          danger: active,
+        },
+      ],
+    });
     return `
       <tr>
         <td><b>${escapeHtml(agent.name)}</b><small class="subtle admin-agent-detail">${escapeHtml(agent.description || "No description")}</small></td>
@@ -31525,13 +31895,7 @@ function renderAdminAgentsSection() {
         <td><small>${escapeHtml(permissions || "No permissions")}</small></td>
         <td><small>Ends ...${escapeHtml(agent.token_hint || "")}</small></td>
         <td><small>${agent.last_used_at ? escapeHtml(new Date(agent.last_used_at).toLocaleString()) : "Never"}</small></td>
-        <td>
-          <div class="stack">
-            <button class="btn ${hasFullAccess ? "danger" : "ghost"} admin-btn-sm" type="button" data-action="admin-agent-set-full-access" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}" data-enable="${hasFullAccess ? "false" : "true"}">${hasFullAccess ? "Remove full admin" : "Grant full admin"}</button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-agent-rotate-token" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}">Rotate token</button>
-            <button class="btn ${active ? "danger" : "ghost"} admin-btn-sm" type="button" data-action="admin-agent-set-status" data-agent-id="${escapeHtml(agent.id)}" data-next-status="${active ? "disabled" : "active"}">${active ? "Disable" : "Enable"}</button>
-          </div>
-        </td>
+        <td>${rowMenu}</td>
       </tr>
     `;
   }).join("");
@@ -31554,9 +31918,15 @@ function renderAdminAgentsSection() {
         <td><small>${escapeHtml(new Date(request.created_at).toLocaleString())}</small></td>
         <td>
           ${pending ? `
-            <div class="stack">
+            <div class="admin-agent-approval-actions">
               <button class="btn admin-btn-sm" type="button" data-action="admin-agent-approve-request" data-request-id="${escapeHtml(request.id)}">Approve</button>
-              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-agent-reject-request" data-request-id="${escapeHtml(request.id)}">Reject</button>
+              ${renderAdminRowMenu({
+        id: `approval-${request.id}`,
+        label: `Actions for this request`,
+        items: [
+          { label: "Reject", attrs: `data-action="admin-agent-reject-request" data-request-id="${escapeHtml(request.id)}"` },
+        ],
+      })}
             </div>
           ` : "-"}
         </td>
@@ -31574,15 +31944,25 @@ function renderAdminAgentsSection() {
       </tr>
     `;
   }).join("");
+  const agentsHeaderActions = renderAdminIconButton({
+    icon: "refresh",
+    label: state.adminAgentsLoading ? "Refreshing..." : "Refresh",
+    attrs: `data-action="admin-agents-refresh"`,
+    busy: Boolean(state.adminAgentsLoading),
+  });
+  const agentsHeader = renderAdminPageHeader({
+    id: "ai-agents",
+    title: "Hermes Assistant",
+    actions: agentsHeaderActions,
+    notes: [
+      "One permanent administrator connection for Hermes. Set it up once, then rotate its token or disable it when needed.",
+      "Approval requests are actions Hermes wants to take that need a human sign-off before they run.",
+      "Recent activity is a read-only log of what Hermes has already done (latest 40).",
+    ],
+  });
   return `
     <section class="card admin-section admin-agent-section" id="admin-agents-section">
-      <div class="flex-between">
-        <div>
-          <h3 style="margin:0;">Hermes Assistant</h3>
-          <p class="subtle">One permanent administrator connection for Hermes. Set it up once, then rotate its token or disable it when needed.</p>
-        </div>
-        <button class="btn ghost admin-btn-sm ${state.adminAgentsLoading ? "is-loading" : ""}" type="button" data-action="admin-agents-refresh">${state.adminAgentsLoading ? "Refreshing..." : "Refresh"}</button>
-      </div>
+      ${agentsHeader}
       ${state.adminAgentsError ? `<p class="subtle import-status is-error">${escapeHtml(state.adminAgentsError)}</p>` : ""}
       ${tokenPanel}
       ${hasLoadedAssistants && !hasAssistant ? `
@@ -31621,6 +32001,170 @@ function renderAdminAgentsSection() {
       </div>
     </section>
   `;
+}
+
+// Lightweight counts used only by the admin Dashboard. Each read is isolated:
+// a slow or refused table leaves one dash in the UI instead of blocking the
+// rest of the page.
+const ADMIN_DASHBOARD_COUNT_KEYS = [
+  "testsLast7Days",
+  "activeStudentsLast7Days",
+  "onlineNow",
+  "videoCourses",
+  "videoCoursesPublished",
+  "videoCoursesPendingReview",
+  "videoEnrollmentRequestsPending",
+  "videoEnrolledStudents",
+  "couponRedemptionsLast7Days",
+];
+
+function createEmptyAdminDashboardCounts() {
+  return Object.fromEntries(ADMIN_DASHBOARD_COUNT_KEYS.map((key) => [key, null]));
+}
+
+async function readAdminDashboardHeadCount(query, timeoutMessage) {
+  const result = await runWithTimeoutResult(
+    query,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    timeoutMessage,
+  );
+  if (result?.error) {
+    throw result.error;
+  }
+  if (!Number.isInteger(result?.count)) {
+    throw new Error("Count was not returned.");
+  }
+  return result.count;
+}
+
+async function loadAdminDashboardCounts(options = {}) {
+  const force = Boolean(options?.force);
+  const nowMs = Date.now();
+  if (state.adminDashboardCountsLoading) {
+    return state.adminDashboardCounts;
+  }
+  if (
+    !force
+    && state.adminDashboardCountsLoadedAt
+    && (nowMs - state.adminDashboardCountsLoadedAt) < ADMIN_DASHBOARD_COUNTS_TTL_MS
+  ) {
+    return state.adminDashboardCounts;
+  }
+
+  const counts = createEmptyAdminDashboardCounts();
+  const client = getRelationalClient();
+  if (!client) {
+    state.adminDashboardCounts = counts;
+    state.adminDashboardCountsLoadedAt = nowMs;
+    return counts;
+  }
+
+  const weekStartIso = new Date(nowMs - (7 * 24 * 60 * 60 * 1000)).toISOString();
+  const onlineCutoffIso = new Date(nowMs - PRESENCE_ONLINE_STALE_MS).toISOString();
+  const tasks = [
+    {
+      key: "testsLast7Days",
+      load: () => readAdminDashboardHeadCount(
+        client.from("test_blocks").select("user_id", { count: "exact", head: true }).gte("created_at", weekStartIso),
+        "Counting tests from the last 7 days timed out.",
+      ),
+    },
+    {
+      key: "activeStudentsLast7Days",
+      load: async () => {
+        const result = await runWithTimeoutResult(
+          client.from("test_blocks").select("user_id").gte("created_at", weekStartIso).limit(5000),
+          SUPABASE_QUERY_TIMEOUT_MS,
+          "Counting active students from the last 7 days timed out.",
+        );
+        if (result?.error) {
+          throw result.error;
+        }
+        if (!Array.isArray(result?.data)) {
+          throw new Error("Active student rows were not returned.");
+        }
+        return new Set(result.data.map((row) => String(row?.user_id || "").trim()).filter(Boolean)).size;
+      },
+    },
+    {
+      key: "onlineNow",
+      load: () => readAdminDashboardHeadCount(
+        client
+          .from("user_presence")
+          .select("user_id", { count: "exact", head: true })
+          .eq("role", "student")
+          .eq("is_online", true)
+          .gte("last_seen_at", onlineCutoffIso),
+        "Counting online students timed out.",
+      ),
+    },
+    {
+      key: "videoCourses",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_courses").select("id", { count: "exact", head: true }),
+        "Counting video courses timed out.",
+      ),
+    },
+    {
+      key: "videoCoursesPublished",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_courses").select("id", { count: "exact", head: true }).eq("is_published", true),
+        "Counting published video courses timed out.",
+      ),
+    },
+    {
+      key: "videoCoursesPendingReview",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_courses").select("id", { count: "exact", head: true }).eq("review_status", "pending"),
+        "Counting courses awaiting review timed out.",
+      ),
+    },
+    {
+      key: "videoEnrollmentRequestsPending",
+      load: () => readAdminDashboardHeadCount(
+        client
+          .from("platform_course_enrollment_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending"),
+        "Counting pending course enrollment requests timed out.",
+      ),
+    },
+    {
+      key: "videoEnrolledStudents",
+      load: () => readAdminDashboardHeadCount(
+        client.from("platform_course_enrollments").select("user_id", { count: "exact", head: true }),
+        "Counting video course enrollments timed out.",
+      ),
+    },
+    {
+      key: "couponRedemptionsLast7Days",
+      load: () => readAdminDashboardHeadCount(
+        client
+          .from("platform_course_coupon_redemptions")
+          .select("redeemed_at", { count: "exact", head: true })
+          .gte("redeemed_at", weekStartIso),
+        "Counting recent coupon redemptions timed out.",
+      ),
+    },
+  ];
+
+  state.adminDashboardCountsLoading = true;
+  try {
+    const results = await Promise.allSettled(tasks.map((task) => Promise.resolve().then(task.load)));
+    results.forEach((result, index) => {
+      const key = tasks[index].key;
+      if (result.status === "fulfilled") {
+        counts[key] = result.value;
+        return;
+      }
+      console.warn(`Could not load admin dashboard count (${key}).`, result.reason?.message || result.reason);
+    });
+    state.adminDashboardCounts = counts;
+    state.adminDashboardCountsLoadedAt = Date.now();
+    return counts;
+  } finally {
+    state.adminDashboardCountsLoading = false;
+  }
 }
 
 // Auto MCQ access for new students. Migration 20260928125817 (live):
@@ -31965,6 +32509,224 @@ async function setAdminUserMcqAccessFromRow(row, button, nextEnabledOverride = n
 // switch that decides whether a university offers the MCQ Bank. Every write
 // goes straight to public.universities (admin-only RLS) and is followed by a
 // fresh read; nothing is merged into the cached list locally.
+let adminSharedUiWired = false;
+
+function loadAdminHelpOpenState() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ADMIN_HELP_STORAGE_KEY) || "{}");
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+    return Object.fromEntries(Object.entries(stored).map(([id, open]) => [id, Boolean(open)]));
+  } catch (_) {
+    return {};
+  }
+}
+
+function getAdminHelpOpenState() {
+  if (!state.adminHelpOpen || typeof state.adminHelpOpen !== "object" || Array.isArray(state.adminHelpOpen)) {
+    state.adminHelpOpen = loadAdminHelpOpenState();
+  }
+  return state.adminHelpOpen;
+}
+
+function setAdminHelpOpen(id, open) {
+  const pageId = String(id || "").trim();
+  if (!pageId) return;
+  getAdminHelpOpenState()[pageId] = Boolean(open);
+  try {
+    localStorage.setItem(ADMIN_HELP_STORAGE_KEY, JSON.stringify(state.adminHelpOpen));
+  } catch (_) {
+    // UI preference only. Private windows and full storage can reject writes.
+  }
+}
+
+function renderAdminIconButton({ icon, label, attrs = "", variant = "", busy = false } = {}) {
+  const icons = {
+    plus: '<path d="M12 5v14M5 12h14"></path>',
+    refresh: '<path d="M20 6v5h-5"></path><path d="M19 11a7.5 7.5 0 1 0 .2 3"></path>',
+    info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>',
+    more: '<circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>',
+    filter: '<path d="M4 5h16l-6.5 7.5v5.4l-3 1.6v-7L4 5Z"></path>',
+    download: '<path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"></path>',
+    settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"></path>',
+    search: '<circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path>',
+    x: '<path d="M18 6 6 18M6 6l12 12"></path>',
+    pencil: '<path d="M16.9 3.6a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19 4 20l1-4.5L16.9 3.6Z"></path><path d="m15 5.5 3.5 3.5"></path>',
+    trash: '<path d="M4 7h16"></path><path d="M10 11v6M14 11v6"></path><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"></path>',
+  };
+  const iconName = Object.prototype.hasOwnProperty.call(icons, icon) ? icon : "info";
+  const variantClass = variant === "primary" || variant === "is-primary"
+    ? " is-primary"
+    : variant === "danger" || variant === "is-danger" ? " is-danger" : "";
+  const busyAttributes = busy ? ' disabled aria-busy="true"' : "";
+  const spinClass = busy && iconName === "refresh" ? " is-spinning" : "";
+  return `<button type="button" class="admin-icon-btn${variantClass}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" ${attrs}${busyAttributes}>
+    <svg class="admin-icon-svg${spinClass}" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[iconName]}</svg>
+  </button>`;
+}
+
+function renderAdminPageHeader({ id, title, count = null, actions = "", notes = [] } = {}) {
+  const pageId = String(id || "").trim();
+  const helpNotes = Array.isArray(notes) ? notes.filter(Boolean) : [];
+  const hasNotes = Boolean(pageId && helpNotes.length);
+  const open = hasNotes && Boolean(getAdminHelpOpenState()[pageId]);
+  const countText = count === null || count === undefined ? "" : ` <span class="admin-page-header-count">· ${escapeHtml(String(count))}</span>`;
+  const helpButton = hasNotes
+    ? renderAdminIconButton({
+      icon: "info",
+      label: "How this page works",
+      attrs: `data-action="admin-help-toggle" data-help-id="${escapeHtml(pageId)}" aria-expanded="${open ? "true" : "false"}" aria-controls="admin-help-${escapeHtml(pageId)}"`,
+    })
+    : "";
+  const notePanel = hasNotes ? `<div class="admin-help-note" id="admin-help-${escapeHtml(pageId)}" data-admin-help-note="${escapeHtml(pageId)}" ${open ? "" : "hidden"}>
+    <button type="button" class="admin-help-note-close" data-action="admin-help-toggle" data-help-id="${escapeHtml(pageId)}" aria-label="Close how this page works" title="Close">×</button>
+    <h4>How this page works</h4>
+    <ul>${helpNotes.map((note) => `<li>${note}</li>`).join("")}</ul>
+  </div>` : "";
+  return `<header class="admin-page-header">
+    <h3>${escapeHtml(title)}${countText}</h3>
+    <div class="admin-page-header-actions">${actions}${helpButton}</div>
+  </header>${notePanel}`;
+}
+
+function renderAdminRowMenu({ id, label, items = [], disabled = false } = {}) {
+  const menuId = String(id || "").trim();
+  const safeItems = Array.isArray(items) ? items.filter((item) => item && item.label) : [];
+  const orderedItems = [...safeItems.filter((item) => !item.danger), ...safeItems.filter((item) => item.danger)];
+  const firstDangerIndex = orderedItems.findIndex((item) => item.danger);
+  const menuItems = orderedItems.map((item, index) => `${index === firstDangerIndex && firstDangerIndex > 0 ? '<div class="admin-row-menu-divider" role="separator"></div>' : ""}
+    <button type="button" role="menuitem" class="admin-row-menu-item${item.danger ? " is-danger" : ""}" ${item.attrs || ""} ${item.disabled ? "disabled" : ""}>${escapeHtml(item.label)}</button>`).join("");
+  return `<div class="admin-row-menu" data-admin-row-menu="${escapeHtml(menuId)}">
+    ${renderAdminIconButton({
+      icon: "more",
+      label,
+      attrs: `data-action="admin-row-menu-toggle" data-menu-id="${escapeHtml(menuId)}" aria-haspopup="menu" aria-expanded="false" aria-controls="admin-row-menu-${escapeHtml(menuId)}"${disabled ? " disabled" : ""}`,
+    })}
+    <div class="admin-row-menu-list" id="admin-row-menu-${escapeHtml(menuId)}" role="menu" hidden>${menuItems}</div>
+  </div>`;
+}
+
+function closeAdminRowMenus({ restoreFocus = false, except = null } = {}) {
+  let focusTarget = null;
+  appEl.querySelectorAll("[data-admin-row-menu]").forEach((menu) => {
+    if (menu === except) return;
+    const toggle = menu.querySelector("[data-action='admin-row-menu-toggle']");
+    const list = menu.querySelector(".admin-row-menu-list");
+    if (!toggle || !list || list.hidden) return;
+    list.hidden = true;
+    list.removeAttribute("style");
+    toggle.setAttribute("aria-expanded", "false");
+    focusTarget = focusTarget || toggle;
+  });
+  if (restoreFocus) focusTarget?.focus();
+}
+
+function positionAdminRowMenu(menu) {
+  const toggle = menu?.querySelector("[data-action='admin-row-menu-toggle']");
+  const list = menu?.querySelector(".admin-row-menu-list");
+  if (!toggle || !list || list.hidden) return;
+  const gutter = 8;
+  const gap = 6;
+  const toggleBox = toggle.getBoundingClientRect();
+  const menuBox = list.getBoundingClientRect();
+  const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+  const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+  const left = Math.max(gutter, Math.min(toggleBox.right - menuBox.width, viewportWidth - menuBox.width - gutter));
+  const belowTop = toggleBox.bottom + gap;
+  const aboveTop = toggleBox.top - menuBox.height - gap;
+  const top = belowTop + menuBox.height <= viewportHeight - gutter || aboveTop < gutter ? belowTop : aboveTop;
+  const targetLeft = Math.round(left);
+  const targetTop = Math.round(Math.max(gutter, top));
+  list.style.left = `${targetLeft}px`;
+  list.style.top = `${targetTop}px`;
+  // An ancestor with backdrop-filter/transform/filter (e.g. .panel.admin-shell)
+  // becomes the containing block for position: fixed, so the list lands offset
+  // by that ancestor's position. Measure where it really went and cancel it.
+  const placed = list.getBoundingClientRect();
+  const offsetX = Math.round(placed.left) - targetLeft;
+  const offsetY = Math.round(placed.top) - targetTop;
+  if (offsetX || offsetY) {
+    list.style.left = `${targetLeft - offsetX}px`;
+    list.style.top = `${targetTop - offsetY}px`;
+  }
+}
+
+function openAdminRowMenu(menu, focusEdge = "") {
+  const toggle = menu?.querySelector("[data-action='admin-row-menu-toggle']");
+  const list = menu?.querySelector(".admin-row-menu-list");
+  if (!toggle || !list || toggle.disabled) return;
+  closeAdminRowMenus({ except: menu });
+  list.hidden = false;
+  toggle.setAttribute("aria-expanded", "true");
+  positionAdminRowMenu(menu);
+  const items = [...list.querySelectorAll("[role='menuitem']:not(:disabled)")];
+  if (focusEdge === "first") items[0]?.focus();
+  if (focusEdge === "last") items.at(-1)?.focus();
+}
+
+function wireAdminSharedUi() {
+  if (adminSharedUiWired) return;
+  adminSharedUiWired = true;
+  appEl.addEventListener("click", (event) => {
+    const helpToggle = event.target.closest?.("[data-action='admin-help-toggle']");
+    if (helpToggle) {
+      const id = String(helpToggle.getAttribute("data-help-id") || "").trim();
+      const panel = [...appEl.querySelectorAll("[data-admin-help-note]")]
+        .find((entry) => entry.getAttribute("data-admin-help-note") === id);
+      if (panel) {
+        const open = panel.hidden;
+        panel.hidden = !open;
+        appEl.querySelectorAll("[data-action='admin-help-toggle']").forEach((control) => {
+          if (control.getAttribute("data-help-id") === id) control.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        setAdminHelpOpen(id, open);
+      }
+      return;
+    }
+    const rowToggle = event.target.closest?.("[data-action='admin-row-menu-toggle']");
+    if (rowToggle) {
+      const menu = rowToggle.closest("[data-admin-row-menu]");
+      const list = menu?.querySelector(".admin-row-menu-list");
+      if (!menu || !list) return;
+      if (list.hidden) openAdminRowMenu(menu);
+      else closeAdminRowMenus({ restoreFocus: true });
+      return;
+    }
+    if (event.target.closest?.(".admin-row-menu-item")) closeAdminRowMenus();
+  }, true);
+  appEl.addEventListener("keydown", (event) => {
+    const toggle = event.target.closest?.("[data-action='admin-row-menu-toggle']");
+    if (toggle && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      openAdminRowMenu(toggle.closest("[data-admin-row-menu]"), event.key === "ArrowDown" ? "first" : "last");
+      return;
+    }
+    const item = event.target.closest?.(".admin-row-menu-item");
+    if (!item) return;
+    const menu = item.closest("[data-admin-row-menu]");
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeAdminRowMenus({ restoreFocus: true });
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...menu.querySelectorAll("[role='menuitem']:not(:disabled)")];
+    const currentIndex = items.indexOf(item);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    items[(currentIndex + step + items.length) % items.length]?.focus();
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest?.("[data-admin-row-menu]")) closeAdminRowMenus({ restoreFocus: true });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && appEl.querySelector(".admin-row-menu-list:not([hidden])")) {
+      closeAdminRowMenus({ restoreFocus: true });
+    }
+  });
+  window.addEventListener("resize", () => closeAdminRowMenus(), { passive: true });
+  window.addEventListener("scroll", () => closeAdminRowMenus(), { capture: true, passive: true });
+}
+
 function newAdminUniversityDraft() {
   return { id: "", name: "", name_ar: "", sort_order: 100, is_active: true, mcq_bank_available: false };
 }
@@ -31993,7 +32755,8 @@ function renderAdminUniversitiesSection() {
   }
   const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving);
   const draft = state.adminUniversityDraft;
-  const rows = getCachedUniversities().map((university) => {
+  const universities = getCachedUniversities();
+  const rows = universities.map((university) => {
     const students = countStudentsAtUniversity(university.id);
     return `<tr data-university-id="${escapeHtml(university.id)}">
       <td><b>${escapeHtml(university.name)}</b>${university.name_ar ? `<br><small dir="rtl" lang="ar">${escapeHtml(university.name_ar)}</small>` : ""}</td>
@@ -32001,42 +32764,86 @@ function renderAdminUniversitiesSection() {
       <td><span class="badge ${university.is_active ? "good" : "neutral"}">${university.is_active ? "Shown" : "Hidden"}</span></td>
       <td><span class="badge ${university.mcq_bank_available ? "good" : "neutral"}">${university.mcq_bank_available ? "Available" : "Not offered"}</span></td>
       <td>${escapeHtml(String(students))}</td>
-      <td><div class="admin-popup-actions">
-        <button type="button" class="btn ghost admin-btn-sm" data-university-edit="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>Edit</button>
-        <button type="button" class="btn ghost admin-btn-sm" data-university-toggle-active="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>${university.is_active ? "Hide from sign-up" : "Show at sign-up"}</button>
-        <button type="button" class="btn ghost admin-btn-sm" data-university-toggle-mcq="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>${university.mcq_bank_available ? "Turn off MCQ Bank" : "Offer MCQ Bank"}</button>
-        <button type="button" class="btn danger admin-btn-sm" data-university-delete="${escapeHtml(university.id)}" ${busy ? "disabled" : ""}>Delete</button>
-      </div></td>
+      <td class="admin-university-actions-column">${renderAdminRowMenu({
+        id: `university-${university.id}`,
+        label: `Actions for ${university.name}`,
+        disabled: busy,
+        items: [
+          { label: "Edit", attrs: `data-university-edit="${escapeHtml(university.id)}"` },
+          { label: university.is_active ? "Hide from sign-up" : "Show at sign-up", attrs: `data-university-toggle-active="${escapeHtml(university.id)}"` },
+          { label: university.mcq_bank_available ? "Turn off MCQ Bank" : "Offer MCQ Bank", attrs: `data-university-toggle-mcq="${escapeHtml(university.id)}"` },
+          { label: "Delete", attrs: `data-university-delete="${escapeHtml(university.id)}"`, danger: true },
+        ],
+      })}</td>
     </tr>`;
   }).join("");
   const emptyRow = state.universitiesLoading
     ? "Loading universities…"
     : state.universitiesError ? "Universities could not be loaded." : "No universities yet. Add the first one.";
+  const headerActions = `${renderAdminIconButton({
+    icon: "refresh",
+    label: "Reload universities",
+    attrs: `data-university-refresh${state.adminUniversitySaving ? " disabled" : ""}`,
+    busy: Boolean(state.universitiesLoading),
+  })}${renderAdminIconButton({
+    icon: "plus",
+    label: "Add university",
+    attrs: `data-university-new${busy ? " disabled" : ""}`,
+    variant: "primary",
+  })}`;
+  const pageHeader = renderAdminPageHeader({
+    id: "universities",
+    title: "Universities",
+    count: universities.length,
+    actions: headerActions,
+    notes: [
+      "Students pick their university from this list when they sign up.",
+      "The MCQ Bank is only for <b>Medicine</b> students at universities where it's turned on. Everyone else gets Video Courses. This is applied automatically.",
+      "Hiding a university removes it from sign-up but keeps its students. A university with students can't be deleted — hide it instead.",
+    ],
+  });
   return `<section class="card admin-section" id="admin-universities-section">
-    <div class="flex-between"><div><h3>Universities</h3>
-      <p class="subtle">The list students choose from when they create an account. The MCQ Bank is only offered to <b>Medicine</b> students at universities where it is available; everyone else gets Video Courses only. The database applies this automatically.</p></div>
-      <div class="admin-popup-actions">
-        <button type="button" class="btn ghost" data-university-refresh ${busy ? "disabled" : ""}>${state.universitiesLoading ? "Loading…" : "Refresh"}</button>
-        <button type="button" class="btn" data-university-new ${busy ? "disabled" : ""}>Add university</button>
-      </div></div>
+    ${pageHeader}
     ${state.universitiesError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.universitiesError)}</div>` : ""}
     <div class="table-wrap"><table><thead><tr><th>University</th><th>Sort</th><th>Sign-up</th><th>MCQ Bank</th><th>Students</th><th>Actions</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="6">${escapeHtml(emptyRow)}</td></tr>`}</tbody></table></div>
-    <p class="subtle">Hidden universities disappear from sign-up but keep their students. A university that still has students cannot be deleted; hide it instead.</p>
-    ${draft ? `<form id="admin-university-form" class="admin-university-editor"><h3>${draft.id ? "Edit university" : "Add university"}</h3>
-      <fieldset ${busy ? "disabled" : ""}>
-      <div class="form-row">
-        <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" /></label>
-        <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
-      </div>
-      <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
-      <p class="subtle">Lower numbers appear first in the sign-up list.</p>
-      <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
-      <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
-      <div class="admin-popup-actions"><button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save university"}</button>
-      <button class="btn ghost" type="button" data-university-cancel>Close editor</button></div>
-      </fieldset></form>` : ""}
   </section>`;
+}
+
+function renderAdminUniversityDialog() {
+  const draft = state.adminUniversityDraft;
+  if (!draft) return "";
+  const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving);
+  const dialogTitle = draft.id ? `Edit ${String(draft.name || "university")}` : "Add university";
+  const dialogSubtitle = draft.id ? `<p class="admin-dialog-subtitle">
+    <span>${escapeHtml(draft.name || "University")}</span>
+    ${draft.name_ar ? `<span dir="rtl" lang="ar">${escapeHtml(draft.name_ar)}</span>` : ""}
+  </p>` : "";
+  return `<div class="admin-dialog" data-admin-dialog="university">
+    <button type="button" class="admin-dialog-backdrop" data-university-cancel aria-label="Close university editor" ${state.adminUniversitySaving ? "disabled" : ""}></button>
+    <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="admin-university-dialog-title">
+      <div class="admin-dialog-head">
+        <div><h3 id="admin-university-dialog-title">${escapeHtml(dialogTitle)}</h3>${dialogSubtitle}</div>
+        <button type="button" class="admin-dialog-close" data-university-cancel aria-label="Close university editor" title="Close" ${state.adminUniversitySaving ? "disabled" : ""}>×</button>
+      </div>
+      <form id="admin-university-form" class="admin-university-editor">
+        <fieldset ${busy ? "disabled" : ""}>
+          <div class="form-row">
+            <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" /></label>
+            <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
+          </div>
+          <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
+          <p class="subtle admin-university-sort-hint">Lower numbers appear first.</p>
+          <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
+          <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
+          <div class="admin-dialog-actions">
+            <button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save"}</button>
+            <button class="btn ghost" type="button" data-university-cancel>Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+  </div>`;
 }
 
 function captureAdminUniversityDraft(form) {
@@ -32047,6 +32854,60 @@ function captureAdminUniversityDraft(form) {
   draft.sort_order = form.elements.sort_order.value;
   draft.is_active = form.elements.is_active.checked;
   draft.mcq_bank_available = form.elements.mcq_bank_available.checked;
+  state.adminUniversityDraftDirty = getAdminUniversityDraftSnapshot(draft) !== state.adminUniversityDraftInitial;
+}
+
+function getAdminUniversityDraftSnapshot(draft) {
+  if (!draft) return "";
+  return JSON.stringify({
+    id: String(draft.id || ""),
+    name: String(draft.name || ""),
+    name_ar: String(draft.name_ar || ""),
+    sort_order: String(draft.sort_order ?? 100),
+    is_active: Boolean(draft.is_active),
+    mcq_bank_available: Boolean(draft.mcq_bank_available),
+  });
+}
+
+function beginAdminUniversityEditor(draft, returnFocus) {
+  state.adminUniversityDraft = draft;
+  state.adminUniversityDraftInitial = getAdminUniversityDraftSnapshot(draft);
+  state.adminUniversityDraftDirty = false;
+  state.adminUniversityDialogReturnFocus = String(returnFocus || "new");
+  state.adminUniversityDialogNeedsFocus = true;
+  refreshAdminUniversitiesView();
+}
+
+function focusAdminUniversityDialogReturnTarget(returnFocus) {
+  window.setTimeout(() => {
+    if (returnFocus === "new") {
+      appEl.querySelector("[data-university-new]")?.focus();
+      return;
+    }
+    const targetMenuId = `university-${returnFocus}`;
+    const target = [...appEl.querySelectorAll("[data-action='admin-row-menu-toggle']")]
+      .find((button) => button.getAttribute("data-menu-id") === targetMenuId);
+    target?.focus();
+  }, 0);
+}
+
+function finishAdminUniversityEditorClose({ restoreFocus = true } = {}) {
+  const returnFocus = state.adminUniversityDialogReturnFocus;
+  state.adminUniversityDraft = null;
+  state.adminUniversityDraftInitial = "";
+  state.adminUniversityDraftDirty = false;
+  state.adminUniversityDialogNeedsFocus = false;
+  state.adminUniversityDialogReturnFocus = "";
+  refreshAdminUniversitiesView();
+  if (restoreFocus) focusAdminUniversityDialogReturnTarget(returnFocus);
+}
+
+function requestAdminUniversityEditorClose(form, { restoreFocus = true } = {}) {
+  if (state.adminUniversitySaving) return false;
+  captureAdminUniversityDraft(form);
+  if (state.adminUniversityDraftDirty && !window.confirm("Discard your changes to this university?")) return false;
+  finishAdminUniversityEditorClose({ restoreFocus });
+  return true;
 }
 
 // Runs one write, then re-reads the list (and, when MCQ availability moved,
@@ -32083,9 +32944,37 @@ async function runAdminUniversityMutation(action, options = {}) {
 function wireAdminUniversities() {
   const section = appEl.querySelector("#admin-universities-section");
   if (!section) return;
-  const form = section.querySelector("#admin-university-form");
+  const form = appEl.querySelector("#admin-university-form");
+  const dialog = appEl.querySelector("[data-admin-dialog='university']");
   const capture = () => captureAdminUniversityDraft(form);
   const findUniversity = (id) => getCachedUniversities().find((entry) => entry.id === id) || null;
+  form?.addEventListener("input", capture);
+  form?.addEventListener("change", capture);
+  if (dialog && state.adminUniversityDialogNeedsFocus) {
+    state.adminUniversityDialogNeedsFocus = false;
+    window.setTimeout(() => form?.elements.name?.focus(), 0);
+  }
+  dialog?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      requestAdminUniversityEditorClose(form);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const panel = dialog.querySelector(".admin-dialog-panel");
+    const focusable = [...(panel?.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])") || [])]
+      .filter((element) => !element.hidden);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
   section.querySelector("[data-university-refresh]")?.addEventListener("click", async () => {
     capture();
     const loading = loadUniversities({ force: true });
@@ -32094,27 +32983,26 @@ function wireAdminUniversities() {
     refreshAdminUniversitiesView();
   });
   section.querySelector("[data-university-new]")?.addEventListener("click", () => {
-    if (state.adminUniversityDraft && !window.confirm("Discard the unsaved changes in the editor?")) return;
-    state.adminUniversityDraft = newAdminUniversityDraft();
-    refreshAdminUniversitiesView();
+    capture();
+    if (state.adminUniversityDraftDirty && !window.confirm("Discard your changes to this university?")) return;
+    beginAdminUniversityEditor(newAdminUniversityDraft(), "new");
   });
-  section.querySelector("[data-university-cancel]")?.addEventListener("click", () => {
-    state.adminUniversityDraft = null;
-    refreshAdminUniversitiesView();
-  });
+  appEl.querySelectorAll("[data-university-cancel]").forEach((button) => button.addEventListener("click", () => {
+    requestAdminUniversityEditorClose(form);
+  }));
   section.querySelectorAll("[data-university-edit]").forEach((button) => button.addEventListener("click", () => {
     const university = findUniversity(button.getAttribute("data-university-edit"));
     if (!university) return;
-    if (state.adminUniversityDraft && !window.confirm("Discard the unsaved changes in the editor?")) return;
-    state.adminUniversityDraft = {
+    capture();
+    if (state.adminUniversityDraftDirty && !window.confirm("Discard your changes to this university?")) return;
+    beginAdminUniversityEditor({
       id: university.id,
       name: university.name,
       name_ar: university.name_ar || "",
       sort_order: university.sort_order,
       is_active: university.is_active,
       mcq_bank_available: university.mcq_bank_available,
-    };
-    refreshAdminUniversitiesView();
+    }, university.id);
   }));
   section.querySelectorAll("[data-university-toggle-active]").forEach((button) => button.addEventListener("click", () => {
     capture();
@@ -32155,7 +33043,7 @@ function wireAdminUniversities() {
         "University delete timed out.",
       );
       if (!rows?.length) throw new Error("University was not deleted");
-      if (state.adminUniversityDraft?.id === university.id) state.adminUniversityDraft = null;
+      if (state.adminUniversityDraft?.id === university.id) finishAdminUniversityEditorClose();
       toast(`${university.name} deleted.`);
     });
   }));
@@ -32184,8 +33072,7 @@ function wireAdminUniversities() {
       toast(existing ? "University saved." : "University added.");
     }, { refreshProfiles: Boolean(existing && mcqChanged) });
     if (saved) {
-      state.adminUniversityDraft = null;
-      refreshAdminUniversitiesView();
+      finishAdminUniversityEditorClose();
     }
   });
 }
@@ -32318,7 +33205,7 @@ function renderAdminPopupsSection() {
     .map((course) => [course.id, getCoursePlatformCourseTitle(course)]);
   if (draft?.target_video_course_id && !courses.some(([id]) => id === draft.target_video_course_id)) courses.push([draft.target_video_course_id, "Previously selected course (unavailable)"]);
   return `<section class="card admin-section" id="admin-popups-section">
-    <div class="flex-between"><div><h3>Pop-ups</h3><p class="subtle">Full-screen campaigns for the MedBank mobile app.</p></div><div class="admin-popup-actions">
+    <div class="flex-between"><div class="admin-popup-actions">
     <button type="button" class="btn ghost" data-popup-refresh ${state.adminPopupsLoading || state.adminPopupSaving ? "disabled" : ""}>${state.adminPopupsLoading ? "Loading…" : "Refresh"}</button>
     <button type="button" class="btn" data-popup-new ${blocked ? "disabled" : ""}>New campaign</button></div></div>
     ${!utils ? '<p role="status">Pop-up tools could not load. Reload this page to enable editing.</p>' : ""}
@@ -32518,111 +33405,138 @@ function wireAdminPopups() {
   });
 }
 
-function renderAdminDataSidebarNav(activeAdminPage) {
-  const items = [
-    ["dashboard", "Dashboard"],
-    ["users", "Users"],
-    ["universities", "Universities"],
-    ["mcq-subjects", "MCQ Subjects"],
-    ["questions", "Questions"],
-    ["bulk-import", "Bulk Import"],
-    ["notifications", "Notifications"],
-    ["popups", "Pop-ups"],
-    ["site-access", "Site Access"],
-    ["ai-agents", "Hermes Assistant"],
-    ["activity", "Activity"],
-    ["logs", "Logs"],
-  ];
-  return items.map(([page, label]) => `
-    <button class="btn ghost ${activeAdminPage === page ? "is-active" : ""}" type="button" data-action="admin-page" data-page="${escapeHtml(page)}">${escapeHtml(label)}</button>
-  `).join("");
-}
-
-function renderAdminCoursesPlatformSidebarNav(activeSection) {
+function renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection) {
   const pendingRequestCount = (state.adminCoursesPlatformRequests || []).filter(
     (request) => String(request?.status || "").trim() === "pending",
   ).length;
-  const items = [
-    ["overview", "Course metadata", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-        <polyline points="14 2 14 8 20 8"></polyline>
-        <line x1="16" y1="13" x2="8" y2="13"></line>
-        <line x1="16" y1="17" x2="8" y2="17"></line>
-        <polyline points="10 9 9 9 8 9"></polyline>
-      </svg>
-    `],
-    ["builder", "Course Builder", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-        <line x1="9" y1="3" x2="9" y2="21"></line>
-        <line x1="9" y1="9" x2="21" y2="9"></line>
-        <line x1="9" y1="15" x2="21" y2="15"></line>
-      </svg>
-    `],
-    ["approvals", "Course Approvals", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M9 11l3 3L22 4"></path>
-        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-      </svg>
-    `],
-    ["enrollments", "Enrolled Users", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
-        <circle cx="9" cy="7" r="4"></circle>
-        <path d="M22 11l-3 3-2-2"></path>
-      </svg>
-    `],
-    ["coupons", "Activation Coupons", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20 12a2 2 0 0 0 0-4V4H4v4a2 2 0 0 0 0 4v4a2 2 0 0 0 0 4h16v-4a2 2 0 0 0 0-4z"></path>
-        <path d="M12 4v16"></path>
-      </svg>
-    `],
-    ["suggestions", "Suggestions", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-      </svg>
-    `],
-    ["announcements", "Announcements", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-      </svg>
-    `],
-    ["requests", "Enrollment Requests", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-      </svg>
-    `],
-    ["availability", "Availability", `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-        <path d="M9 12l2 2 4-4"></path>
-      </svg>
-    `],
-  ];
   const pendingApprovalCount = (state.adminCoursesPlatformCourses || []).filter(
     (course) => String(course?.review_status || "").trim() === "pending",
   ).length;
-  return items.map(([section, label, svg]) => {
-    const badgeCount = section === "requests"
-      ? pendingRequestCount
-      : section === "approvals"
-        ? pendingApprovalCount
-        : 0;
-    const navBadge = badgeCount
-      ? `<span class="nav-badge">${badgeCount > 99 ? "99+" : badgeCount}</span>`
-      : "";
+  const badgeFor = (item) => (item.section === "requests"
+    ? pendingRequestCount
+    : item.section === "approvals"
+      ? pendingApprovalCount
+      : 0);
+  const badgeHtml = (count) => (count
+    ? `<span class="nav-badge">${count > 99 ? "99+" : count}</span>`
+    : "");
+
+  // Whenever the current page changes (sidebar, in-page links, first load),
+  // open the group that holds it. Afterwards the admin may collapse it again,
+  // and polling re-renders keep that choice because the page did not change.
+  const activeKey = activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE
+    ? `${activeAdminPage}:${activeCoursePlatformSection}`
+    : activeAdminPage;
+  const activeGroup = ADMIN_NAV_GROUPS.find((group) => group.items.some(
+    (item) => isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection),
+  ));
+  if (activeGroup && state.adminNavLastActiveKey !== activeKey) {
+    state.adminNavLastActiveKey = activeKey;
+    if (activeGroup.collapsible !== false && getAdminNavOpenGroups()[activeGroup.id] !== true) {
+      setAdminNavGroupOpen(activeGroup.id, true);
+    }
+  }
+  const openGroups = getAdminNavOpenGroups();
+
+  return ADMIN_NAV_GROUPS.map((group) => {
+    const itemsHtml = group.items.map((item) => {
+      const isActive = isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection);
+      const dataAttributes = item.section
+        ? `data-action="admin-course-platform-section" data-section="${escapeHtml(item.section)}"`
+        : `data-action="admin-page" data-page="${escapeHtml(item.page)}"`;
+      return `
+        <button class="btn ghost ${isActive ? "is-active" : ""}" type="button" ${dataAttributes}${isActive ? ' aria-current="page"' : ""}>
+          <span>${escapeHtml(item.label)}</span>
+          ${badgeHtml(badgeFor(item))}
+        </button>
+      `;
+    }).join("");
+    if (group.collapsible === false) {
+      return `<div class="admin-nav-group is-static" role="group" aria-label="${escapeHtml(group.label)}">${itemsHtml}</div>`;
+    }
+    const isOpen = openGroups[group.id] === true;
+    const groupBadgeCount = group.items.reduce((sum, item) => sum + badgeFor(item), 0);
+    const containsActive = group === activeGroup;
+    const itemsId = `admin-nav-group-items-${escapeHtml(group.id)}`;
     return `
-    <button class="btn ghost ${activeSection === section ? "is-active" : ""}" type="button" data-action="admin-course-platform-section" data-section="${escapeHtml(section)}">
-      ${svg}
-      <span>${escapeHtml(label)}</span>
-      ${navBadge}
-    </button>
-  `;
+      <div class="admin-nav-group ${isOpen ? "is-open" : "is-collapsed"} ${containsActive ? "has-active" : ""}" data-nav-group="${escapeHtml(group.id)}">
+        <button class="admin-nav-group-toggle" type="button" data-action="admin-nav-group-toggle" data-group="${escapeHtml(group.id)}" aria-expanded="${isOpen ? "true" : "false"}" aria-controls="${itemsId}">
+          <svg class="admin-nav-group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>
+          <span class="admin-nav-group-label">${escapeHtml(group.label)}</span>
+          <span class="admin-nav-group-count">${group.items.length}</span>
+          <span class="admin-nav-group-badge">${badgeHtml(groupBadgeCount)}</span>
+        </button>
+        <div class="admin-nav-group-items" id="${itemsId}" role="group" aria-label="${escapeHtml(group.label)}">
+          ${itemsHtml}
+        </div>
+      </div>
+    `;
   }).join("");
+}
+
+// Which sidebar groups are open. Per-browser UI preference only, so it lives in
+// localStorage (wrapped: private windows can throw) rather than any synced key.
+const ADMIN_NAV_OPEN_GROUPS_STORAGE_KEY = "medbank_admin_nav_open_groups_v1";
+
+function getAdminNavOpenGroups() {
+  if (state.adminNavOpenGroups && typeof state.adminNavOpenGroups === "object") {
+    return state.adminNavOpenGroups;
+  }
+  let stored = {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(ADMIN_NAV_OPEN_GROUPS_STORAGE_KEY) || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      stored = parsed;
+    }
+  } catch (_error) {
+    stored = {};
+  }
+  state.adminNavOpenGroups = stored;
+  return stored;
+}
+
+function setAdminNavGroupOpen(groupId, open) {
+  const openGroups = { ...getAdminNavOpenGroups(), [groupId]: Boolean(open) };
+  state.adminNavOpenGroups = openGroups;
+  try {
+    window.localStorage.setItem(ADMIN_NAV_OPEN_GROUPS_STORAGE_KEY, JSON.stringify(openGroups));
+  } catch (_error) {
+    // Not persisted; the in-memory state still applies for this session.
+  }
+}
+
+function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection) {
+  return item.section
+    ? activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE && activeCoursePlatformSection === item.section
+    : activeAdminPage === item.page;
+}
+
+// Shared admin UI pieces (page header, icon buttons, dialog shell, row menu).
+// Centered dialog shell. `body`/`actions` are trusted HTML; `closeAction` is
+// the data-action shared by the backdrop and the × button, so a caller only
+// has to wire one click handler (plus Escape, see wireAdmin) to close it.
+function renderAdminDialog({ id, title, subtitle = "", body = "", actions = "", closeAction = "" } = {}) {
+  const dialogId = String(id || "").trim();
+  const titleId = `admin-dialog-title-${dialogId}`;
+  const safeClose = escapeHtml(String(closeAction || "").trim());
+  return `
+    <div class="admin-dialog" id="admin-dialog-${escapeHtml(dialogId)}" data-admin-dialog="${escapeHtml(dialogId)}" data-close-action="${safeClose}">
+      <button type="button" class="admin-dialog-backdrop" data-action="${safeClose}" aria-label="Close dialog"></button>
+      <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(titleId)}" tabindex="-1">
+        <div class="admin-dialog-head">
+          <div>
+            <h3 id="${escapeHtml(titleId)}">${escapeHtml(title)}</h3>
+            ${subtitle ? `<p class="subtle">${escapeHtml(subtitle)}</p>` : ""}
+          </div>
+          <button type="button" class="admin-icon-btn admin-dialog-close" data-action="${safeClose}" aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        <div class="admin-dialog-body">${body}</div>
+        ${actions ? `<div class="admin-dialog-actions">${actions}</div>` : ""}
+      </section>
+    </div>
+  `;
 }
 
 function renderAdmin() {
@@ -32633,7 +33547,6 @@ function renderAdmin() {
   const activeAdminPage = KNOWN_ADMIN_PAGES.has(String(state.adminPage || "").trim())
     ? state.adminPage
     : "dashboard";
-  const isCoursesPlatformAdmin = activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE;
   const activeCoursePlatformSection = getAdminCoursePlatformSection();
   if (activeAdminPage === "users" || activeAdminPage === "mcq-subjects" || activeAdminPage === "notifications") {
     syncUsersWithCurriculum();
@@ -32646,6 +33559,26 @@ function renderAdmin() {
       }
     });
   }
+  if (activeAdminPage === "dashboard") {
+    const dashboardCountsStale = !state.adminDashboardCountsLoadedAt
+      || (Date.now() - state.adminDashboardCountsLoadedAt) >= ADMIN_DASHBOARD_COUNTS_TTL_MS;
+    if ((!state.adminDashboardCounts || dashboardCountsStale) && !state.adminDashboardCountsLoading) {
+      loadAdminDashboardCounts().then(() => {
+        if (state.route === "admin" && state.adminPage === "dashboard") {
+          state.skipNextRouteAnimation = true;
+          render();
+        }
+      });
+    }
+    if (state.mcqAccessHeldCount === null && !state.mcqAccessHeldCountLoading) {
+      loadMcqAccessHeldCount().then((count) => {
+        if (count !== null && state.route === "admin" && state.adminPage === "dashboard") {
+          state.skipNextRouteAnimation = true;
+          render();
+        }
+      });
+    }
+  }
 
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
   let pageContent = "";
@@ -32653,94 +33586,6 @@ function renderAdmin() {
 
   if (activeAdminPage === "dashboard") {
     const users = getUsers();
-    let students = 0;
-    let admins = 0;
-    const academicYearCounts = new Map([
-      [1, 0],
-      [2, 0],
-      [3, 0],
-      [4, 0],
-      [5, 0],
-    ]);
-    users.forEach((account) => {
-      if (account.role === "admin") {
-        admins += 1;
-      } else if (account.role === "student") {
-        students += 1;
-        const academicYear = normalizeAcademicYearOrNull(account.academicYear);
-        if (academicYear !== null) {
-          academicYearCounts.set(academicYear, (academicYearCounts.get(academicYear) || 0) + 1);
-        }
-      }
-    });
-    const userStats = buildAdminUserStatistics(users);
-    const registrationYearRows = userStats.registrationByYear
-      .map((entry) => {
-        const count = Number(entry?.count) || 0;
-        const share = users.length ? Math.round((count / users.length) * 100) : 0;
-        const width = userStats.maxRegistrationYearCount
-          ? Math.max((count / userStats.maxRegistrationYearCount) * 100, count ? 8 : 0)
-          : 0;
-        return `
-          <div class="admin-dashboard-breakdown-row" role="listitem">
-            <div class="admin-dashboard-breakdown-head">
-              <span class="admin-dashboard-breakdown-label">${entry.year}</span>
-              <span class="admin-dashboard-breakdown-value">${count} user${count === 1 ? "" : "s"} · ${share}%</span>
-            </div>
-            <span class="admin-dashboard-breakdown-track" aria-hidden="true">
-              <span class="admin-dashboard-breakdown-fill" style="width: ${width.toFixed(1)}%;"></span>
-            </span>
-          </div>
-        `;
-      })
-      .join("");
-    const providerRows = userStats.providerBreakdown
-      .map((entry) => {
-        const count = Number(entry?.count) || 0;
-        const share = users.length ? Math.round((count / users.length) * 100) : 0;
-        const width = userStats.maxProviderCount
-          ? Math.max((count / userStats.maxProviderCount) * 100, count ? 8 : 0)
-          : 0;
-        return `
-          <div class="admin-dashboard-breakdown-row" role="listitem">
-            <div class="admin-dashboard-breakdown-head">
-              <span class="admin-dashboard-breakdown-label">${escapeHtml(entry.label)}</span>
-              <span class="admin-dashboard-breakdown-value">${count} user${count === 1 ? "" : "s"} · ${share}%</span>
-            </div>
-            <span class="admin-dashboard-breakdown-track" aria-hidden="true">
-              <span class="admin-dashboard-breakdown-fill" style="width: ${width.toFixed(1)}%;"></span>
-            </span>
-          </div>
-        `;
-      })
-      .join("");
-    const dashboardUserCards = [
-      {
-        value: users.length,
-        label: "Total users",
-        detail: `${students} students • ${admins} admins`,
-      },
-      {
-        value: admins,
-        label: "Admins",
-        detail: `${users.length - admins} non-admin users`,
-      },
-      ...[5, 4, 3, 2, 1].map((year) => ({
-        value: academicYearCounts.get(year) || 0,
-        label: `Year ${year}`,
-        detail: `Students assigned to Year ${year}`,
-      })),
-    ]
-      .map((card) => `
-        <article class="card">
-          <p class="metric">
-            ${card.value}
-            <small>${card.label}</small>
-            <small>${card.detail}</small>
-          </p>
-        </article>
-      `)
-      .join("");
     const questionSnapshot = getAdminQuestionCountSnapshot();
     const questionTotals = questionSnapshot?.totals || normalizeAdminQuestionCountEntry({});
     const questionCountLoading = Boolean(state.adminQuestionCountLoading && !state.adminQuestionCountLastSyncAt);
@@ -32748,131 +33593,218 @@ function renderAdmin() {
     const questionCountSyncLabel = state.adminQuestionCountLastSyncAt
       ? new Date(state.adminQuestionCountLastSyncAt).toLocaleTimeString()
       : (questionSnapshot?.source === "local" ? "Local cache" : "Not yet");
-    const latestQuestionLabel = questionSnapshot?.latestQuestionAt
-      ? new Date(questionSnapshot.latestQuestionAt).toLocaleString()
-      : "No timestamp";
-    const questionStatsCards = [
-      {
-        value: questionCountLoading ? `<span class="inline-loader" aria-hidden="true"></span>` : questionTotals.total,
-        label: "Total DB questions",
-        detail: `Latest: ${latestQuestionLabel}`,
-      },
-      {
-        value: questionTotals.published,
-        label: "Published",
-        detail: `${questionTotals.publishedUsable} usable in tests`,
-      },
-      {
-        value: questionTotals.publishedUsable,
-        label: "Student-usable",
-        detail: "Published with choices and an answer",
-      },
-      {
-        value: questionTotals.publishedUnusable,
-        label: "Published but blocked",
-        detail: "Missing choices or correct answer",
-      },
-      {
-        value: questionTotals.draft,
-        label: "Draft",
-        detail: "Hidden from students",
-      },
-      {
-        value: questionTotals.archived,
-        label: "Archived",
-        detail: "Not used for new tests",
-      },
-    ]
-      .map((card) => `
-        <article class="card">
-          <p class="metric">
-            ${card.value}
-            <small>${escapeHtml(card.label)}</small>
-            <small>${escapeHtml(card.detail)}</small>
-          </p>
-        </article>
-      `)
-      .join("");
     const questionCourseRows = getAdminTopQuestionCourses(10)
       .map((entry) => {
         const usableShare = entry.published ? Math.round((entry.publishedUsable / entry.published) * 100) : 0;
         return `
           <tr>
             <td>${escapeHtml(entry.courseName)}</td>
-            <td><b>${entry.total}</b></td>
-            <td>${entry.published}</td>
-            <td>${entry.publishedUsable}</td>
-            <td>${entry.publishedUnusable}</td>
-            <td>${entry.draft}</td>
-            <td>${entry.archived}</td>
-            <td>${usableShare}%</td>
+            <td><b>${escapeHtml(formatAdminCount(entry.total))}</b></td>
+            <td>${escapeHtml(formatAdminCount(entry.published))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.publishedUsable))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.publishedUnusable))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.draft))}</td>
+            <td>${escapeHtml(formatAdminCount(entry.archived))}</td>
+            <td>${escapeHtml(String(usableShare))}%</td>
           </tr>
         `;
       })
       .join("");
 
+    const nowMs = Date.now();
+    const dashboardUsers = buildAdminDashboardUserSnapshot(users, nowMs);
+    const dashboardCounts = state.adminDashboardCounts || createEmptyAdminDashboardCounts();
+    const dashboardCountsLoading = Boolean(state.adminDashboardCountsLoading && !state.adminDashboardCountsLoadedAt);
+    const pendingOldestLabel = dashboardUsers.oldestPendingCreatedAtMs
+      ? `oldest ${new Date(dashboardUsers.oldestPendingCreatedAtMs).toLocaleDateString()}`
+      : "";
+    const pendingDetailParts = [];
+    if (dashboardUsers.pendingMissingPhoneCount > 0) {
+      pendingDetailParts.push(`${dashboardUsers.pendingMissingPhoneCount} ${dashboardUsers.pendingMissingPhoneCount === 1 ? "has" : "have"} no phone number`);
+    }
+    if (pendingOldestLabel) {
+      pendingDetailParts.push(pendingOldestLabel);
+    }
+    const pendingStudentsDetail = dashboardUsers.pendingApprovalCount > 0
+      ? (pendingDetailParts.join(" · ") || "Review pending student details")
+      : "All students approved";
+    const courseRequestCount = sumAdminDashboardCounts(
+      dashboardCounts.videoEnrollmentRequestsPending,
+      dashboardCounts.videoCoursesPendingReview,
+    );
+    const courseRequestDetail = courseRequestCount === 0
+      ? "No requests"
+      : courseRequestCount === null
+        ? (dashboardCountsLoading ? "Checking requests" : "Request counts unavailable")
+        : `${formatAdminCount(dashboardCounts.videoEnrollmentRequestsPending)} enrollment · ${formatAdminCount(dashboardCounts.videoCoursesPendingReview)} course review`;
+    const mcqAccessDetail = typeof state.studentAutoMcqAccessEnabled === "boolean"
+      ? `Auto MCQ access is ${state.studentAutoMcqAccessEnabled ? "on" : "off"}`
+      : "Auto MCQ access status unavailable";
+    const attentionCards = [
+      {
+        target: "users-pending",
+        value: dashboardUsers.pendingApprovalCount,
+        label: "Students awaiting approval",
+        detail: pendingStudentsDetail,
+      },
+      {
+        target: "users-mcq-held",
+        value: state.mcqAccessHeldCount,
+        loading: state.mcqAccessHeldCountLoading,
+        label: "Waiting for MCQ access",
+        detail: mcqAccessDetail,
+      },
+      {
+        target: "course-requests",
+        value: courseRequestCount,
+        loading: dashboardCountsLoading,
+        label: "Course requests",
+        detail: courseRequestDetail,
+      },
+      {
+        target: "questions",
+        value: questionCountLoading ? null : questionTotals.publishedUnusable,
+        loading: questionCountLoading,
+        label: "Broken questions",
+        detail: questionCountLoading
+          ? "Checking published questions"
+          : questionTotals.publishedUnusable > 0
+            ? "Published but missing an answer"
+            : "All published questions usable",
+      },
+    ].map((card) => {
+      const countText = formatAdminCount(card.value, { loading: card.loading });
+      const attention = Number.isFinite(Number(card.value)) && Number(card.value) > 0;
+      return `
+        <button class="admin-dash-attention-card ${attention ? "is-attention" : ""}" type="button" data-action="admin-dashboard-open" data-target="${escapeHtml(card.target)}">
+          <span class="admin-dash-attention-value">${escapeHtml(countText)}</span>
+          <span class="admin-dash-attention-label">${escapeHtml(card.label)}</span>
+          <span class="admin-dash-attention-detail">${escapeHtml(card.detail)}</span>
+        </button>
+      `;
+    }).join("");
+    const maxAcademicYearCount = Math.max(0, ...Object.values(dashboardUsers.academicYearCounts));
+    const studentYearRows = [1, 2, 3, 4, 5].map((year) => {
+      const count = dashboardUsers.academicYearCounts[year] || 0;
+      const width = maxAcademicYearCount
+        ? Math.max((count / maxAcademicYearCount) * 100, count ? 6 : 0)
+        : 0;
+      return `
+        <div class="admin-dash-year-row">
+          <span>Year ${year}</span>
+          <span class="admin-dash-year-track" aria-hidden="true"><span style="width: ${width.toFixed(1)}%;"></span></span>
+          <span>${escapeHtml(formatAdminCount(count))}</span>
+        </div>
+      `;
+    }).join("");
+    const detailedQuestionStats = [
+      ["Published", questionTotals.published],
+      ["Usable", questionTotals.publishedUsable],
+      ["Blocked", questionTotals.publishedUnusable],
+      ["Draft", questionTotals.draft],
+      ["Archived", questionTotals.archived],
+    ].map(([label, value]) => `
+      <div class="admin-dash-more-stat">
+        <span>${escapeHtml(label)}</span>
+        <b>${escapeHtml(formatAdminCount(questionCountLoading ? null : value, { loading: questionCountLoading }))}</b>
+      </div>
+    `).join("");
+
     pageContent = `
       <section class="card admin-section" id="admin-stats-section">
-        <h2 class="title">MedBank Admin Dashboard</h2>
-        <p class="subtle">User totals first, with admin counts and academic year distribution summarized underneath.</p>
-        <div class="stats-grid" style="margin-top: 0.85rem;">
-          ${dashboardUserCards}
-        </div>
-        <div class="admin-dashboard-breakdowns">
-          <article class="card admin-dashboard-breakdown-card">
-            <h3>Users by Registration Year</h3>
-            <p class="subtle">Calendar year from each account's registration date.</p>
-            ${registrationYearRows
-        ? `<div class="admin-dashboard-breakdown-list" role="list">${registrationYearRows}</div>`
-        : `<p class="subtle">No registration timestamps found yet.</p>`
-      }
-          </article>
-          <article class="card admin-dashboard-breakdown-card">
-            <h3>Auth Provider Mix</h3>
-            <p class="subtle">Google vs email plus any other connected providers.</p>
-            ${providerRows
-        ? `<div class="admin-dashboard-breakdown-list" role="list">${providerRows}</div>`
-        : `<p class="subtle">No auth provider data available yet.</p>`
-      }
-          </article>
-        </div>
-      </section>
-      <section class="card admin-section" id="admin-question-stats-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Question Bank Totals</h3>
-            <p class="subtle">Fresh database counts separated by visibility and test usability.</p>
+        <div class="admin-dash-shell">
+          <header class="admin-dash-header">
+            <h2 class="title">Dashboard</h2>
+            <p>What needs you now, and how MedBank is doing.</p>
+          </header>
+
+          <section class="admin-dash-attention" aria-labelledby="admin-dash-attention-title">
+            <h3 id="admin-dash-attention-title">Needs your attention</h3>
+            <div class="admin-dash-attention-grid">
+              ${attentionCards}
+            </div>
+          </section>
+
+          <div class="admin-dash-panels">
+            <article class="admin-dash-panel">
+              <h3>Students</h3>
+              <div class="admin-dash-panel-lead">
+                <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(dashboardUsers.totalStudents))}</span>
+                <span>Total students</span>
+              </div>
+              <div class="admin-dash-inline-stats">
+                <span>+${escapeHtml(formatAdminCount(dashboardUsers.newStudentsLast7Days))} this week</span>
+                <span>${escapeHtml(formatAdminCount(dashboardCounts.onlineNow, { loading: dashboardCountsLoading }))} online now</span>
+              </div>
+              <div class="admin-dash-year-list" aria-label="Students by academic year">
+                ${studentYearRows}
+              </div>
+              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-page" data-page="users">Open Users</button>
+            </article>
+
+            <article class="admin-dash-panel">
+              <h3>MCQ Bank</h3>
+              <div class="admin-dash-panel-lead">
+                <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(questionCountLoading ? null : questionTotals.published, { loading: questionCountLoading }))}</span>
+                <span>Published questions</span>
+                ${!questionCountLoading && questionTotals.archived > 0 ? `<span class="admin-dash-panel-secondary">${escapeHtml(formatAdminCount(questionTotals.archived))} archived</span>` : ""}
+              </div>
+              <div class="admin-dash-panel-rows">
+                <div><span>Tests this week</span><b>${escapeHtml(formatAdminCount(dashboardCounts.testsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
+                <div><span>Students practising (7 days)</span><b>${escapeHtml(formatAdminCount(dashboardCounts.activeStudentsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
+                <div><span>Question counts updated</span><b>${escapeHtml(formatRelativeSyncTime(state.adminQuestionCountLastSyncAt))}</b></div>
+              </div>
+              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-page" data-page="questions">Open Questions</button>
+            </article>
+
+            <article class="admin-dash-panel">
+              <h3>Video Courses</h3>
+              <div class="admin-dash-panel-lead">
+                <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(dashboardCounts.videoCourses, { loading: dashboardCountsLoading }))}</span>
+                <span>Total courses</span>
+                <span class="admin-dash-panel-secondary">${escapeHtml(formatAdminCount(dashboardCounts.videoCoursesPublished, { loading: dashboardCountsLoading }))} published</span>
+              </div>
+              ${dashboardCounts.videoCourses === 0 ? `<p class="admin-dash-empty">No video courses yet</p>` : ""}
+              <div class="admin-dash-panel-rows">
+                <div><span>Enrollments</span><b>${escapeHtml(formatAdminCount(dashboardCounts.videoEnrolledStudents, { loading: dashboardCountsLoading }))}</b></div>
+                <div><span>Coupons redeemed (7 days)</span><b>${escapeHtml(formatAdminCount(dashboardCounts.couponRedemptionsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
+              </div>
+              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-course-platform-section" data-section="overview">Open Catalog</button>
+            </article>
           </div>
-          <div class="stack" style="align-items: flex-end;">
-            <span class="subtle">Question count sync: <b>${escapeHtml(questionCountSyncLabel)}</b></span>
-            ${questionSnapshot?.source && questionSnapshot.source !== "remote" ? `<span class="badge neutral">${escapeHtml(questionSnapshot.source)}</span>` : ""}
-          </div>
-        </div>
-        ${questionCountError
-        ? `<p class="subtle" style="margin-top: 0.7rem;">${escapeHtml(questionCountError)}</p>`
-        : ""
-      }
-        <div class="stats-grid" style="margin-top: 0.85rem;">
-          ${questionStatsCards}
-        </div>
-        <div class="table-wrap" style="margin-top: 0.9rem;">
-          <table>
-            <thead>
-              <tr>
-                <th>Course</th>
-                <th>Total</th>
-                <th>Published</th>
-                <th>Usable</th>
-                <th>Blocked</th>
-                <th>Draft</th>
-                <th>Archived</th>
-                <th>Usable share</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${questionCourseRows || `<tr><td colspan="8" class="subtle">No question counts loaded yet.</td></tr>`}
-            </tbody>
-          </table>
+
+          <details class="admin-dashboard-more">
+            <summary>More statistics</summary>
+            <div class="admin-dash-more-content">
+              <div class="admin-dash-more-stats">
+                ${detailedQuestionStats}
+              </div>
+              <div class="admin-dash-more-head">
+                <h3>Questions by subject</h3>
+                <span>Updated ${escapeHtml(questionCountSyncLabel)}</span>
+              </div>
+              ${questionCountError ? `<p class="admin-dash-error">${escapeHtml(questionCountError)}</p>` : ""}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Course</th>
+                      <th>Total</th>
+                      <th>Published</th>
+                      <th>Usable</th>
+                      <th>Blocked</th>
+                      <th>Draft</th>
+                      <th>Archived</th>
+                      <th>Usable share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${questionCourseRows || `<tr><td colspan="8" class="subtle">No question counts loaded yet.</td></tr>`}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
         </div>
       </section>
     `;
@@ -32965,19 +33897,10 @@ function renderAdmin() {
         const coursesAccessEnabled = isUserCoursesAccessEnabled(account);
         const isGoogleAuthUser = getAuthProviderFromUser(account) === "google";
         const missingApprovalFields = isApproved ? [] : describeMissingStudentApprovalFields(account);
-        const resetPasswordAction = isGoogleAuthUser
-          ? ""
-          : '<button class="btn ghost admin-btn-sm" data-action="reset-user-password">Set password</button>';
         const visibleCourses = getAdminVisibleCoursesForUser(displayAccount, allCourses);
-        const compactCourses = visibleCourses.slice(0, 2).map((course) => (course.length > 42 ? `${course.slice(0, 39)}...` : course));
-        const coursePreview =
-          visibleCourses.length > 2 ? `${compactCourses.join(", ")} +${visibleCourses.length - 2} more` : compactCourses.join(", ");
         const isSelf = account.id === user.id;
         const canBulkSelect = canBulkSelectAdminUser(account, user);
         const isSelected = accountId ? selectedUserSet.has(accountId) : false;
-        const accountPhone = String(displayAccount.phone ?? "");
-        const saveMode = accountId ? getAdminUserEnrollmentSaveMode(accountId) : "";
-        const saveBusy = Boolean(saveMode);
         const accountName = String(displayAccount.name ?? account.name ?? "").trim();
         const rowClassNames = [];
         if (isSelected) {
@@ -32989,6 +33912,36 @@ function renderAdmin() {
         const authProviderIcon = isGoogleAuthUser
           ? '<span class="admin-auth-provider-icon" data-provider="google" title="Google account" aria-label="Google account" role="img"><svg viewBox="0 0 18 18" aria-hidden="true" focusable="false"><path fill="#4285F4" d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2086 1.125-.8427 2.0782-1.7963 2.7155v2.2573h2.9082c1.7018-1.5664 2.6845-3.8741 2.6845-6.6137z"></path><path fill="#34A853" d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1818l-2.9082-2.2573c-.8063.54-1.8377.8591-3.0482.8591-2.3441 0-4.3282-1.5832-5.0355-3.71H.9573v2.3305C2.4382 15.9832 5.4818 18 9 18z"></path><path fill="#FBBC05" d="M3.9645 10.71c-.18-.54-.2823-1.1168-.2823-1.71s.1023-1.17.2823-1.71V4.9595H.9573C.3477 6.1732 0 7.5477 0 9s.3477 2.8268.9573 4.0405L3.9645 10.71z"></path><path fill="#EA4335" d="M9 3.5795c1.3214 0 2.5077.4541 3.4405 1.3459l2.5814-2.5814C13.4636.8918 11.43 0 9 0 5.4818 0 2.4382 2.0168.9573 4.9595L3.9645 7.29C4.6718 5.1632 6.6559 3.5795 9 3.5795z"></path></svg></span>'
           : "";
+        const accountLabel = String(account.name || account.email || "this user");
+        const menuItems = [
+          { label: "Edit details", attrs: `data-action="admin-user-edit-open" data-user-id="${escapeHtml(accountId)}"` },
+        ];
+        if (!isGoogleAuthUser) {
+          menuItems.push({ label: "Set password", attrs: 'data-action="reset-user-password"' });
+        }
+        if (account.role === "student") {
+          menuItems.push({ label: "Device", attrs: 'data-action="view-user-device"' });
+          menuItems.push({ label: "University", attrs: 'data-action="edit-user-university"' });
+          menuItems.push({
+            label: mcqAccessEnabled ? "Turn MCQ access off" : "Turn MCQ access on",
+            attrs: `data-action="toggle-user-mcq-access" data-admin-access-item="mcq"${isAdminUserMcqIneligible(account) ? ' title="Not MCQ-eligible: set a Medicine college at a university that offers the MCQ Bank first."' : ""}`,
+            disabled: isAdminUserMcqIneligible(account),
+          });
+          menuItems.push({
+            label: coursesAccessEnabled ? "Turn Video Courses off" : "Turn Video Courses on",
+            attrs: 'data-action="toggle-user-courses-access" data-admin-access-item="courses"',
+          });
+        }
+        if (account.role !== "admin") {
+          menuItems.push({ label: isApproved ? "Suspend" : "Approve", attrs: 'data-action="toggle-user-approval" data-admin-approval-item' });
+        }
+        menuItems.push({ label: "Remove user", attrs: 'data-action="remove-user"', danger: true, disabled: isSelf });
+        const termLabel = account.role === "student"
+          ? (year !== null && semester !== null ? `Y${year} · S${semester}` : "No term")
+          : "—";
+        const subjectsLabel = account.role === "student" && visibleCourses.length
+          ? `${visibleCourses.length} MCQ subject${visibleCourses.length === 1 ? "" : "s"}`
+          : "";
         return `
           <tr data-user-id="${escapeHtml(account.id)}" class="${rowClassNames.join(" ")}">
             <td class="admin-user-select-cell">
@@ -32997,7 +33950,7 @@ function renderAdmin() {
                 name="selectedAdminUser"
                 data-action="admin-select-user"
                 data-user-id="${escapeHtml(accountId)}"
-                aria-label="Select ${escapeHtml(String(account.name || account.email || "user"))}"
+                aria-label="Select ${escapeHtml(accountLabel)}"
                 ${isSelected ? "checked" : ""}
                 ${bulkDeactivateRunning || !canBulkSelect ? "disabled" : ""}
                 ${selectionDisabledReason ? `title="${escapeHtml(selectionDisabledReason)}"` : ""}
@@ -33005,263 +33958,402 @@ function renderAdmin() {
             </td>
             <td>
               <div class="admin-user-account">
-                <label class="admin-inline-name-field">
-                  <span class="sr-only">Full name for ${escapeHtml(String(account.email || "user"))}</span>
-                  <input
-                    class="admin-mini-input admin-inline-name-input"
-                    type="text"
-                    name="inlineName"
-                    data-field="name"
-                    value="${escapeHtml(accountName)}"
-                    autocomplete="off"
-                    maxlength="120"
-                    placeholder="Full name"
-                    aria-label="Full name for ${escapeHtml(String(account.email || "user"))}"
-                  />
-                </label><br />
+                <span class="admin-user-name" data-user-name-text>${escapeHtml(accountName || "Unnamed user")}</span>
                 <small class="admin-account-email">
                   <span>${escapeHtml(account.email)}</span>
                   ${authProviderIcon}
-                </small><br />
-                <small class="admin-account-public-id">MedBank ID: <b>${escapeHtml(String(account.publicUserId || account.public_user_id || "Pending"))}</b></small><br />
-                ${account.role === "student" ? `${renderAdminUserUniversitySummary(account)}<br />` : ""}
-                ${renderAdminUserMcqHold(account)}
-                ${missingApprovalFields.length ? `<small class="admin-account-approval-gap" title="Auto-approval and Approve all pending both skip this account until these are filled in.">Not auto-approved &mdash; needs ${escapeHtml(formatMissingApprovalFieldList(missingApprovalFields))}</small><br />` : ""}
-                <label class="admin-inline-phone-field">
-                  <input
-                    class="admin-mini-input admin-inline-phone-input"
-                    type="tel"
-                    name="inlinePhone"
-                    data-field="phone"
-                    value="${escapeHtml(accountPhone)}"
-                    inputmode="tel"
-                    autocomplete="off"
-                    maxlength="20"
-                    placeholder="+20 10 0000 0000"
-                    aria-label="Phone number for ${escapeHtml(String(account.name || account.email || "user"))}"
-                  />
-                </label>
-                <small>
-                  <span class="badge ${isApproved ? "good" : "bad"}" data-user-status-badge>${isApproved ? "approved" : "pending"}</span>
-                  ${account.role === "student" ? `<span class="badge ${mcqAccessEnabled ? "good" : "neutral"}" data-user-mcq-status-badge>MCQ ${mcqAccessEnabled ? "on" : "off"}</span>` : ""}
-                  ${account.role === "student" ? `<span class="badge ${coursesAccessEnabled ? "good" : "neutral"}" data-user-courses-status-badge>Video Courses ${coursesAccessEnabled ? "on" : "off"}</span>` : ""}
                 </small>
+                <small class="admin-account-meta">ID ${escapeHtml(String(account.publicUserId || account.public_user_id || "pending"))}${account.role !== "student" ? ` · ${escapeHtml(getUserRoleLabel(account.role))}` : ""}</small>
+                ${account.role === "student" ? renderAdminUserUniversitySummary(account) : ""}
+                ${renderAdminUserMcqHold(account)}
+                ${missingApprovalFields.length ? `<small class="admin-account-approval-gap" title="Auto-approval and Approve all pending both skip this account until these are filled in.">Needs ${escapeHtml(formatMissingApprovalFieldList(missingApprovalFields))}</small>` : ""}
               </div>
             </td>
-            <td><span class="badge ${account.role === "admin" ? "good" : "neutral"}">${escapeHtml(account.role)}</span></td>
+            <td class="admin-user-term-cell">
+              <span data-user-term class="${account.role === "student" && termLabel === "No term" ? "admin-user-term-missing" : ""}">${escapeHtml(termLabel)}</span>
+              ${subjectsLabel ? `<small class="admin-course-preview" data-count-only title="${escapeHtml(visibleCourses.join(", "))}">${escapeHtml(subjectsLabel)}</small>` : ""}
+            </td>
             <td>
-              ${account.role === "student"
-            ? `<select class="admin-mini-select" name="inlineAcademicYear" data-field="academicYear">
-                       <option value="" ${year === null ? "selected" : ""}>Select year</option>
-                       ${[1, 2, 3, 4, 5]
-              .map((entry) => `<option value="${entry}" ${year === entry ? "selected" : ""}>Year ${entry}</option>`)
-              .join("")}
-                     </select>`
-            : `<span class="admin-na">-</span>`
-          }
+              <span class="admin-user-status ${isApproved ? "is-approved" : "is-pending"}" data-user-status-badge>${isApproved ? "Approved" : "Pending"}</span>
+              ${account.role === "student" && !isApproved
+            ? `<button class="admin-user-inline-approve" type="button" data-action="toggle-user-approval" data-admin-inline-approve>Approve</button>`
+            : ""}
             </td>
             <td>
               ${account.role === "student"
-            ? `<select class="admin-mini-select" name="inlineAcademicSemester" data-field="academicSemester">
-                       <option value="" ${semester === null ? "selected" : ""}>Select semester</option>
-                       <option value="1" ${semester === 1 ? "selected" : ""}>Semester 1</option>
-                       <option value="2" ${semester === 2 ? "selected" : ""}>Semester 2</option>
-                     </select>`
-            : `<span class="admin-na">-</span>`
-          }
-            </td>
-            <td class="admin-user-courses">
-              <small class="admin-course-preview" title="${escapeHtml(visibleCourses.join(", "))}">${escapeHtml(coursePreview || "No MCQ subjects assigned")}</small>
+            ? `<span class="admin-user-access-tag ${mcqAccessEnabled ? "is-on" : "is-off"}" data-user-mcq-status-badge title="MCQ Bank ${mcqAccessEnabled ? "on" : "off"}">MCQ</span>
+                 <span class="admin-user-access-tag ${coursesAccessEnabled ? "is-on" : "is-off"}" data-user-courses-status-badge title="Video Courses ${coursesAccessEnabled ? "on" : "off"}">Video</span>`
+            : `<small class="admin-user-full-access">Full access</small>`}
             </td>
             <td class="admin-user-actions-cell">
-              <div class="admin-user-actions">
-                <button class="btn ghost admin-btn-sm ${saveBusy ? "is-loading" : ""}" data-action="save-user-enrollment" ${saveBusy ? "disabled" : ""}>${renderAdminUserEnrollmentSaveButtonContent({ busy: saveBusy, mode: saveMode || "manual" })}</button>
-                ${resetPasswordAction}
-                ${account.role === "student" ? '<button class="btn ghost admin-btn-sm" type="button" data-action="view-user-device">Device</button>' : ""}
-                ${account.role === "student" ? '<button class="btn ghost admin-btn-sm" type="button" data-action="edit-user-university">University</button>' : ""}
-                <button class="btn ghost admin-btn-sm" data-action="toggle-user-approval" ${account.role === "admin" ? "disabled" : ""}>
-                  ${isApproved ? "Suspend" : "Approve"}
-                </button>
-                <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-mcq-access" role="switch" aria-checked="${mcqAccessEnabled ? "true" : "false"}" ${account.role === "admin" || isAdminUserMcqIneligible(account) ? "disabled" : ""} ${isAdminUserMcqIneligible(account) ? 'title="Not MCQ-eligible: set a Medicine college at a university that offers the MCQ Bank first."' : ""}>
-                  ${renderAdminAccessSwitchContent("MCQs", mcqAccessEnabled)}
-                </button>
-                <button class="admin-access-switch admin-btn-sm" type="button" data-action="toggle-user-courses-access" role="switch" aria-checked="${coursesAccessEnabled ? "true" : "false"}" ${account.role === "admin" ? "disabled" : ""}>
-                  ${renderAdminAccessSwitchContent("Video Courses", coursesAccessEnabled)}
-                </button>
-                <label class="admin-role-select-label">
-                  <span class="sr-only">Role for ${escapeHtml(account.name || account.email || "this user")}</span>
-                  <select class="admin-role-select admin-btn-sm" data-action="set-user-role" ${isSelf ? "disabled" : ""}>
-                    ${renderAdminUserRoleOptions(account.role)}
-                  </select>
-                </label>
-                <button class="btn danger admin-btn-sm" data-action="remove-user" ${isSelf ? "disabled" : ""}>Remove</button>
-              </div>
+              ${renderAdminRowMenu({ id: `user-${accountId}`, label: `Actions for ${accountLabel}`, items: menuItems })}
             </td>
           </tr>
         `;
       })
       .join("");
 
+    const activeUserFilterCount = [
+      userFilterYear !== null,
+      userFilterSemester !== null,
+      Boolean(userFilterApproval),
+      userFilterMcqHeld,
+      Boolean(userFilterProvider),
+    ].filter(Boolean).length;
+    const activeUserFilterChips = [];
+    if (userFilterYear !== null) {
+      activeUserFilterChips.push({ key: "year", label: `Year ${userFilterYear}` });
+    }
+    if (userFilterSemester !== null) {
+      activeUserFilterChips.push({ key: "semester", label: `Semester ${userFilterSemester}` });
+    }
+    if (userFilterApproval) {
+      const approvalChipLabel = userFilterApproval === "pending"
+        ? "Not approved"
+        : userFilterApproval === "incomplete"
+          ? "Not approved · missing details"
+          : "Approved";
+      activeUserFilterChips.push({ key: "approval", label: approvalChipLabel });
+    }
+    if (userFilterMcqHeld) {
+      activeUserFilterChips.push({ key: "mcqHeld", label: "Waiting for MCQ" });
+    }
+    if (userFilterProvider) {
+      activeUserFilterChips.push({ key: "provider", label: userFilterProvider === "google" ? "Google" : "Email & password" });
+    }
+
+    const usersToolbarSearchHtml = `
+      <label class="admin-users-toolbar-search">
+        <span class="sr-only">Search users</span>
+        <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input
+          id="admin-user-search"
+          type="search"
+          value="${escapeHtml(userSearchQuery)}"
+          placeholder="MedBank ID, name, email, phone, year, or semester"
+        />
+      </label>
+    `;
+    const usersToolbarPendingChipHtml = `
+      <button type="button" class="badge ${pendingCount ? "bad" : "good"} admin-users-pending-chip" data-admin-pending-count data-action="admin-users-filter-pending" ${pendingCount ? "" : "hidden"}>${pendingCount} pending</button>
+    `;
+    const usersToolbarFiltersButtonHtml = `
+      <span class="admin-icon-btn-wrap">
+        ${renderAdminIconButton({
+      icon: "filter",
+      label: activeUserFilterCount ? `Filters (${activeUserFilterCount} active)` : "Filters",
+      attrs: `data-action="admin-users-open-filters" aria-haspopup="dialog"`,
+      variant: activeUserFilterCount ? "is-active" : "",
+    })}
+        ${activeUserFilterCount ? `<span class="admin-icon-btn-badge">${activeUserFilterCount}</span>` : ""}
+      </span>
+    `;
+    const usersToolbarAddButtonHtml = renderAdminIconButton({
+      icon: "plus",
+      label: "Add user",
+      attrs: `data-action="admin-users-open-add-user"`,
+      variant: "is-primary",
+    });
+    const usersToolbarSettingsButtonHtml = renderAdminIconButton({
+      icon: "settings",
+      label: "Approval settings",
+      attrs: `data-action="admin-users-open-settings"`,
+    });
+    const usersToolbarActionsHtml = `
+      ${usersToolbarSearchHtml}
+      ${usersToolbarPendingChipHtml}
+      ${usersToolbarFiltersButtonHtml}
+      ${usersToolbarAddButtonHtml}
+      ${usersToolbarSettingsButtonHtml}
+    `;
+    const usersPageHeaderHtml = renderAdminPageHeader({
+      id: "users",
+      title: "Users",
+      count: users.length,
+      actions: usersToolbarActionsHtml,
+      notes: [
+        "Add users, assign year/semester, change roles, and manage account access.",
+        "Search by MedBank ID, phone, name, or email.",
+      ],
+    });
+    const usersFilterChipsHtml = activeUserFilterChips.length
+      ? `
+        <div class="admin-users-filter-chips">
+          ${activeUserFilterChips
+        .map(
+          (chip) => `
+                <span class="admin-users-filter-chip">
+                  ${escapeHtml(chip.label)}
+                  <button type="button" data-action="admin-users-remove-filter" data-filter="${escapeHtml(chip.key)}" aria-label="Remove filter: ${escapeHtml(chip.label)}">&times;</button>
+                </span>
+              `,
+        )
+        .join("")}
+          <button type="button" class="btn ghost admin-btn-sm admin-users-filter-chips-clear" data-action="admin-users-clear-filters">Clear all</button>
+        </div>
+      `
+      : "";
+
+    const usersFiltersDialogHtml = state.adminUsersFiltersOpen
+      ? renderAdminDialog({
+        id: "users-filters",
+        title: "Filters",
+        subtitle: "Narrow the list by year, semester, approval, MCQ activation, or sign-in method.",
+        closeAction: "admin-users-close-filters",
+        body: `
+          <form id="admin-user-filter-form" class="admin-users-filter-form" autocomplete="off">
+            <div class="form-row">
+              <label>Year
+                <select id="admin-user-filter-year" name="academicYear">
+                  <option value="" ${userFilterYear === null ? "selected" : ""}>All years</option>
+                  ${[1, 2, 3, 4, 5]
+          .map((entry) => `<option value="${entry}" ${userFilterYear === entry ? "selected" : ""}>Year ${entry}</option>`)
+          .join("")}
+                </select>
+              </label>
+              <label>Semester
+                <select id="admin-user-filter-semester" name="academicSemester">
+                  <option value="" ${userFilterSemester === null ? "selected" : ""}>All semesters</option>
+                  <option value="1" ${userFilterSemester === 1 ? "selected" : ""}>Semester 1</option>
+                  <option value="2" ${userFilterSemester === 2 ? "selected" : ""}>Semester 2</option>
+                </select>
+              </label>
+              <label>Approval
+                <select id="admin-user-filter-approval" name="approvalStatus">
+                  <option value="" ${!userFilterApproval ? "selected" : ""}>All accounts</option>
+                  <option value="pending" ${userFilterApproval === "pending" ? "selected" : ""}>Not approved (${approvalFilterCounts.pending})</option>
+                  <option value="incomplete" ${userFilterApproval === "incomplete" ? "selected" : ""}>Not approved · missing details (${approvalFilterCounts.incomplete})</option>
+                  <option value="approved" ${userFilterApproval === "approved" ? "selected" : ""}>Approved (${approvalFilterCounts.approved})</option>
+                </select>
+              </label>
+              <label>MCQ activation
+                <select id="admin-user-filter-mcq-held" name="mcqHeld">
+                  <option value="" ${!userFilterMcqHeld ? "selected" : ""}>All accounts</option>
+                  <option value="held" ${userFilterMcqHeld ? "selected" : ""}>Waiting for MCQ (${mcqHeldLocalCount})</option>
+                </select>
+              </label>
+              <label>Sign-in method
+                <select id="admin-user-filter-provider" name="authProvider">
+                  <option value="" ${!userFilterProvider ? "selected" : ""}>All methods</option>
+                  <option value="google" ${userFilterProvider === "google" ? "selected" : ""}>Google (${providerFilterCounts.google})</option>
+                  <option value="email" ${userFilterProvider === "email" ? "selected" : ""}>Email &amp; password (${providerFilterCounts.email})</option>
+                </select>
+              </label>
+            </div>
+          </form>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-clear-filters" ${resetUserFiltersDisabled ? "disabled" : ""}>Reset filters</button>
+          <button class="btn admin-btn-sm" type="button" data-action="admin-users-close-filters">Done</button>
+        `,
+      })
+      : "";
+
+    const usersAddUserDialogHtml = state.adminAddUserPanelOpen
+      ? renderAdminDialog({
+        id: "users-add-user",
+        title: "Add user",
+        subtitle: "Create a student or admin account only when needed.",
+        closeAction: "admin-users-close-add-user",
+        body: `
+          <form id="admin-add-user-form" autocomplete="off">
+            <div class="form-row">
+              <label>Full name <input name="name" autocomplete="off" value="${escapeHtml(addUserDraft.name)}" required /></label>
+              <label>Email <input type="email" name="email" autocomplete="off" value="${escapeHtml(addUserDraft.email)}" required /></label>
+            </div>
+            <div class="form-row">
+              <label>Password <input type="password" name="password" minlength="6" autocomplete="new-password" value="${escapeHtml(addUserDraft.password)}" required /></label>
+              <label>Role
+                <select name="role">
+                  <option value="student" ${addUserDraft.role === "student" ? "selected" : ""}>Student</option>
+                  <option value="creator" ${addUserDraft.role === "creator" ? "selected" : ""}>Creator</option>
+                  <option value="admin" ${addUserDraft.role === "admin" ? "selected" : ""}>Admin</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>Phone number <input type="tel" name="phone" autocomplete="off" inputmode="tel" maxlength="20" placeholder="+20 10 0000 0000" value="${escapeHtml(addUserDraft.phone)}" /></label>
+              <label>Year
+                <select name="academicYear">
+                  <option value="1" ${addUserDraft.academicYear === "1" ? "selected" : ""}>Year 1</option>
+                  <option value="2" ${addUserDraft.academicYear === "2" ? "selected" : ""}>Year 2</option>
+                  <option value="3" ${addUserDraft.academicYear === "3" ? "selected" : ""}>Year 3</option>
+                  <option value="4" ${addUserDraft.academicYear === "4" ? "selected" : ""}>Year 4</option>
+                  <option value="5" ${addUserDraft.academicYear === "5" ? "selected" : ""}>Year 5</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>Semester
+                <select name="academicSemester">
+                  <option value="1" ${addUserDraft.academicSemester === "1" ? "selected" : ""}>Semester 1</option>
+                  <option value="2" ${addUserDraft.academicSemester === "2" ? "selected" : ""}>Semester 2</option>
+                </select>
+              </label>
+            </div>
+            <div class="stack">
+              <button class="btn" type="submit">Add user</button>
+            </div>
+          </form>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-close-add-user">Cancel</button>
+        `,
+      })
+      : "";
+
+    const usersSettingsDialogHtml = state.adminUsersSettingsOpen
+      ? renderAdminDialog({
+        id: "users-settings",
+        title: "Approval settings",
+        closeAction: "admin-users-close-settings",
+        body: `
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Approvals</h4>
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">Auto-approve new students</p>
+                <p class="admin-settings-row-desc">
+                  ${autoApprovalEnabled
+            ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. This runs in the database, so it keeps working when no admin is signed in.`
+            : "New student accounts require admin approval."}
+                </p>
+              </div>
+              <div class="admin-settings-row-control">
+                <button class="admin-access-switch" type="button" data-action="toggle-student-auto-approval" role="switch" aria-checked="${autoApprovalEnabled ? "true" : "false"}" ${autoApprovalBusy ? "disabled" : ""} title="Approve pending students automatically once their profile is complete">
+                  ${renderAdminAccessSwitchContent(autoApprovalBusy ? "Auto-approve..." : "Auto-approve", autoApprovalEnabled)}
+                </button>
+              </div>
+            </div>
+            ${state.studentAutoApprovalError
+            ? `<p class="subtle" style="color: var(--danger);">${escapeHtml(state.studentAutoApprovalError)}</p>`
+            : ""}
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">Approve all pending</p>
+                <p class="admin-settings-row-desc">${pendingCount ? `${pendingCount} student${pendingCount === 1 ? "" : "s"} waiting for approval` : "Nobody is waiting for approval."}</p>
+              </div>
+              <div class="admin-settings-row-control">
+                <button class="btn ghost admin-btn-sm ${approveAllPendingRunning ? "is-loading" : ""}" type="button" data-action="approve-all-pending" ${pendingCount && !approveAllPendingRunning ? "" : "disabled"}>
+                  ${approveAllPendingRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : `Approve all (${pendingCount})`}
+                </button>
+              </div>
+            </div>
+          </section>
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">MCQ access</h4>
+            ${renderAdminAutoMcqAccessPanel(users)}
+          </section>
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Export</h4>
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">Export users</p>
+                <p class="admin-settings-row-desc">Download ${filteredUsers.length} user${filteredUsers.length === 1 ? "" : "s"} matching the current filters as a CSV file.</p>
+              </div>
+              <div class="admin-settings-row-control">
+                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-export-csv" ${filteredUsers.length ? "" : "disabled"}>Export CSV</button>
+              </div>
+            </div>
+          </section>
+        `,
+      })
+      : "";
+
+    // "Edit details" dialog. Its root carries data-user-id plus the same
+    // data-field inputs and save button the old inline row had, so
+    // saveUserEnrollmentFromRow() saves from it unchanged.
+    const editUserAccount = state.adminUserEditId
+      ? users.find((entry) => String(entry?.id || "").trim() === String(state.adminUserEditId))
+      : null;
+    let usersEditUserDialogHtml = "";
+    if (editUserAccount) {
+      const editView = getAdminUserEnrollmentViewModel(editUserAccount);
+      const editDisplay = editView.account || editUserAccount;
+      const editId = String(editUserAccount.id || "").trim();
+      const editIsStudent = editUserAccount.role === "student";
+      const editIsSelf = editId === String(user.id || "");
+      const editYear = editIsStudent ? normalizeAcademicYearOrNull(editDisplay.academicYear) : null;
+      const editSemester = editIsStudent ? normalizeAcademicSemesterOrNull(editDisplay.academicSemester) : null;
+      const editCourses = editIsStudent ? getAdminVisibleCoursesForUser(editDisplay, allCourses) : [];
+      const editSaveMode = getAdminUserEnrollmentSaveMode(editId);
+      const editMissing = isUserAccessApproved(editUserAccount) ? [] : describeMissingStudentApprovalFields(editUserAccount);
+      const editBody = `
+        <div class="admin-user-edit" data-user-edit-root data-user-id="${escapeHtml(editId)}">
+          <div class="form-row">
+            <label>Full name
+              <input id="admin-user-edit-name" type="text" data-field="name" value="${escapeHtml(String(editDisplay.name ?? editUserAccount.name ?? ""))}" autocomplete="off" maxlength="120" required />
+            </label>
+            <label>Phone number
+              <input id="admin-user-edit-phone" type="tel" data-field="phone" value="${escapeHtml(String(editDisplay.phone ?? ""))}" inputmode="tel" autocomplete="off" maxlength="20" placeholder="+20 10 0000 0000" />
+            </label>
+          </div>
+          ${editIsStudent
+        ? `<div class="form-row">
+              <label>Year
+                <select id="admin-user-edit-year" data-field="academicYear">
+                  <option value="" ${editYear === null ? "selected" : ""}>Select year</option>
+                  ${[1, 2, 3, 4, 5].map((entry) => `<option value="${entry}" ${editYear === entry ? "selected" : ""}>Year ${entry}</option>`).join("")}
+                </select>
+              </label>
+              <label>Semester
+                <select id="admin-user-edit-semester" data-field="academicSemester">
+                  <option value="" ${editSemester === null ? "selected" : ""}>Select semester</option>
+                  <option value="1" ${editSemester === 1 ? "selected" : ""}>Semester 1</option>
+                  <option value="2" ${editSemester === 2 ? "selected" : ""}>Semester 2</option>
+                </select>
+              </label>
+            </div>`
+        : ""}
+          <label>Role
+            <select id="admin-user-edit-role" class="admin-role-select" data-action="set-user-role" ${editIsSelf ? "disabled title=\"You cannot change your own role.\"" : ""}>
+              ${renderAdminUserRoleOptions(editUserAccount.role)}
+            </select>
+          </label>
+          ${editIsStudent
+        ? `<div class="admin-user-edit-subjects">
+              <p class="admin-user-edit-label">MCQ subjects <small>(set by year and semester)</small></p>
+              <p class="admin-course-preview">${escapeHtml(editCourses.length ? editCourses.join(", ") : "No MCQ subjects for this term yet")}</p>
+            </div>`
+        : ""}
+          ${editMissing.length ? `<p class="admin-account-approval-gap">Not approved yet — needs ${escapeHtml(formatMissingApprovalFieldList(editMissing))}.</p>` : ""}
+          <div class="admin-dialog-actions">
+            <button class="btn ghost" type="button" data-action="admin-user-edit-cancel">Cancel</button>
+            <button class="btn ${editSaveMode ? "is-loading" : ""}" type="button" data-action="save-user-enrollment" ${editSaveMode ? "disabled" : ""}>${renderAdminUserEnrollmentSaveButtonContent({ busy: Boolean(editSaveMode), mode: editSaveMode || "manual" })}</button>
+          </div>
+        </div>
+      `;
+      usersEditUserDialogHtml = renderAdminDialog({
+        id: "users-edit-user",
+        title: `Edit ${String(editUserAccount.name || editUserAccount.email || "user")}`,
+        subtitle: String(editUserAccount.email || ""),
+        body: editBody,
+        closeAction: "admin-user-edit-cancel",
+      });
+    }
+
+    adminGlobalOverlay = `${usersFiltersDialogHtml}${usersAddUserDialogHtml}${usersSettingsDialogHtml}${usersEditUserDialogHtml}`;
+
     pageContent = `
       <section class="card admin-section" id="admin-users-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Users</h3>
-            <p class="subtle">Add users, assign year/semester, change roles, and manage account access. Search by MedBank ID, phone, name, or email.</p>
-          </div>
-          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem;">
-            <div style="display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; justify-content: flex-end;">
-              <span class="badge ${pendingCount ? 'bad' : 'good'}" data-admin-pending-count style="font-size: 0.8rem; padding: 0.3rem 0.7rem;">Pending: <b>${pendingCount}</b></span>
-              <button class="btn ${approveAllPendingRunning ? "is-loading" : ""}" type="button" data-action="approve-all-pending" ${pendingCount && !approveAllPendingRunning ? "" : "disabled"}>
-                ${approveAllPendingRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve all pending"}
-              </button>
-              <button class="admin-access-switch" type="button" data-action="toggle-student-auto-approval" role="switch" aria-checked="${autoApprovalEnabled ? "true" : "false"}" ${autoApprovalBusy ? "disabled" : ""} title="Approve pending students automatically once their profile is complete">
-                ${renderAdminAccessSwitchContent(autoApprovalBusy ? "Auto-approve..." : "Auto-approve", autoApprovalEnabled)}
-              </button>
-            </div>
-            <span class="subtle" style="text-align: right;">
-              ${autoApprovalEnabled
-                ? `Auto-approval is on. Pending students are approved automatically once their phone, year, semester, and course selection are complete${autoApprovableCount ? `, including ${autoApprovableCount} waiting now` : ""}. This runs in the database, so it keeps working when no admin is signed in.`
-                : "New student accounts require admin approval."}
-            </span>
-            ${state.studentAutoApprovalError
-              ? `<span class="subtle" style="text-align: right; color: var(--danger);">${escapeHtml(state.studentAutoApprovalError)}</span>`
-              : ""}
-          </div>
-        </div>
-        ${renderAdminAutoMcqAccessPanel(users)}
-        <details id="admin-add-user-disclosure" class="admin-user-create-panel" style="margin-top: 0.85rem;" ${state.adminAddUserPanelOpen ? "open" : ""}>
-          <summary class="admin-user-create-toggle">
-            <span class="admin-user-create-toggle-main">
-              <span class="admin-user-create-chevron" aria-hidden="true"></span>
-              <span class="admin-user-create-toggle-copy">
-                <b>Add new user</b>
-                <small>Create a student or admin account only when needed.</small>
-              </span>
-            </span>
-          </summary>
-          <div class="admin-user-create-panel-body">
-            <form id="admin-add-user-form" autocomplete="off">
-              <div class="form-row">
-                <label>Full name <input name="name" autocomplete="off" value="${escapeHtml(addUserDraft.name)}" required /></label>
-                <label>Email <input type="email" name="email" autocomplete="off" value="${escapeHtml(addUserDraft.email)}" required /></label>
-              </div>
-              <div class="form-row">
-                <label>Password <input type="password" name="password" minlength="6" autocomplete="new-password" value="${escapeHtml(addUserDraft.password)}" required /></label>
-                <label>Role
-                  <select name="role">
-                    <option value="student" ${addUserDraft.role === "student" ? "selected" : ""}>Student</option>
-                    <option value="creator" ${addUserDraft.role === "creator" ? "selected" : ""}>Creator</option>
-                    <option value="admin" ${addUserDraft.role === "admin" ? "selected" : ""}>Admin</option>
-                  </select>
-                </label>
-              </div>
-              <div class="form-row">
-                <label>Phone number <input type="tel" name="phone" autocomplete="off" inputmode="tel" maxlength="20" placeholder="+20 10 0000 0000" value="${escapeHtml(addUserDraft.phone)}" /></label>
-                <label>Year
-                  <select name="academicYear">
-                    <option value="1" ${addUserDraft.academicYear === "1" ? "selected" : ""}>Year 1</option>
-                    <option value="2" ${addUserDraft.academicYear === "2" ? "selected" : ""}>Year 2</option>
-                    <option value="3" ${addUserDraft.academicYear === "3" ? "selected" : ""}>Year 3</option>
-                    <option value="4" ${addUserDraft.academicYear === "4" ? "selected" : ""}>Year 4</option>
-                    <option value="5" ${addUserDraft.academicYear === "5" ? "selected" : ""}>Year 5</option>
-                  </select>
-                </label>
-              </div>
-              <div class="form-row">
-                <label>Semester
-                  <select name="academicSemester">
-                    <option value="1" ${addUserDraft.academicSemester === "1" ? "selected" : ""}>Semester 1</option>
-                    <option value="2" ${addUserDraft.academicSemester === "2" ? "selected" : ""}>Semester 2</option>
-                  </select>
-                </label>
-              </div>
-              <div class="stack">
-                <button class="btn" type="submit">Add user</button>
-              </div>
-            </form>
-          </div>
-        </details>
+        ${usersPageHeaderHtml}
+        ${usersFilterChipsHtml}
 
-        <form id="admin-user-filter-form" class="admin-users-filter-form" style="margin-top: 0.95rem;" autocomplete="off">
-          <div class="form-row">
-            <label class="admin-user-search-field">Search user
-              <input
-                id="admin-user-search"
-                type="search"
-                value="${escapeHtml(userSearchQuery)}"
-                placeholder="MedBank ID, name, email, phone, year, or semester"
-              />
-            </label>
-            <label>Year
-              <select id="admin-user-filter-year" name="academicYear">
-                <option value="" ${userFilterYear === null ? "selected" : ""}>All years</option>
-                ${[1, 2, 3, 4, 5]
-        .map((entry) => `<option value="${entry}" ${userFilterYear === entry ? "selected" : ""}>Year ${entry}</option>`)
-        .join("")}
-              </select>
-            </label>
-            <label>Semester
-              <select id="admin-user-filter-semester" name="academicSemester">
-                <option value="" ${userFilterSemester === null ? "selected" : ""}>All semesters</option>
-                <option value="1" ${userFilterSemester === 1 ? "selected" : ""}>Semester 1</option>
-                <option value="2" ${userFilterSemester === 2 ? "selected" : ""}>Semester 2</option>
-              </select>
-            </label>
-            <label>Approval
-              <select id="admin-user-filter-approval" name="approvalStatus">
-                <option value="" ${!userFilterApproval ? "selected" : ""}>All accounts</option>
-                <option value="pending" ${userFilterApproval === "pending" ? "selected" : ""}>Not approved (${approvalFilterCounts.pending})</option>
-                <option value="incomplete" ${userFilterApproval === "incomplete" ? "selected" : ""}>Not approved · missing details (${approvalFilterCounts.incomplete})</option>
-                <option value="approved" ${userFilterApproval === "approved" ? "selected" : ""}>Approved (${approvalFilterCounts.approved})</option>
-              </select>
-            </label>
-            <label>MCQ activation
-              <select id="admin-user-filter-mcq-held" name="mcqHeld">
-                <option value="" ${!userFilterMcqHeld ? "selected" : ""}>All accounts</option>
-                <option value="held" ${userFilterMcqHeld ? "selected" : ""}>Waiting for MCQ (${mcqHeldLocalCount})</option>
-              </select>
-            </label>
-            <label>Sign-in method
-              <select id="admin-user-filter-provider" name="authProvider">
-                <option value="" ${!userFilterProvider ? "selected" : ""}>All methods</option>
-                <option value="google" ${userFilterProvider === "google" ? "selected" : ""}>Google (${providerFilterCounts.google})</option>
-                <option value="email" ${userFilterProvider === "email" ? "selected" : ""}>Email &amp; password (${providerFilterCounts.email})</option>
-              </select>
-            </label>
-          </div>
-          <div class="stack">
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-clear-filters" ${resetUserFiltersDisabled ? "disabled" : ""}>Reset filters</button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-export-csv" ${filteredUsers.length ? "" : "disabled"}>Export CSV (${filteredUsers.length})</button>
-          </div>
-        </form>
-
-        <div class="admin-question-bulk-bar admin-users-bulk-bar" style="margin-top: 0.74rem;">
-          <label class="admin-question-select-all">
-            <input
-              type="checkbox"
-              name="selectAllUsersVisible"
-              data-action="admin-select-all-users"
-              aria-label="Select all users currently shown"
-              data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
-              ${allVisibleSelected ? "checked" : ""}
-              ${bulkDeactivateRunning || !visibleSelectableUserIds.length ? "disabled" : ""}
-            />
-            <span>Select all in this view</span>
-          </label>
-          <p class="admin-question-selection-count">Selected: <b>${selectedUserCount}</b> • Showing <b>${renderedUsers.length}</b> of ${filteredUsers.length} filtered (${users.length} total)</p>
-          <div class="stack">
-            <button class="btn admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-approve-users" ${bulkDeactivateRunning || !selectedUserCount ? "disabled" : ""}>
-              ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve selected"}
+        ${selectedUserCount
+        ? `<div class="admin-users-bulk-bar" role="region" aria-label="Bulk actions">
+            <span class="admin-users-bulk-count"><b>${selectedUserCount}</b> selected</span>
+            <button class="btn admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-approve-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+              ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve"}
             </button>
-            <button class="btn danger admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-deactivate-users" ${bulkDeactivateRunning || !selectedUserCount ? "disabled" : ""}>
-              ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Suspending...</span>` : "Suspend selected"}
+            <button class="btn ghost admin-btn-sm admin-users-bulk-suspend ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-deactivate-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+              ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Suspending...</span>` : "Suspend"}
             </button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning || !selectedUserCount ? "disabled" : ""}>Clear selection</button>
-          </div>
-        </div>
+            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning ? "disabled" : ""}>Clear</button>
+          </div>`
+        : ""}
+        <p class="admin-users-showing">Showing ${String(renderedUsers.length)} of ${String(filteredUsers.length)}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}</p>
         ${hiddenFilteredUserCount
-        ? `<p class="subtle" style="margin: 0.7rem 0 0;">Showing the first ${ADMIN_USER_RENDER_LIMIT} matching users to keep this screen responsive. Use search, year, or semester filters to edit users beyond this set.</p>`
+        ? `<p class="subtle" style="margin: 0.4rem 0 0;">Showing the first ${ADMIN_USER_RENDER_LIMIT} matching users to keep this screen responsive. Use search or filters to reach the others.</p>`
         : ""
       }
 
@@ -33270,24 +34362,33 @@ function renderAdmin() {
             <colgroup>
               <col class="col-select" />
               <col class="col-account" />
-              <col class="col-role" />
-              <col class="col-year" />
-              <col class="col-semester" />
-              <col class="col-courses" />
+              <col class="col-term" />
+              <col class="col-status" />
+              <col class="col-access" />
               <col class="col-actions" />
             </colgroup>
             <thead>
               <tr>
-                <th class="admin-user-select-cell">Select</th>
+                <th class="admin-user-select-cell">
+                  <input
+                    type="checkbox"
+                    name="selectAllUsersVisible"
+                    data-action="admin-select-all-users"
+                    aria-label="Select all users currently shown"
+                    title="Select all users currently shown"
+                    data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
+                    ${allVisibleSelected ? "checked" : ""}
+                    ${bulkDeactivateRunning || !visibleSelectableUserIds.length ? "disabled" : ""}
+                  />
+                </th>
                 <th>Account</th>
-                <th>Role</th>
-                <th>Year</th>
-                <th>Semester</th>
-                <th>MCQ Subjects</th>
-                <th>Actions</th>
+                <th>Term</th>
+                <th>Status</th>
+                <th>Access</th>
+                <th><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
-            <tbody>${accountRows || `<tr><td colspan="7" class="subtle">No users match the current search, year, and semester filters.</td></tr>`}</tbody>
+            <tbody>${accountRows || `<tr><td colspan="6" class="subtle">No users match the current search and filters.</td></tr>`}</tbody>
           </table>
         </div>
       </section>
@@ -33332,23 +34433,23 @@ function renderAdmin() {
         const topicCount = topicCountByCourse[course] || 0;
         const questionCount = getAdminCourseQuestionCount(course, "total");
         const isActive = state.adminCourseTopicModalCourse === course;
+        const courseMeta = `${topicCount} ${topicCount === 1 ? "topic" : "topics"} · ${questionCount} ${questionCount === 1 ? "question" : "questions"}`;
         return `
-          <button
-            class="admin-course-picker-card${isActive ? " is-active" : ""}"
-            type="button"
-            data-action="admin-focus-course"
-            data-course-index="${idx}"
-            aria-pressed="${isActive ? "true" : "false"}"
-          >
-            <div class="admin-course-picker-card-head">
-              <b class="admin-course-picker-card-title">${escapeHtml(course)}</b>
-              <span class="admin-course-picker-card-status">${isActive ? "Opened" : "Open"}</span>
-            </div>
-            <p class="admin-course-picker-card-copy">
-              <span>${topicCount} topics</span>
-              <span>${questionCount} questions</span>
-            </p>
-          </button>
+          <li>
+            <button
+              class="admin-flat-row admin-course-picker-row${isActive ? " is-active" : ""}"
+              type="button"
+              data-action="admin-focus-course"
+              data-course-index="${idx}"
+              aria-pressed="${isActive ? "true" : "false"}"
+            >
+              <span class="admin-flat-row-main">
+                <span class="admin-flat-row-title">${escapeHtml(course)}</span>
+                <span class="admin-flat-row-meta">${escapeHtml(courseMeta)}${questionCount ? "" : ` · <span class="admin-flat-warn">no questions yet</span>`}</span>
+              </span>
+              <span class="admin-flat-row-chevron" aria-hidden="true">›</span>
+            </button>
+          </li>
         `;
       })
       .join("");
@@ -33430,58 +34531,68 @@ function renderAdmin() {
         `
       : "";
 
-    pageContent = `
-      <section class="card admin-section" id="admin-courses-section">
-        <div class="admin-courses-minimal-head">
-          <div>
-            <h3 style="margin: 0;">MCQ Subjects</h3>
-            <p class="subtle" style="margin: 0.22rem 0 0;">MCQ Bank curriculum • Year ${curriculumYear} • Semester ${curriculumSemester}</p>
-          </div>
-          <form id="admin-curriculum-add-form" class="admin-courses-head-add-form" autocomplete="off">
-            <label class="admin-courses-head-add-label">Add new course
+    const subjectsHeaderActions = renderAdminIconButton({
+      icon: "plus",
+      label: "Add MCQ Subject",
+      attrs: `data-action="admin-mcq-subjects-open-add"`,
+      variant: "primary",
+    });
+    const subjectsPageHeaderHtml = renderAdminPageHeader({
+      id: "mcq-subjects",
+      title: "MCQ Subjects",
+      count: filteredCourseEntries.length,
+      actions: subjectsHeaderActions,
+      notes: [
+        `Subjects belong to a Year and Semester of the curriculum — this list shows Year ${curriculumYear} · Semester ${curriculumSemester}.`,
+        "Open a subject to manage its topics, an Ask AI/notebook link, and destructive actions like clearing its questions.",
+      ],
+    });
+    const addCourseDialogHtml = state.adminCourseAddDialogOpen
+      ? renderAdminDialog({
+        id: "mcq-subjects-add",
+        title: "Add MCQ Subject",
+        subtitle: `Adds a course to Year ${curriculumYear} · Semester ${curriculumSemester}.`,
+        closeAction: "admin-mcq-subjects-close-add",
+        body: `
+          <form id="admin-curriculum-add-form" autocomplete="off">
+            <label>Course name
               <input name="newCourseName" placeholder="e.g., New Clinical Module (NCM 999)" required />
             </label>
-            <button class="btn" type="submit">Add new course</button>
           </form>
-        </div>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-mcq-subjects-close-add">Cancel</button>
+          <button class="btn admin-btn-sm" type="submit" form="admin-curriculum-add-form">Add course</button>
+        `,
+      })
+      : "";
 
-        <div class="admin-courses-minimal-controls" style="margin-top: 0.8rem;">
-              <form id="admin-curriculum-filter-form" class="admin-course-toolbar-card" autocomplete="off">
-                <div class="form-row">
-                  <label>Year
-                    <select name="curriculumYear">
-                      <option value="1" ${curriculumYear === 1 ? "selected" : ""}>Year 1</option>
-                      <option value="2" ${curriculumYear === 2 ? "selected" : ""}>Year 2</option>
-                      <option value="3" ${curriculumYear === 3 ? "selected" : ""}>Year 3</option>
-                      <option value="4" ${curriculumYear === 4 ? "selected" : ""}>Year 4</option>
-                      <option value="5" ${curriculumYear === 5 ? "selected" : ""}>Year 5</option>
-                    </select>
-                  </label>
-                  <label>Semester
-                    <select name="curriculumSemester">
-                      <option value="1" ${curriculumSemester === 1 ? "selected" : ""}>Semester 1</option>
-                      <option value="2" ${curriculumSemester === 2 ? "selected" : ""}>Semester 2</option>
-                    </select>
-                  </label>
-                  <label class="admin-course-search-field">Search course
-                    <input id="admin-curriculum-search" type="search" value="${escapeHtml(courseSearchQuery)}" placeholder="Filter by course name..." />
-                  </label>
-                </div>
-              </form>
-            </div>
+    pageContent = `
+      <section class="card admin-section" id="admin-courses-section">
+        ${subjectsPageHeaderHtml}
 
-            <div class="admin-course-grid" style="margin-top: 0.95rem;">
-              ${courseCards || `
-                <div class="admin-course-empty-state">
-                  <h4 style="margin: 0;">No matching courses</h4>
-                  <p class="subtle" style="margin: 0;">Try a different search term or switch the year/semester filter.</p>
-                </div>
-              `}
-            </div>
+        <form id="admin-curriculum-filter-form" class="admin-flat-toolbar" autocomplete="off">
+          <select name="curriculumYear" aria-label="Year">
+            ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${curriculumYear === year ? "selected" : ""}>Year ${year}</option>`).join("")}
+          </select>
+          <select name="curriculumSemester" aria-label="Semester">
+            <option value="1" ${curriculumSemester === 1 ? "selected" : ""}>Semester 1</option>
+            <option value="2" ${curriculumSemester === 2 ? "selected" : ""}>Semester 2</option>
+          </select>
+          <label class="admin-users-toolbar-search admin-flat-toolbar-search">
+            <span class="sr-only">Search subjects</span>
+            <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+            <input id="admin-curriculum-search" type="search" value="${escapeHtml(courseSearchQuery)}" placeholder="Search subjects" />
+          </label>
+        </form>
+
+        ${courseCards
+    ? `<ul class="admin-flat-list admin-course-picker-list">${courseCards}</ul>`
+    : `<p class="admin-flat-empty">No matching subjects. Try a different search or switch the year or semester.</p>`}
       </section>
     `;
 
-    adminGlobalOverlay = focusedCourseWorkspace && state.adminCourseTopicModalCourse
+    const courseDetailsModalHtml = focusedCourseWorkspace && state.adminCourseTopicModalCourse
       ? `
           <div class="admin-course-topic-modal admin-course-details-modal">
             <button class="admin-course-topic-modal-backdrop" type="button" data-action="course-topic-manager-close" aria-label="Close course details"></button>
@@ -33503,10 +34614,12 @@ function renderAdmin() {
           </div>
         `
       : "";
+    adminGlobalOverlay = `${addCourseDialogHtml}${courseDetailsModalHtml}`;
   }
 
   if (activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE) {
     pageContent = adminRenderCourseBuilder(state.adminCourseBuilderCourseId);
+    adminGlobalOverlay = renderAdminCoursesPlatformDialogs();
   }
 
   if (activeAdminPage === "questions") {
@@ -33537,7 +34650,13 @@ function renderAdmin() {
     }
     const questionOpsLocked = questionSaveRunning || Boolean(questionDeleteQid) || bulkActionRunning;
     const courseQuestions = questionView.filteredQuestions;
-    const renderedCourseQuestions = courseQuestions.slice(0, ADMIN_QUESTION_RENDER_LIMIT);
+    const questionsFilterKey = `${selectedCourse}::${selectedTopic}`;
+    if (state.adminQuestionsFilterKey !== questionsFilterKey) {
+      state.adminQuestionsFilterKey = questionsFilterKey;
+      state.adminQuestionsVisibleLimit = ADMIN_QUESTION_RENDER_PAGE_SIZE;
+    }
+    const questionsVisibleLimit = Math.max(ADMIN_QUESTION_RENDER_PAGE_SIZE, Number(state.adminQuestionsVisibleLimit) || 0);
+    const renderedCourseQuestions = courseQuestions.slice(0, questionsVisibleLimit);
     const hiddenFilteredQuestionCount = Math.max(0, courseQuestions.length - renderedCourseQuestions.length);
     const visibleQuestionIds = renderedCourseQuestions
       .map((question) => String(question.id || "").trim())
@@ -33572,7 +34691,9 @@ function renderAdmin() {
         }
         const meta = getQbankCourseTopicMeta(question);
         const stem = String(question.stem || "").trim();
-        const stemPreview = stem.length > 160 ? `${stem.slice(0, 157)}...` : stem;
+        const stemPreview = stem.length > 220 ? `${stem.slice(0, 217)}...` : stem;
+        const status = String(question.status || "draft").trim().toLowerCase();
+        const statusLabel = status === "published" ? "Published" : status === "archived" ? "Archived" : "Draft";
         return `
           <tr
             class="${rowClassNames.join(" ")}"
@@ -33600,16 +34721,27 @@ function renderAdmin() {
               </span>
             </td>
             <td>${idx + 1}</td>
-            <td>${escapeHtml(meta.topic)}</td>
-            <td>${escapeHtml(stemPreview || "(No stem)")}</td>
-            <td>${escapeHtml(String(question.correct?.[0] || "A").toUpperCase())}</td>
-            <td>${escapeHtml(String(question.status || "draft"))}</td>
+            <td class="admin-question-stem-cell">
+              <p class="admin-question-stem-preview">${escapeHtml(stemPreview || "(No stem)")}</p>
+              <p class="admin-question-stem-meta">${escapeHtml(meta.course)} · ${escapeHtml(meta.topic)} · Correct: ${escapeHtml(String(question.correct?.[0] || "A").toUpperCase())}</p>
+            </td>
             <td>
-              <div class="stack">
-                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-edit" data-qid="${escapeHtml(questionId)}" ${questionOpsLocked || !questionId ? "disabled" : ""}>Edit</button>
-                <button class="btn danger admin-btn-sm ${isDeleting ? "is-loading" : ""}" type="button" data-action="admin-delete" data-qid="${escapeHtml(questionId)}" ${questionOpsLocked || !questionId ? "disabled" : ""}>
-                  ${isDeleting ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete"}
-                </button>
+              <span class="admin-question-status is-${status}">${escapeHtml(statusLabel)}</span>
+            </td>
+            <td class="admin-question-actions-cell">
+              <div class="admin-question-row-actions">
+                ${renderAdminIconButton({
+          icon: "pencil",
+          label: `Edit question ${idx + 1}`,
+          attrs: `data-action="admin-edit" data-qid="${escapeHtml(questionId)}"${questionOpsLocked || !questionId ? " disabled" : ""}`,
+        })}
+                ${renderAdminIconButton({
+          icon: "trash",
+          label: isDeleting ? `Deleting question ${idx + 1}...` : `Delete question ${idx + 1}`,
+          variant: "danger",
+          attrs: `data-action="admin-delete" data-qid="${escapeHtml(questionId)}"${(questionOpsLocked || !questionId) && !isDeleting ? " disabled" : ""}`,
+          busy: isDeleting,
+        })}
               </div>
             </td>
           </tr>
@@ -33634,93 +34766,123 @@ function renderAdmin() {
     });
     const answerKey = String(editing?.correct?.[0] || "A").toUpperCase();
     const saveQuestionLabel = editing ? "Save changes" : "Save question";
+    const activeQuestionFilterCount = (selectedTopic ? 1 : 0);
+    const questionsHeaderActions = `
+      <span class="admin-icon-btn-wrap">
+        ${renderAdminIconButton({
+      icon: "filter",
+      label: activeQuestionFilterCount ? `Filters (${activeQuestionFilterCount} active)` : "Filters",
+      attrs: `data-action="admin-questions-open-filters" aria-haspopup="dialog"`,
+      variant: activeQuestionFilterCount ? "is-active" : "",
+    })}
+        ${activeQuestionFilterCount ? `<span class="admin-icon-btn-badge">${activeQuestionFilterCount}</span>` : ""}
+      </span>
+      ${renderAdminIconButton({
+      icon: "plus",
+      label: "New question",
+      attrs: `data-action="admin-open-editor-new"${questionOpsLocked ? " disabled" : ""}`,
+      variant: "primary",
+    })}
+    `;
+    const questionsPageHeaderHtml = renderAdminPageHeader({
+      id: "questions",
+      title: "Questions",
+      count: courseQuestions.length,
+      actions: questionsHeaderActions,
+      notes: [
+        "Filter by MCQ subject and topic, then edit the stem, choices, and explanation for a question.",
+        "Select rows with the checkboxes to draft, publish, or delete several questions at once.",
+        "Drag and drop rows (or swipe up/down on touch) to reorder them.",
+      ],
+    });
+    const questionsFiltersDialogHtml = state.adminQuestionsFiltersOpen
+      ? renderAdminDialog({
+        id: "questions-filters",
+        title: "Filters",
+        subtitle: "Choose the MCQ subject and topic to work on.",
+        closeAction: "admin-questions-close-filters",
+        body: `
+          <form id="admin-question-filter-form" autocomplete="off">
+            <div class="form-row">
+              <label>Course
+                <select id="admin-filter-course" name="course">
+                  ${allCourses
+            .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+            .join("")}
+                </select>
+              </label>
+              <label>Topic
+                <select id="admin-filter-topic" name="topic">
+                  <option value="" ${selectedTopic ? "" : "selected"}>All topics</option>
+                  ${selectedCourseTopics
+            .map((topic) => `<option value="${escapeHtml(topic)}" ${selectedTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
+            .join("")}
+                </select>
+              </label>
+            </div>
+          </form>
+        `,
+        actions: `
+          <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-filters">Reset</button>
+          <button class="btn admin-btn-sm" type="submit" form="admin-question-filter-form">Apply filter</button>
+        `,
+      })
+      : "";
 
     pageContent = `
       <section class="card admin-section" id="admin-questions-section">
-        <div class="flex-between">
-          <div>
-            <h3 style="margin: 0;">Course Question Editor</h3>
-            <p class="subtle">Open each course, see all uploaded questions, and edit stem, answers, and explanation.</p>
-          </div>
-          <div class="stack" style="align-items: flex-end; gap: 0.35rem;">
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-editor-new" ${questionOpsLocked ? "disabled" : ""}>New question</button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-courses">Back to courses</button>
-          </div>
-        </div>
-        <form id="admin-question-filter-form" style="margin-top: 0.7rem;" autocomplete="off">
-          <div class="form-row">
-            <label>Course
-              <select id="admin-filter-course" name="course">
-                ${allCourses
-        .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
-        .join("")}
-              </select>
-            </label>
-            <label>Topic
-              <select id="admin-filter-topic" name="topic">
-                <option value="" ${selectedTopic ? "" : "selected"}>All topics</option>
-                ${selectedCourseTopics
-        .map((topic) => `<option value="${escapeHtml(topic)}" ${selectedTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
-        .join("")}
-              </select>
-            </label>
-          </div>
-          <div class="stack">
-            <button class="btn ghost admin-btn-sm" type="submit">Apply filter</button>
-            <button class="btn ghost admin-btn-sm" type="button" id="admin-clear-filters">Reset</button>
-          </div>
-        </form>
-        <div class="admin-question-bulk-bar" style="margin-top: 0.74rem;">
-          <label class="admin-question-select-all">
-            <input
-              type="checkbox"
-              name="selectAllQuestionsVisible"
-              data-action="admin-select-all-questions"
-              aria-label="Select all questions in this list"
-              data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
-              ${allVisibleSelected ? "checked" : ""}
-              ${questionOpsLocked || !visibleQuestionIds.length ? "disabled" : ""}
-            />
-            <span>Select all in this view</span>
-          </label>
-          <p class="admin-question-selection-count">Selected: <b>${selectedQuestionCount}</b></p>
-          <div class="stack">
-            <button class="btn ghost admin-btn-sm ${isBulkDrafting ? "is-loading" : ""}" type="button" data-action="admin-bulk-draft" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
-              ${isBulkDrafting ? `<span class="inline-loader" aria-hidden="true"></span><span>Drafting...</span>` : "Draft selected"}
-            </button>
-            <button class="btn ghost admin-btn-sm ${isBulkPublishing ? "is-loading" : ""}" type="button" data-action="admin-bulk-publish" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
-              ${isBulkPublishing ? `<span class="inline-loader" aria-hidden="true"></span><span>Publishing...</span>` : "Publish selected"}
-            </button>
-            <button class="btn danger admin-btn-sm ${isBulkDeleting ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
-              ${isBulkDeleting ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete selected"}
-            </button>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-selection" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>Clear selection</button>
-          </div>
-        </div>
-        ${hiddenFilteredQuestionCount
-        ? `<p class="subtle" style="margin: 0.7rem 0 0;">Showing the first ${ADMIN_QUESTION_RENDER_LIMIT} questions in this filter to keep editing responsive. Choose a topic to narrow the list.</p>`
+        ${questionsPageHeaderHtml}
+        ${selectedQuestionCount
+        ? `<div class="admin-question-bulk-bar" style="margin-top: 0.74rem;">
+            <p class="admin-question-selection-count">Selected: <b>${selectedQuestionCount}</b></p>
+            <div class="stack">
+              <button class="btn ghost admin-btn-sm ${isBulkDrafting ? "is-loading" : ""}" type="button" data-action="admin-bulk-draft" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+                ${isBulkDrafting ? `<span class="inline-loader" aria-hidden="true"></span><span>Drafting...</span>` : "Draft selected"}
+              </button>
+              <button class="btn ghost admin-btn-sm ${isBulkPublishing ? "is-loading" : ""}" type="button" data-action="admin-bulk-publish" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+                ${isBulkPublishing ? `<span class="inline-loader" aria-hidden="true"></span><span>Publishing...</span>` : "Publish selected"}
+              </button>
+              <button class="btn danger admin-btn-sm ${isBulkDeleting ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+                ${isBulkDeleting ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete selected"}
+              </button>
+              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-selection" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>Clear selection</button>
+            </div>
+          </div>`
         : ""
       }
-        <p class="subtle admin-question-reorder-hint">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>
-        <div class="table-wrap" style="margin-top: 0.9rem;">
+        <p class="subtle admin-question-reorder-hint" style="margin-top: 0.7rem;">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>
+        <div class="table-wrap" style="margin-top: 0.6rem;">
           <table>
             <thead>
               <tr>
-                <th class="admin-question-select-cell">Select</th>
+                <th class="admin-question-select-cell">
+                  <input
+                    type="checkbox"
+                    name="selectAllQuestionsVisible"
+                    data-action="admin-select-all-questions"
+                    aria-label="Select all questions in this list"
+                    title="Select all questions in this list"
+                    data-indeterminate="${partiallyVisibleSelected ? "true" : "false"}"
+                    ${allVisibleSelected ? "checked" : ""}
+                    ${questionOpsLocked || !visibleQuestionIds.length ? "disabled" : ""}
+                  />
+                </th>
                 <th class="admin-question-order-cell">Move</th>
                 <th>#</th>
-                <th>Topic</th>
                 <th>Question</th>
-                <th>Correct</th>
                 <th>Status</th>
-                <th>Actions</th>
+                <th><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              ${questionRows || `<tr><td colspan="8" class="subtle">No questions found for this course/topic.</td></tr>`}
+              ${questionRows || `<tr><td colspan="6" class="subtle">No questions found for this course/topic.</td></tr>`}
             </tbody>
           </table>
         </div>
+        ${hiddenFilteredQuestionCount
+        ? `<p class="admin-question-show-more"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-questions-show-more">Show more (${hiddenFilteredQuestionCount})</button></p>`
+        : ""
+      }
       </section>
 
       ${state.adminQuestionModalOpen
@@ -33839,6 +35001,7 @@ function renderAdmin() {
         : ""
       }
     `;
+    adminGlobalOverlay = questionsFiltersDialogHtml;
   }
 
   if (activeAdminPage === "bulk-import") {
@@ -33888,8 +35051,14 @@ function renderAdmin() {
       .filter((course) => course?.is_active !== false && course?.is_published !== false);
     const targetVideoCourseId = String(state.adminNotificationTargetVideoCourseId || "").trim();
     const notificationSending = Boolean(state.adminNotificationSending);
-    const notificationRows = getNotifications()
-      .slice(0, 200)
+    const allNotifications = getNotifications();
+    const notificationVisibleCount = Math.min(
+      Math.max(ADMIN_NOTIFICATION_RENDER_PAGE_SIZE, Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE),
+      ADMIN_NOTIFICATION_RENDER_CAP,
+    );
+    const notificationsToRender = allNotifications.slice(0, notificationVisibleCount);
+    const notificationsRemaining = Math.min(allNotifications.length, ADMIN_NOTIFICATION_RENDER_CAP) - notificationsToRender.length;
+    const notificationRows = notificationsToRender
       .map((notification) => {
         const targetLabel = getNotificationTargetLabel(notification, users);
         const senderLabel = String(notification.createdByName || "Admin").trim() || "Admin";
@@ -33910,19 +35079,7 @@ function renderAdmin() {
       })
       .join("");
 
-    pageContent = `
-      <section class="card admin-section" id="admin-notifications-section">
-        <div class="flex-between">
-          <div>
-            <h3 style="margin: 0;">Notifications</h3>
-            <p class="subtle">Send in-app and device push notifications to all users, one user, or students by academic year.</p>
-          </div>
-          <div class="stack" style="align-items: flex-end;">
-            <p class="subtle" style="margin: 0;">Last sync: <b>${state.adminDataLastSyncAt ? new Date(state.adminDataLastSyncAt).toLocaleTimeString() : "Not yet"}</b></p>
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-notifications" ${notificationSending ? "disabled" : ""}>Refresh list</button>
-          </div>
-        </div>
-
+    const notificationComposeFormHtml = `
         <form id="admin-notification-form" autocomplete="off">
           <div class="form-row admin-notification-target-row">
             <label class="admin-notification-target-type-field ${targetType === "year" ? "" : "is-full-width"}" id="admin-notification-target-type-field-wrap">Audience
@@ -34039,6 +35196,33 @@ function renderAdmin() {
             </button>
           </div>
         </form>
+    `;
+
+    const notificationsHeaderActions = `${renderAdminIconButton({
+      icon: "refresh",
+      label: "Refresh list",
+      attrs: `data-action="admin-refresh-notifications"${notificationSending ? " disabled" : ""}`,
+    })}${renderAdminIconButton({
+      icon: "plus",
+      label: "New notification",
+      attrs: `data-action="admin-notifications-open-compose"`,
+      variant: "primary",
+    })}`;
+
+    const notificationsPageHeader = renderAdminPageHeader({
+      id: "notifications",
+      title: "Notifications",
+      count: notificationsToRender.length,
+      actions: notificationsHeaderActions,
+      notes: [
+        "Send in-app and device push notifications to all users, one user, or students by academic year.",
+        "Choose what opens when a student taps the notification, including a specific MCQ Subject, topic, or Video Course.",
+      ],
+    });
+
+    pageContent = `
+      <section class="card admin-section" id="admin-notifications-section">
+        ${notificationsPageHeader}
 
         <div class="table-wrap" style="margin-top: 0.9rem;">
           <table>
@@ -34057,8 +35241,23 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
+        ${notificationsRemaining > 0 ? `
+          <div class="admin-list-show-more">
+            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-notifications-show-more">Show more (${notificationsRemaining})</button>
+          </div>
+        ` : ""}
       </section>
     `;
+
+    if (state.adminNotificationComposeOpen) {
+      adminGlobalOverlay = renderAdminDialog({
+        id: "notification-compose",
+        title: "New notification",
+        subtitle: "Choose an audience, a destination, and a message.",
+        closeAction: "admin-notifications-close-compose",
+        body: notificationComposeFormHtml,
+      });
+    }
   }
 
   if (activeAdminPage === "site-access") {
@@ -34084,44 +35283,57 @@ function renderAdmin() {
     });
     const updatedLabel = config.updatedAt ? new Date(config.updatedAt).toLocaleString() : "Not yet";
     const updatedByLabel = String(config.updatedByName || "").trim() || "System";
+    const siteAccessHeader = renderAdminPageHeader({
+      id: "site-access",
+      title: "Site Access",
+      notes: [
+        "Closing the site hides it from non-admin users and shows a public message about updates or maintenance instead.",
+        "Admins keep access to the dashboard even while closure mode is active.",
+        "Add specific non-admin accounts as exceptions so they can still get in while the site is closed.",
+        "If you want signed-in students to reload and pick up the closure faster, use <b>Force student refresh</b> from the sidebar after saving.",
+      ],
+    });
     pageContent = `
       <section class="card admin-section" id="admin-site-access-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Temporary Website Closure</h3>
-            <p class="subtle">Close the website for non-admin users and leave a public message about updates or maintenance.</p>
-          </div>
-          <span class="badge ${config.enabled ? "bad" : "good"}">${config.enabled ? "Closed for users" : "Open to users"}</span>
-        </div>
+        ${siteAccessHeader}
 
         <form id="admin-site-maintenance-form" class="admin-site-maintenance-form" autocomplete="off">
-          <label class="toggle-switch-label admin-site-maintenance-toggle">
-            <input name="enabled" type="checkbox" class="toggle-switch-input" ${config.enabled ? "checked" : ""} />
-            <span class="toggle-switch-track" aria-hidden="true">
-              <span class="toggle-switch-thumb"></span>
-            </span>
-            <span class="toggle-switch-text">
-              <b>${config.enabled ? "Website is currently closed for users" : "Leave website open"}</b><br />
-              <span class="subtle">Admins keep access to the dashboard even while closure mode is active.</span>
-            </span>
-          </label>
-
-          <div class="form-row">
-            <label>Public title
-              <input name="title" maxlength="120" autocomplete="off" value="${escapeHtml(config.title)}" required />
-            </label>
-          </div>
-
-          <label>Public message
-            <textarea name="message" rows="6" maxlength="1200" autocomplete="off" required>${escapeHtml(config.message)}</textarea>
-          </label>
-
-          <div class="admin-site-maintenance-exceptions">
-            <div>
-              <h4 style="margin: 0;">Allowed users during closure</h4>
-              <p class="subtle" style="margin: 0.3rem 0 0;">Add specific non-admin accounts that should still be able to enter while the website is closed.</p>
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Website status</h4>
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">${config.enabled ? "Website is currently closed for users" : "Website is open"}</p>
+                <p class="admin-settings-row-desc">${config.enabled ? "Non-admin users see the public message below instead of the app." : "Non-admin users can use the site normally."}</p>
+              </div>
+              <div class="admin-settings-row-control">
+                <label class="toggle-switch-label">
+                  <input name="enabled" type="checkbox" class="toggle-switch-input" aria-label="Close the website for non-admin users" ${config.enabled ? "checked" : ""} />
+                  <span class="toggle-switch-track" aria-hidden="true">
+                    <span class="toggle-switch-thumb"></span>
+                  </span>
+                </label>
+              </div>
             </div>
+          </section>
 
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Public message</h4>
+            <div class="form-row">
+              <label>Public title
+                <input name="title" maxlength="120" autocomplete="off" value="${escapeHtml(config.title)}" required />
+              </label>
+            </div>
+            <label>Public message
+              <textarea name="message" rows="6" maxlength="1200" autocomplete="off" required>${escapeHtml(config.message)}</textarea>
+            </label>
+            <div class="admin-site-maintenance-actions">
+              <button class="btn" type="submit">Save site status</button>
+              <button class="btn ghost" type="button" data-action="admin-site-maintenance-reset">Reset default message</button>
+            </div>
+          </section>
+
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">Allowed users during closure</h4>
             <div id="admin-site-maintenance-exception-form" class="admin-site-maintenance-exception-form">
               <input type="hidden" name="exceptionUserId" id="admin-site-maintenance-exception-user-id" value="" />
               <label>Search user
@@ -34164,33 +35376,39 @@ function renderAdmin() {
           : '<p class="subtle" style="margin: 0;">No user exceptions added.</p>'
         }
             </div>
-          </div>
-
-          <div class="admin-site-maintenance-actions">
-            <button class="btn" type="submit">Save site status</button>
-            <button class="btn ghost" type="button" data-action="admin-site-maintenance-reset">Reset default message</button>
-          </div>
+          </section>
         </form>
 
-        <div class="admin-site-maintenance-preview">
-          <div class="maintenance-card is-inline-preview">
-            <span class="maintenance-badge">${config.enabled ? "Public preview" : "Preview"}</span>
-            <h4 class="maintenance-title">${escapeHtml(config.title)}</h4>
-            <p class="maintenance-message">${escapeHtml(config.message)}</p>
-            <p class="maintenance-updated">Last saved ${escapeHtml(updatedLabel)} by ${escapeHtml(updatedByLabel)}.</p>
+        <details class="admin-site-maintenance-preview-details">
+          <summary>Preview</summary>
+          <div class="admin-site-maintenance-preview">
+            <div class="maintenance-card is-inline-preview">
+              <span class="maintenance-badge">${config.enabled ? "Public preview" : "Preview"}</span>
+              <h4 class="maintenance-title">${escapeHtml(config.title)}</h4>
+              <p class="maintenance-message">${escapeHtml(config.message)}</p>
+              <p class="maintenance-updated">Last saved ${escapeHtml(updatedLabel)} by ${escapeHtml(updatedByLabel)}.</p>
+            </div>
           </div>
-          <p class="subtle" style="margin: 0;">If you want signed-in students to reload and pick up the closure faster, use <b>Force student refresh</b> from the sidebar after saving.</p>
-        </div>
+        </details>
       </section>
     `;
   }
 
   if (activeAdminPage === "popups") {
-    pageContent = renderAdminPopupsSection();
+    const popupsPageHeader = renderAdminPageHeader({
+      id: "popups",
+      title: "Pop-ups",
+      count: (state.adminPopups || []).length,
+      notes: ["Full-screen campaigns for the MedBank mobile app."],
+    });
+    pageContent = `${popupsPageHeader}${renderAdminPopupsSection()}`;
   }
 
   if (activeAdminPage === "universities") {
     pageContent = renderAdminUniversitiesSection();
+    // Rendered outside the admin shell/card: a hovered card gets a
+    // transform, which would trap a position: fixed dialog inside it.
+    adminGlobalOverlay = renderAdminUniversityDialog();
   }
 
   if (activeAdminPage === "ai-agents") {
@@ -34198,7 +35416,11 @@ function renderAdmin() {
   }
 
   if (activeAdminPage === "logs") {
-    const logs = getSystemLogs().slice(0, 800);
+    const allLogs = getSystemLogs();
+    const totalLogsCount = allLogs.length;
+    const visibleLogsCount = Math.min(totalLogsCount, Math.max(100, Number(state.adminLogsVisibleCount) || 100));
+    const logs = allLogs.slice(0, visibleLogsCount);
+    const remainingLogsCount = totalLogsCount - logs.length;
     const logRows = logs
       .map((entry) => {
         const actorLabel = entry.actorName || entry.actorId || "System";
@@ -34225,22 +35447,33 @@ function renderAdmin() {
       })
       .join("");
 
+    const logsHeaderActions = `${renderAdminIconButton({
+      icon: "refresh",
+      label: "Refresh logs",
+      attrs: `data-action="admin-logs-refresh"`,
+    })}${renderAdminRowMenu({
+      id: "logs-actions",
+      label: "Log actions",
+      items: [
+        { label: "Export JSON", attrs: `data-action="admin-export-logs"` },
+        { label: "Clear logs", attrs: `data-action="admin-clear-logs"`, danger: true },
+      ],
+    })}`;
+    const logsHeader = renderAdminPageHeader({
+      id: "logs",
+      title: "System Logs",
+      count: totalLogsCount,
+      actions: logsHeaderActions,
+      notes: [
+        "Readable audit trail of admin-only interactions and system changes.",
+        "Newest entries are shown first; use Show more to load older ones.",
+        "Entries don't carry a severity (error/warning/info), so there's no level filter here.",
+      ],
+    });
+
     pageContent = `
       <section class="card admin-section" id="admin-logs-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">System Logs</h3>
-            <p class="subtle">Readable audit trail of admin-only interactions and system changes.</p>
-          </div>
-          <div class="stack" style="align-items: flex-end;">
-            <p class="subtle" style="margin: 0;">Showing latest <b>${logs.length}</b> record(s)</p>
-            <div class="stack">
-              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-export-logs">Export JSON</button>
-              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-logs-refresh">Refresh</button>
-              <button class="btn danger admin-btn-sm" type="button" data-action="admin-clear-logs">Clear logs</button>
-            </div>
-          </div>
-        </div>
+        ${logsHeader}
         <div class="table-wrap" style="margin-top: 0.9rem;">
           <table class="admin-users-table">
             <thead>
@@ -34258,6 +35491,12 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
+        ${remainingLogsCount > 0
+        ? `<div class="admin-logs-show-more">
+              <button class="btn ghost admin-btn-sm" type="button" data-action="admin-logs-show-more">Show more (${remainingLogsCount} remaining)</button>
+            </div>`
+        : ""
+      }
       </section>
     `;
   }
@@ -34345,32 +35584,39 @@ function renderAdmin() {
       ? new Date(state.adminPresenceLastSyncAt).toLocaleTimeString()
       : "Not yet";
 
+    const activityHeaderActions = `${renderAdminIconButton({
+      icon: "refresh",
+      label: state.adminPresenceLoading ? "Refreshing..." : "Refresh now",
+      attrs: `data-action="refresh-admin-activity"`,
+      busy: Boolean(state.adminPresenceLoading),
+    })}${renderAdminIconButton({
+      icon: "download",
+      label: state.adminActivityReportRunning ? "Preparing report..." : "Download daily report",
+      attrs: `data-action="download-admin-activity-report"`,
+      busy: Boolean(state.adminActivityReportRunning),
+    })}`;
+    const activityHeader = renderAdminPageHeader({
+      id: "activity",
+      title: "Live User Activity",
+      count: `${onlineRows.length} online`,
+      actions: activityHeaderActions,
+      notes: [
+        "Real-time tracking of every signed-in user; this page auto-refreshes every 15 seconds.",
+        "\"Solving\" means the student currently has a test block open.",
+        "Download daily report exports a summary of today's activity as a spreadsheet.",
+      ],
+    });
+
     pageContent = `
       <section class="card admin-section" id="admin-activity-section">
-        <div class="flex-between" style="gap: 1rem;">
-          <div>
-            <h3 style="margin: 0;">Live User Activity</h3>
-            <p class="subtle">Real-time tracking of all users. Auto-refreshes every 15 seconds.</p>
-          </div>
-          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.45rem;">
-            <div style="display: flex; align-items: center; gap: 0.6rem;">
-              <span class="subtle" style="font-size: 0.8rem;">Last sync: <b>${lastSyncLabel}</b></span>
-              <button class="btn ghost admin-btn-sm ${state.adminActivityReportRunning ? "is-loading" : ""}" type="button" data-action="download-admin-activity-report" ${state.adminActivityReportRunning ? "disabled" : ""}>
-                ${state.adminActivityReportRunning ? `<span class="inline-loader" aria-hidden="true"></span><span>Preparing report...</span>` : "Download daily report"}
-              </button>
-              <button class="btn ghost admin-btn-sm ${state.adminPresenceLoading ? "is-loading" : ""}" type="button" data-action="refresh-admin-activity" ${state.adminPresenceLoading ? "disabled" : ""}>
-                ${state.adminPresenceLoading ? `<span class="inline-loader" aria-hidden="true"></span><span>Refreshing...</span>` : "Refresh now"}
-              </button>
-            </div>
-            <small class="subtle" style="font-size: 0.72rem;">\u25CF Auto-refresh active</small>
-          </div>
-        </div>
-        <div class="stats-grid" style="margin-top: 0.85rem;">
-          <article class="card"><p class="metric">${rows.length}<small>Total tracked</small></p></article>
-          <article class="card"><p class="metric">${onlineRows.length}<small>Online now</small></p></article>
-          <article class="card"><p class="metric">${solvingRows.length}<small>Solving now</small></p></article>
-          <article class="card"><p class="metric">${studentOnline}<small>Students online</small></p></article>
-          <article class="card"><p class="metric">${offlineRows.length}<small>Offline</small></p></article>
+        ${activityHeader}
+        <p class="subtle admin-activity-sync-line">Last sync: <b>${escapeHtml(lastSyncLabel)}</b> \u00B7 \u25CF Auto-refresh active</p>
+        <div class="admin-flat-stats admin-flat-grid">
+          <div class="admin-flat-stat"><b>${rows.length}</b><span>Total tracked</span></div>
+          <div class="admin-flat-stat"><b>${onlineRows.length}</b><span>Online now</span></div>
+          <div class="admin-flat-stat"><b>${solvingRows.length}</b><span>Solving now</span></div>
+          <div class="admin-flat-stat"><b>${studentOnline}</b><span>Students online</span></div>
+          <div class="admin-flat-stat"><b>${offlineRows.length}</b><span>Offline</span></div>
         </div>
         ${state.adminPresenceError
         ? `<p class="subtle" style="margin-top:0.9rem;">${escapeHtml(state.adminPresenceError)}</p>`
@@ -34398,9 +35644,6 @@ function renderAdmin() {
     `;
   }
 
-  const syncNotice = state.adminDataSyncError
-    ? `<div class="card admin-section"><p class="subtle" style="margin:0;">${escapeHtml(state.adminDataSyncError)}</p></div>`
-    : "";
   const adminLastSyncLabel = state.adminDataLastSyncAt
     ? new Date(state.adminDataLastSyncAt).toLocaleTimeString()
     : "Not yet";
@@ -34416,14 +35659,12 @@ function renderAdmin() {
   return `
     <section class="panel admin-shell">
       <aside class="admin-sidebar card">
-        <h3 style="margin-top: 0;">${isCoursesPlatformAdmin ? "Video Courses App" : "Admin Panel"}</h3>
-        <p class="subtle">${isCoursesPlatformAdmin ? "Manage the learning website: lessons, suggestions, requests, and announcements." : "Manage the full MedBank platform from one place."}</p>
+        <h3 style="margin-top: 0;">Admin Panel</h3>
+        <p class="subtle">Manage the full MedBank platform from one place.</p>
         <div class="admin-sidebar-nav">
-          ${isCoursesPlatformAdmin
-            ? renderAdminCoursesPlatformSidebarNav(activeCoursePlatformSection)
-            : renderAdminDataSidebarNav(activeAdminPage)}
+          ${renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection)}
         </div>
-        <div class="stack" style="margin-top: 0.85rem; align-items: flex-start;">
+        <div class="stack admin-sidebar-sync" style="margin-top: 0.85rem; align-items: flex-start;">
           <p class="subtle" style="margin: 0;">Last data sync: <b>${escapeHtml(adminLastSyncLabel)}</b></p>
           <div id="admin-cloud-sync-slot">${renderCloudSyncPill(cloudSyncModel, { compact: false })}</div>
           <button class="btn ghost admin-btn-sm ${adminSyncBusy ? "is-loading" : ""}" type="button" data-action="refresh-admin-data" ${adminSyncBusy || !canManualSupabaseSync ? "disabled" : ""} ${!canManualSupabaseSync ? 'title="Sign in with your Supabase admin account to enable sync."' : ""}>
@@ -34432,14 +35673,17 @@ function renderAdmin() {
           <button class="btn ghost admin-btn-sm ${adminForceRefreshBusy ? "is-loading" : ""}" type="button" data-action="admin-force-student-refresh" ${adminForceRefreshBusy || !canForceStudentRefresh ? "disabled" : ""} ${!canForceStudentRefresh ? 'title="Supabase app-state sync must be active to broadcast this action."' : ""}>
             ${adminForceRefreshBusy ? `<span class="inline-loader" aria-hidden="true"></span><span>Sending refresh signal...</span>` : "Force student refresh"}
           </button>
-          <small class="subtle">Students receive this instantly through Supabase Realtime. Offline students sync automatically when they reconnect.</small>
-          <small class="subtle">Last forced student refresh: <b>${escapeHtml(lastStudentRefreshLabel)}</b></small>
-          <small class="subtle">Edits save locally first, then sync automatically in the background.</small>
-          ${!canManualSupabaseSync ? '<small class="subtle">Supabase sync requires an active Supabase admin session.</small>' : ""}
+          <details class="admin-sidebar-sync-help">
+            <summary>About sync</summary>
+            <small class="subtle">Students receive this instantly through Supabase Realtime. Offline students sync automatically when they reconnect.</small>
+            <small class="subtle">Last forced student refresh: <b>${escapeHtml(lastStudentRefreshLabel)}</b></small>
+            <small class="subtle">Edits save locally first, then sync automatically in the background.</small>
+            ${!canManualSupabaseSync ? '<small class="subtle">Supabase sync requires an active Supabase admin session.</small>' : ""}
+          </details>
         </div>
       </aside>
 
-      <div class="admin-main">${syncNotice}${pageContent}</div>
+      <div class="admin-main">${pageContent}</div>
     </section>
     ${adminGlobalOverlay}
   `;
@@ -34548,14 +35792,13 @@ function renderAdminCourseTopicControls(course) {
                         >
                           Save
                         </button>
-                        <button
-                          class="btn danger admin-btn-sm"
-                          type="button"
-                          data-action="course-topic-remove"
-                          data-topic-index="${topicIdx}"
-                        >
-                          Remove
-                        </button>
+                        ${renderAdminRowMenu({
+          id: `course-topic-${topicIdx}`,
+          label: `More actions for topic ${topicIdx + 1}`,
+          items: [
+            { label: "Remove topic", attrs: `data-action="course-topic-remove" data-topic-index="${topicIdx}"`, danger: true },
+          ],
+        })}
                       </div>
                     </td>
                   </tr>
@@ -34569,9 +35812,170 @@ function renderAdminCourseTopicControls(course) {
   `;
 }
 
+function applyAdminPageTransition(previousPage, nextPage) {
+  if (previousPage === nextPage) return;
+  if (nextPage !== "questions") {
+    state.adminQuestionModalOpen = false;
+    state.adminSelectedQuestionIds = [];
+    state.adminBulkActionRunning = false;
+    state.adminBulkActionType = "";
+  }
+  if (nextPage !== "users") {
+    state.adminSelectedUserIds = [];
+    state.adminUserBulkActionRunning = false;
+    state.adminUsersFiltersOpen = false;
+    state.adminAddUserPanelOpen = false;
+    state.adminUsersSettingsOpen = false;
+    state.adminUserEditId = null;
+    if (adminUserSearchDebounce) {
+      window.clearTimeout(adminUserSearchDebounce);
+      adminUserSearchDebounce = null;
+    }
+  }
+  if (nextPage !== "mcq-subjects") {
+    state.adminCourseTopicModalCourse = "";
+    state.adminCourseTopicGroupCreateModalOpen = false;
+    state.adminCourseTopicInlineCreateOpen = false;
+  }
+  if (nextPage !== "ai-agents") {
+    state.adminAgentNewToken = null;
+  }
+  if (nextPage !== "logs") {
+    state.adminLogsVisibleCount = 100;
+  }
+  if (nextPage !== "notifications") {
+    state.adminNotificationComposeOpen = false;
+    state.adminNotificationsVisibleCount = ADMIN_NOTIFICATION_RENDER_PAGE_SIZE;
+  }
+  if (nextPage === "activity") {
+    refreshAdminPresenceSnapshot({ force: true })
+      .then((ok) => {
+        if (ok && state.route === "admin" && state.adminPage === "activity") {
+          state.skipNextRouteAnimation = true;
+          render();
+        }
+      })
+      .catch((error) => {
+        console.warn("Could not refresh admin activity.", error?.message || error);
+      });
+  } else {
+    clearAdminPresencePolling();
+  }
+}
+
+// Moves focus into a just-opened renderAdminDialog() (its first focusable
+// field, falling back to the panel itself). Call this after the render()
+// that shows the dialog.
+function focusIntoAdminDialog(dialogId) {
+  const panel = appEl?.querySelector(`#admin-dialog-${dialogId} .admin-dialog-panel`);
+  if (!panel) {
+    return;
+  }
+  const focusable = panel.querySelector("input, select, textarea, button:not([disabled])");
+  (focusable || panel).focus({ preventScroll: true });
+}
+
+// Returns focus to whichever toolbar button opened the dialog that was just
+// closed. Call this after the render() that hides the dialog.
+function restoreAdminUsersDialogFocus() {
+  const selector = adminUsersDialogReturnFocusSelector;
+  adminUsersDialogReturnFocusSelector = null;
+  if (!selector) {
+    return;
+  }
+  const trigger = appEl?.querySelector(selector);
+  trigger?.focus({ preventScroll: true });
+}
+
+// A render() while a dialog is open (a filter change applies immediately, the
+// admin poll) replaces the dialog's DOM, so focus falls to <body>: Escape then
+// stops reaching the dialog and keyboard users lose their place. Remember the
+// last focused element inside a dialog and put focus back after the render.
+let adminDialogLastFocusId = "";
+let adminDialogFocusTrackerWired = false;
+
+function trackAdminDialogFocus() {
+  if (adminDialogFocusTrackerWired) {
+    return;
+  }
+  adminDialogFocusTrackerWired = true;
+  document.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.id && target.closest(".admin-dialog")) {
+      adminDialogLastFocusId = target.id;
+    }
+  });
+}
+
+let adminUserEditReturnFocusUserId = "";
+
+function closeAdminUserEditDialog({ discardDraft = true } = {}) {
+  const editId = String(state.adminUserEditId || "").trim();
+  if (discardDraft && editId) {
+    clearAdminUserEnrollmentDraft(editId);
+  }
+  state.adminUserEditId = null;
+  state.skipNextRouteAnimation = true;
+  render();
+  const returnId = adminUserEditReturnFocusUserId || editId;
+  adminUserEditReturnFocusUserId = "";
+  const returnRow = returnId
+    ? [...appEl.querySelectorAll("tr[data-user-id]")].find((row) => row.getAttribute("data-user-id") === returnId)
+    : null;
+  returnRow?.querySelector("[data-action='admin-row-menu-toggle']")?.focus({ preventScroll: true });
+}
+
+function restoreAdminDialogFocusAfterRender() {
+  const openDialog = appEl?.querySelector(".admin-dialog [role='dialog']");
+  if (!openDialog) {
+    adminDialogLastFocusId = "";
+    return;
+  }
+  if (document.activeElement && document.activeElement !== document.body) {
+    return;
+  }
+  const previous = adminDialogLastFocusId ? document.getElementById(adminDialogLastFocusId) : null;
+  const target = previous && openDialog.contains(previous)
+    ? previous
+    : openDialog.querySelector("input, select, textarea, button:not([disabled])") || openDialog;
+  target.focus({ preventScroll: true });
+}
+
 function wireAdmin() {
+  trackAdminDialogFocus();
+  wireAdminSharedUi();
+  document.body.classList.toggle("is-admin-dialog-open", Boolean(appEl.querySelector(".admin-dialog")));
   wireAdminPopups();
   wireAdminUniversities();
+
+  // In the phone/tablet rail, bring the current page into view. scrollLeft,
+  // not scrollIntoView, so the page itself never jumps.
+  const adminNavRail = appEl.querySelector(".admin-sidebar-nav");
+  const adminNavActive = adminNavRail?.querySelector("[aria-current='page']");
+  if (adminNavRail && adminNavActive && adminNavRail.scrollWidth > adminNavRail.clientWidth) {
+    const railBox = adminNavRail.getBoundingClientRect();
+    const activeBox = adminNavActive.getBoundingClientRect();
+    if (activeBox.left < railBox.left || activeBox.right > railBox.right) {
+      adminNavRail.scrollLeft += activeBox.left - railBox.left - 16;
+    }
+  }
+
+  // Collapse/expand is DOM-only so it never re-renders (and resets) the page.
+  appEl.querySelectorAll("[data-action='admin-nav-group-toggle']").forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const groupId = String(toggle.getAttribute("data-group") || "").trim();
+      const groupEl = toggle.closest(".admin-nav-group");
+      if (!groupId || !groupEl) {
+        return;
+      }
+      const open = !groupEl.classList.contains("is-open");
+      groupEl.classList.toggle("is-open", open);
+      groupEl.classList.toggle("is-collapsed", !open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      setAdminNavGroupOpen(groupId, open);
+    });
+  });
+
   const allCourses = Object.keys(QBANK_COURSE_TOPICS);
 
   appEl.querySelectorAll("[data-action='admin-page']").forEach((button) => {
@@ -34589,42 +35993,7 @@ function wireAdmin() {
         from: previousPage,
         to: page,
       });
-      if (page !== "questions") {
-        state.adminQuestionModalOpen = false;
-        state.adminSelectedQuestionIds = [];
-        state.adminBulkActionRunning = false;
-        state.adminBulkActionType = "";
-      }
-      if (page !== "users") {
-        state.adminSelectedUserIds = [];
-        state.adminUserBulkActionRunning = false;
-        if (adminUserSearchDebounce) {
-          window.clearTimeout(adminUserSearchDebounce);
-          adminUserSearchDebounce = null;
-        }
-      }
-      if (page !== "mcq-subjects") {
-        state.adminCourseTopicModalCourse = "";
-        state.adminCourseTopicGroupCreateModalOpen = false;
-        state.adminCourseTopicInlineCreateOpen = false;
-      }
-      if (page !== "ai-agents") {
-        state.adminAgentNewToken = null;
-      }
-      if (page === "activity") {
-        refreshAdminPresenceSnapshot({ force: true })
-          .then((ok) => {
-            if (ok && state.route === "admin" && state.adminPage === "activity") {
-              state.skipNextRouteAnimation = true;
-              render();
-            }
-          })
-          .catch((error) => {
-            console.warn("Could not refresh admin activity.", error?.message || error);
-          });
-      } else {
-        clearAdminPresencePolling();
-      }
+      applyAdminPageTransition(previousPage, page);
       state.skipNextRouteAnimation = true;
       render();
     });
@@ -34636,8 +36005,16 @@ function wireAdmin() {
       if (!ADMIN_COURSES_PLATFORM_SECTIONS.has(section)) {
         return;
       }
+      const previousPage = String(state.adminPage || "").trim() || "dashboard";
       state.adminPage = ADMIN_COURSES_PLATFORM_PAGE;
       state.adminCoursePlatformSection = section;
+      if (previousPage !== ADMIN_COURSES_PLATFORM_PAGE) {
+        appendSystemLog("admin.page", `Admin page changed: ${previousPage} -> ${ADMIN_COURSES_PLATFORM_PAGE}`, {
+          from: previousPage,
+          to: ADMIN_COURSES_PLATFORM_PAGE,
+        });
+        applyAdminPageTransition(previousPage, ADMIN_COURSES_PLATFORM_PAGE);
+      }
       // Approval cards jump straight to the course they are about.
       const targetCourseId = String(button.getAttribute("data-course-id") || "").trim();
       if (targetCourseId) {
@@ -34654,6 +36031,45 @@ function wireAdmin() {
       state.adminCourseTopicModalCourse = "";
       state.adminCourseTopicGroupCreateModalOpen = false;
       state.adminCourseTopicInlineCreateOpen = false;
+      state.skipNextRouteAnimation = true;
+      render();
+    });
+  });
+
+  appEl.querySelectorAll("[data-action='admin-dashboard-open']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = String(button.getAttribute("data-target") || "").trim();
+      const previousPage = String(state.adminPage || "").trim() || "dashboard";
+      let nextPage = "";
+
+      if (target === "users-pending") {
+        resetAdminUserFilters();
+        state.adminUserFilterApproval = "pending";
+        nextPage = "users";
+      } else if (target === "users-mcq-held") {
+        resetAdminUserFilters();
+        state.adminUserFilterMcqHeld = true;
+        nextPage = "users";
+      } else if (target === "course-requests") {
+        nextPage = ADMIN_COURSES_PLATFORM_PAGE;
+        state.adminCoursePlatformSection = Number(state.adminDashboardCounts?.videoEnrollmentRequestsPending) > 0
+          ? "requests"
+          : "approvals";
+      } else if (target === "questions") {
+        nextPage = "questions";
+      }
+
+      if (!KNOWN_ADMIN_PAGES.has(nextPage)) {
+        return;
+      }
+      state.adminPage = nextPage;
+      if (previousPage !== nextPage) {
+        appendSystemLog("admin.page", `Admin page changed: ${previousPage} -> ${nextPage}`, {
+          from: previousPage,
+          to: nextPage,
+        });
+      }
+      applyAdminPageTransition(previousPage, nextPage);
       state.skipNextRouteAnimation = true;
       render();
     });
@@ -34676,6 +36092,12 @@ function wireAdmin() {
   });
 
   appEl.querySelector("[data-action='admin-logs-refresh']")?.addEventListener("click", () => {
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+
+  appEl.querySelector("[data-action='admin-logs-show-more']")?.addEventListener("click", () => {
+    state.adminLogsVisibleCount = (Number(state.adminLogsVisibleCount) || 100) + 100;
     state.skipNextRouteAnimation = true;
     render();
   });
@@ -34990,6 +36412,7 @@ function wireAdmin() {
       const deferred = supabaseSync.pendingWrites.has(remoteKey);
       state.adminDataLastSyncAt = Date.now();
       state.adminDataSyncError = "";
+      state.adminSystemNoticeDismissed = "";
       const activeLabel = `${activeSummary.activeCount} active student${activeSummary.activeCount === 1 ? "" : "s"}`;
       const solvingLabel = activeSummary.solvingCount
         ? ` ${activeSummary.solvingCount} ${activeSummary.solvingCount === 1 ? "student is" : "students are"} mid-exam and will sync silently.`
@@ -35056,6 +36479,7 @@ function wireAdmin() {
     }
     state.adminDataLastSyncAt = Date.now();
     state.adminDataSyncError = "";
+    state.adminSystemNoticeDismissed = "";
     state.skipNextRouteAnimation = true;
     render();
     flushPendingSyncInBackground();
@@ -35372,8 +36796,10 @@ function wireAdmin() {
     });
 
     if (!state.adminNotificationVideoCoursesLoadedAt && !state.adminNotificationVideoCoursesLoading) {
-      loadAdminNotificationVideoCourseOptions().then(() => {
-        if (state.route === "admin" && state.adminPage === "notifications") {
+      // Re-render only after a successful load: a failed load leaves LoadedAt
+      // unset, so re-rendering on failure would retry at once, in a loop.
+      loadAdminNotificationVideoCourseOptions().then((loaded) => {
+        if (loaded && state.route === "admin" && state.adminPage === "notifications") {
           state.skipNextRouteAnimation = true;
           render();
         }
@@ -35556,6 +36982,15 @@ function wireAdmin() {
       render();
     });
 
+    appEl.querySelector("[data-action='admin-notifications-show-more']")?.addEventListener("click", () => {
+      state.adminNotificationsVisibleCount = Math.min(
+        (Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE) + ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+        ADMIN_NOTIFICATION_RENDER_CAP,
+      );
+      state.skipNextRouteAnimation = true;
+      render();
+    });
+
     notificationForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (state.adminNotificationSending) {
@@ -35703,6 +37138,7 @@ function wireAdmin() {
       state.adminNotificationTargetVideoCourseId = "";
       state.adminNotificationTitle = "";
       state.adminNotificationBody = "";
+      state.adminNotificationComposeOpen = false;
       state.adminDataLastSyncAt = Date.now();
       state.skipNextRouteAnimation = true;
       render();
@@ -35798,6 +37234,7 @@ function wireAdmin() {
     applyCurriculumUpdate(nextCurriculum);
     state.adminCourseSearch = "";
     state.adminCourseFocus = newCourseName;
+    state.adminCourseAddDialogOpen = false;
     toast("Course added.");
     state.skipNextRouteAnimation = true;
     render();
@@ -36287,12 +37724,100 @@ function wireAdmin() {
   });
   wireAdminCoursesPlatformBuilder();
 
-  const addUserDisclosure = document.getElementById("admin-add-user-disclosure");
-  addUserDisclosure?.addEventListener("toggle", () => {
-    if (!(addUserDisclosure instanceof HTMLDetailsElement)) {
-      return;
-    }
-    state.adminAddUserPanelOpen = addUserDisclosure.open;
+  // Simple admin dialogs (Users Filters/Add user/Approval settings, MCQ
+  // Subjects Add course, Questions Filters): each is a renderAdminDialog()
+  // driven by one state boolean, so open/close is just flipping that flag and
+  // re-rendering. Content itself (draft, filters, counts) is derived from
+  // state the same way it always was, so a re-render while a dialog is open
+  // (e.g. the 30s admin poll) reopens it unchanged.
+  const adminSimpleDialogSpecs = [
+    { dialogId: "users-filters", openAction: "admin-users-open-filters", closeAction: "admin-users-close-filters", openField: "adminUsersFiltersOpen" },
+    { dialogId: "users-add-user", openAction: "admin-users-open-add-user", closeAction: "admin-users-close-add-user", openField: "adminAddUserPanelOpen" },
+    { dialogId: "users-settings", openAction: "admin-users-open-settings", closeAction: "admin-users-close-settings", openField: "adminUsersSettingsOpen" },
+    { dialogId: "notification-compose", openAction: "admin-notifications-open-compose", closeAction: "admin-notifications-close-compose", openField: "adminNotificationComposeOpen" },
+    { dialogId: "mcq-subjects-add", openAction: "admin-mcq-subjects-open-add", closeAction: "admin-mcq-subjects-close-add", openField: "adminCourseAddDialogOpen" },
+    { dialogId: "questions-filters", openAction: "admin-questions-open-filters", closeAction: "admin-questions-close-filters", openField: "adminQuestionsFiltersOpen" },
+  ];
+  adminSimpleDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
+    appEl.querySelectorAll(`[data-action='${openAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        adminUsersDialogReturnFocusSelector = `[data-action='${openAction}']`;
+        state[openField] = true;
+        state.skipNextRouteAnimation = true;
+        render();
+        focusIntoAdminDialog(dialogId);
+      });
+    });
+    appEl.querySelectorAll(`[data-action='${closeAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        state[openField] = false;
+        state.skipNextRouteAnimation = true;
+        render();
+        restoreAdminUsersDialogFocus();
+      });
+    });
+  });
+  appEl.querySelectorAll(".admin-dialog").forEach((dialogEl) => {
+    dialogEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.stopPropagation();
+      const closeAction = dialogEl.getAttribute("data-close-action");
+      const closeButton = closeAction ? appEl.querySelector(`[data-action='${closeAction}']`) : null;
+      closeButton?.click();
+    });
+  });
+  // is-admin-dialog-open was already set generically at the top of wireAdmin()
+  // from the rendered DOM (Boolean(appEl.querySelector(".admin-dialog"))); a
+  // second Users-only toggle here would incorrectly clear it while a
+  // Video-Courses dialog (or any future one) is the only dialog open.
+  restoreAdminDialogFocusAfterRender();
+
+  // Export the list exactly as currently filtered. downloadAdminUsersCsv and its
+  // formula-guarded columns existed, but nothing called them, so the button
+  // had been silently dead.
+  appEl.querySelectorAll("[data-action='admin-users-export-csv']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const filters = {
+        search: String(state.adminUserSearch || ""),
+        year: normalizeAcademicYearOrNull(state.adminUserFilterYear),
+        semester: normalizeAcademicSemesterOrNull(state.adminUserFilterSemester),
+        approval: normalizeAdminUserApprovalFilter(state.adminUserFilterApproval),
+        provider: normalizeAdminUserProviderFilter(state.adminUserFilterProvider),
+        mcqHeld: state.adminUserFilterMcqHeld === true,
+      };
+      const filtered = getUsers().filter((account) => matchesAdminUserFilters(account, filters));
+      const isFiltered = Boolean(filters.search || filters.year || filters.semester || filters.approval || filters.provider || filters.mcqHeld);
+      downloadAdminUsersCsv(filtered, isFiltered ? "users-filtered" : "users");
+    });
+  });
+
+  appEl.querySelector("[data-action='admin-users-filter-pending']")?.addEventListener("click", () => {
+    state.adminUserFilterApproval = "pending";
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+
+  appEl.querySelectorAll("[data-action='admin-users-remove-filter']").forEach((chipButton) => {
+    chipButton.addEventListener("click", () => {
+      const filterKey = String(chipButton.getAttribute("data-filter") || "").trim();
+      if (filterKey === "year") {
+        state.adminUserFilterYear = "";
+      } else if (filterKey === "semester") {
+        state.adminUserFilterSemester = "";
+      } else if (filterKey === "approval") {
+        state.adminUserFilterApproval = "";
+      } else if (filterKey === "mcqHeld") {
+        state.adminUserFilterMcqHeld = false;
+      } else if (filterKey === "provider") {
+        state.adminUserFilterProvider = "";
+      } else {
+        return;
+      }
+      state.skipNextRouteAnimation = true;
+      render();
+    });
   });
 
   const addUserForm = document.getElementById("admin-add-user-form");
@@ -36626,20 +38151,18 @@ function wireAdmin() {
     }, 140);
   });
 
-  appEl.querySelector("[data-action='admin-users-clear-filters']")?.addEventListener("click", () => {
-    state.adminUserSearch = "";
-    state.adminUserFilterYear = "";
-    state.adminUserFilterSemester = "";
-    state.adminUserFilterApproval = "";
-    state.adminUserFilterProvider = "";
-    state.adminUserFilterMcqHeld = false;
-    state.adminSelectedUserIds = [];
-    if (adminUserSearchDebounce) {
-      window.clearTimeout(adminUserSearchDebounce);
-      adminUserSearchDebounce = null;
-    }
-    state.skipNextRouteAnimation = true;
-    render();
+  // Two buttons share this action: the filter-chips row "Clear all" and the
+  // Filters dialog "Reset filters".
+  appEl.querySelectorAll("[data-action='admin-users-clear-filters']").forEach((button) => {
+    button.addEventListener("click", () => {
+      resetAdminUserFilters();
+      if (adminUserSearchDebounce) {
+        window.clearTimeout(adminUserSearchDebounce);
+        adminUserSearchDebounce = null;
+      }
+      state.skipNextRouteAnimation = true;
+      render();
+    });
   });
 
   adminUsersSection?.addEventListener("change", (event) => {
@@ -37125,8 +38648,10 @@ function wireAdmin() {
       };
       const role = users[idx].role;
       const previousApproved = Boolean(users[idx].isApproved);
+      // Read-only table rows have no inputs; bulk approve re-saves them from the
+      // stored account. The "Edit details" dialog root has the inputs.
       const nameInput = row.querySelector("input[data-field='name']");
-      const fullName = String(nameInput?.value || "").trim();
+      const fullName = String(nameInput ? nameInput.value : (users[idx].name || "")).trim();
       if (!fullName) {
         if (!suppressValidationToast) {
           toast("Full name is required.");
@@ -37135,7 +38660,7 @@ function wireAdmin() {
       }
       users[idx].name = fullName;
       const phoneInput = row.querySelector("input[data-field='phone']");
-      const rawPhone = String(phoneInput?.value || "").trim();
+      const rawPhone = String(phoneInput ? phoneInput.value : (users[idx].phone || "")).trim();
       let normalizedPhone = "";
       if (rawPhone) {
         const phoneValidation = validateAndNormalizePhoneNumber(rawPhone);
@@ -37154,8 +38679,8 @@ function wireAdmin() {
       if (role === "student") {
         const yearSelect = row.querySelector("select[data-field='academicYear']");
         const semesterSelect = row.querySelector("select[data-field='academicSemester']");
-        const year = normalizeAcademicYearOrNull(yearSelect?.value);
-        const semester = normalizeAcademicSemesterOrNull(semesterSelect?.value);
+        const year = normalizeAcademicYearOrNull(yearSelect ? yearSelect.value : users[idx].academicYear);
+        const semester = normalizeAcademicSemesterOrNull(semesterSelect ? semesterSelect.value : users[idx].academicSemester);
         if (year === null || semester === null) {
           if (!suppressValidationToast && (mode === "manual" || syncNow)) {
             toast("Select both year and semester before saving.");
@@ -37393,10 +38918,49 @@ function wireAdmin() {
 
   appEl.querySelectorAll("[data-action='save-user-enrollment']").forEach((button) => {
     button.addEventListener("click", async () => {
-      const row = button.closest("tr[data-user-id]");
+      const row = button.closest("tr[data-user-id], [data-user-edit-root][data-user-id]");
       clearEnrollmentAutoSaveTimer(row);
-      await saveUserEnrollmentFromRow(row, { mode: "manual", syncNow: true });
+      const saved = await saveUserEnrollmentFromRow(row, { mode: "manual", syncNow: true });
+      if (saved && row?.hasAttribute("data-user-edit-root")) {
+        closeAdminUserEditDialog({ discardDraft: false });
+      }
     });
+  });
+
+  // "Edit details" dialog (opened from the row ⋯ menu).
+  appEl.querySelectorAll("[data-action='admin-user-edit-open']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = String(button.getAttribute("data-user-id") || "").trim();
+      if (!userId || !getUsers().some((entry) => String(entry?.id || "").trim() === userId)) {
+        toast("Account not found.");
+        return;
+      }
+      adminUserEditReturnFocusUserId = userId;
+      state.adminUserEditId = userId;
+      state.skipNextRouteAnimation = true;
+      render();
+      appEl.querySelector("#admin-user-edit-name")?.focus({ preventScroll: true });
+    });
+  });
+  appEl.querySelectorAll("[data-action='admin-user-edit-cancel']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const editId = String(state.adminUserEditId || "").trim();
+      const editRoot = appEl.querySelector("[data-user-edit-root]");
+      const account = getUsers().find((entry) => String(entry?.id || "").trim() === editId);
+      if (editRoot && account && hasAdminUserEnrollmentDraftChanges(account, readAdminUserEnrollmentDraftFromRow(editRoot))
+        && !window.confirm("Discard your changes to this user?")) {
+        return;
+      }
+      closeAdminUserEditDialog({ discardDraft: true });
+    });
+  });
+  // Typing keeps a draft (which also pauses the admin poll re-render and the
+  // auto-approval sweep), but the dialog never auto-saves: Save is explicit.
+  const adminUserEditRoot = appEl.querySelector("[data-user-edit-root][data-user-id]");
+  adminUserEditRoot?.querySelectorAll("[data-field]").forEach((field) => {
+    const syncDraft = () => syncAdminUserEnrollmentDraftFromRow(adminUserEditRoot, { patchUi: false });
+    field.addEventListener("input", syncDraft);
+    field.addEventListener("change", syncDraft);
   });
 
   appEl.querySelectorAll("[data-action='reset-user-password']").forEach((button) => {
@@ -37505,7 +39069,7 @@ function wireAdmin() {
       if (select.dataset.busy === "1") {
         return;
       }
-      const row = select.closest("tr[data-user-id]");
+      const row = select.closest("tr[data-user-id], [data-user-edit-root][data-user-id]");
       const userId = row?.getAttribute("data-user-id");
       const current = getCurrentUser();
       if (!userId) {
@@ -38186,6 +39750,7 @@ function wireAdmin() {
     state.adminFilters.course = String(data.get("course") || "");
     state.adminFilters.topic = String(data.get("topic") || "");
     state.adminSelectedQuestionIds = [];
+    state.adminQuestionsFiltersOpen = false;
     render();
   });
 
@@ -38198,6 +39763,13 @@ function wireAdmin() {
   adminClearFilters?.addEventListener("click", () => {
     state.adminFilters = { course: "", topic: "" };
     state.adminSelectedQuestionIds = [];
+    state.adminQuestionsFiltersOpen = false;
+    render();
+  });
+
+  appEl.querySelector("[data-action='admin-questions-show-more']")?.addEventListener("click", () => {
+    state.adminQuestionsVisibleLimit = (Number(state.adminQuestionsVisibleLimit) || ADMIN_QUESTION_RENDER_PAGE_SIZE) + ADMIN_QUESTION_RENDER_PAGE_SIZE;
+    state.skipNextRouteAnimation = true;
     render();
   });
 
@@ -38490,6 +40062,18 @@ function wireAdmin() {
     state.adminImportTopic = topic;
   };
   syncImportSelectionsFromInputs();
+  const importYearSelect = document.getElementById("admin-import-year");
+  importYearSelect?.addEventListener("change", () => {
+    const groups = buildAdminCourseYearGroups(allCourses);
+    const group = groups.find((entry) => entry.key === importYearSelect.value) || groups[0] || null;
+    const firstCourse = group?.semesters[0]?.courses[0] || "";
+    if (importCourseSelect) {
+      importCourseSelect.innerHTML = renderAdminCourseYearGroupOptions(group, firstCourse);
+      importCourseSelect.value = firstCourse;
+    }
+    setSelectOptions(importTopicSelect, QBANK_COURSE_TOPICS[firstCourse] || [], false);
+    syncImportSelectionsFromInputs();
+  });
   importCourseSelect?.addEventListener("change", () => {
     const course = importCourseSelect.value || allCourses[0];
     setSelectOptions(importTopicSelect, QBANK_COURSE_TOPICS[course] || [], false);
@@ -53585,10 +55169,32 @@ function filterAdminCoursesForTable(courses) {
   });
 }
 
+// Keyed by e.g. "enrollments:<courseId>" so switching course/section naturally
+// starts a fresh list instead of needing an explicit reset.
+function getAdminCourseListRenderLimit(key) {
+  const limits = state.adminCoursePlatformListLimits || (state.adminCoursePlatformListLimits = {});
+  return Number(limits[key]) || ADMIN_COURSE_LIST_RENDER_STEP;
+}
+
+function bumpAdminCourseListRenderLimit(key) {
+  if (!key) return;
+  const limits = state.adminCoursePlatformListLimits || (state.adminCoursePlatformListLimits = {});
+  limits[key] = getAdminCourseListRenderLimit(key) + ADMIN_COURSE_LIST_RENDER_STEP;
+}
+
+function renderAdminCourseShowMoreButton(hiddenCount, limitKey) {
+  if (!hiddenCount) return "";
+  return `<button class="btn ghost admin-btn-sm admin-course-show-more" type="button" data-action="admin-course-list-show-more" data-limit-key="${escapeHtml(limitKey)}">Show more (${escapeHtml(String(hiddenCount))})</button>`;
+}
+
+function renderAdminCoursesEmptyState() {
+  return `<p class="admin-course-empty-state-line">No platform courses yet — <button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">Create the first course</button></p>`;
+}
+
 function renderAdminCourseStatsCards(aggregates) {
   const stats = aggregates || getAdminCoursesPlatformAggregates();
   return `
-    <div class="admin-course-table-stats">
+    <div class="admin-course-table-stats admin-flat-grid">
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Total courses</span><b>${stats.totalCourses}</b></div>
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Published</span><b>${stats.publishedCourses}</b></div>
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Total enrollments</span><b>${stats.totalEnrollments}</b></div>
@@ -53608,8 +55214,14 @@ function renderAdminCourseApprovalsSection(courses) {
 
   const courseCard = (course, showActions) => {
     const submitted = course.submitted_at ? formatReportDateTime(course.submitted_at) : "—";
+    const menuItems = [
+      { label: "Open in builder", attrs: `data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(course.id)}"` },
+    ];
+    if (showActions) {
+      menuItems.push({ label: "Request changes", attrs: `data-action="admin-reject-course" data-course-id="${escapeHtml(course.id)}"`, danger: true });
+    }
     return `
-      <article class="card admin-approval-card" style="display: flex; flex-direction: column; gap: 0.65rem;">
+      <article class="admin-approval-card" style="display: flex; flex-direction: column; gap: 0.65rem;">
         <div class="flex-between">
           <div>
             <b>${escapeHtml(getCoursePlatformCourseTitle(course))}</b>
@@ -53618,19 +55230,16 @@ function renderAdminCourseApprovalsSection(courses) {
               ${course.instructor_name ? ` · ${escapeHtml(course.instructor_name)}` : ""}
             </p>
           </div>
-          <span class="status-badge is-${showActions ? "pending" : "rejected"}">${escapeHtml(showActions ? "In review" : "Changes requested")}</span>
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <span class="status-badge is-${showActions ? "pending" : "rejected"}">${escapeHtml(showActions ? "In review" : "Changes requested")}</span>
+            ${renderAdminRowMenu({ id: `course-approval-${course.id}`, label: `More actions for ${getCoursePlatformCourseTitle(course)}`, items: menuItems })}
+          </div>
         </div>
         ${course.description ? `<p class="subtle" style="margin: 0; font-size: 0.85rem;">${escapeHtml(course.description)}</p>` : ""}
         <small class="subtle">Submitted ${escapeHtml(submitted)}</small>
         ${course.review_note ? `<small class="subtle">Last note: ${escapeHtml(course.review_note)}</small>` : ""}
         <div class="stack">
-          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(course.id)}">Open in builder</button>
-          ${showActions ? `
-            <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">Approve</button>
-            <button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-reject-course" data-course-id="${escapeHtml(course.id)}">Request changes</button>
-          ` : `
-            <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">Approve now</button>
-          `}
+          <button class="btn admin-btn-sm" type="button" data-action="admin-approve-course" data-course-id="${escapeHtml(course.id)}">${showActions ? "Approve" : "Approve now"}</button>
         </div>
       </article>
     `;
@@ -53638,17 +55247,7 @@ function renderAdminCourseApprovalsSection(courses) {
 
   return `
     <div class="admin-approvals-page">
-      <section class="card">
-        <div class="flex-between">
-          <div>
-            <h3>Course approvals</h3>
-            <p class="subtle">Creators build courses in the MedBank app and submit them here. A course stays hidden from students until it is approved and published.</p>
-          </div>
-          <button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-courses-platform">Refresh</button>
-        </div>
-      </section>
-
-      <section style="margin-top: 1rem;">
+      <section>
         <h4 style="margin: 0 0 0.6rem;">Waiting for review${pending.length ? ` (${pending.length})` : ""}</h4>
         ${pending.length
           ? `<div class="grid-2">${pending.map((course) => courseCard(course, true)).join("")}</div>`
@@ -53686,30 +55285,26 @@ function renderAdminCourseTableToolbar() {
   const semesterFilter = String(state.adminCourseTableFilterSemester || "");
   const statusFilter = String(state.adminCourseTableFilterStatus || "all");
   return `
-    <div class="admin-course-table-toolbar">
-      <input class="admin-course-search-input" type="search" id="admin-course-table-search" placeholder="Search courses, codes, instructors..." value="${escapeHtml(state.adminCourseTableSearch || "")}" />
-      <div class="admin-course-filter-row">
-        <label>Year
-          <select id="admin-course-table-filter-year" data-action="admin-course-table-filter">
-            <option value="" ${!yearFilter ? "selected" : ""}>All years</option>
-            ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${yearFilter === String(year) ? "selected" : ""}>Year ${year}</option>`).join("")}
-          </select>
-        </label>
-        <label>Semester
-          <select id="admin-course-table-filter-semester" data-action="admin-course-table-filter">
-            <option value="" ${!semesterFilter ? "selected" : ""}>All semesters</option>
-            <option value="1" ${semesterFilter === "1" ? "selected" : ""}>Semester 1</option>
-            <option value="2" ${semesterFilter === "2" ? "selected" : ""}>Semester 2</option>
-          </select>
-        </label>
-        <label>Status
-          <select id="admin-course-table-filter-status" data-action="admin-course-table-filter">
-            <option value="all" ${statusFilter === "all" ? "selected" : ""}>All</option>
-            <option value="published" ${statusFilter === "published" ? "selected" : ""}>Published</option>
-            <option value="draft" ${statusFilter === "draft" ? "selected" : ""}>Draft</option>
-          </select>
-        </label>
-      </div>
+    <div class="admin-course-table-toolbar admin-flat-toolbar">
+      <label class="admin-users-toolbar-search admin-flat-toolbar-search">
+        <span class="sr-only">Search courses</span>
+        <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input class="admin-course-search-input" type="search" id="admin-course-table-search" placeholder="Search courses, codes, instructors" value="${escapeHtml(state.adminCourseTableSearch || "")}" />
+      </label>
+      <select id="admin-course-table-filter-year" data-action="admin-course-table-filter" aria-label="Year">
+        <option value="" ${!yearFilter ? "selected" : ""}>All years</option>
+        ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${yearFilter === String(year) ? "selected" : ""}>Year ${year}</option>`).join("")}
+      </select>
+      <select id="admin-course-table-filter-semester" data-action="admin-course-table-filter" aria-label="Semester">
+        <option value="" ${!semesterFilter ? "selected" : ""}>All semesters</option>
+        <option value="1" ${semesterFilter === "1" ? "selected" : ""}>Semester 1</option>
+        <option value="2" ${semesterFilter === "2" ? "selected" : ""}>Semester 2</option>
+      </select>
+      <select id="admin-course-table-filter-status" data-action="admin-course-table-filter" aria-label="Status">
+        <option value="all" ${statusFilter === "all" ? "selected" : ""}>All statuses</option>
+        <option value="published" ${statusFilter === "published" ? "selected" : ""}>Published</option>
+        <option value="draft" ${statusFilter === "draft" ? "selected" : ""}>Draft</option>
+      </select>
     </div>
   `;
 }
@@ -53806,12 +55401,12 @@ function renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingReq
           `).join("")}
         </select>
       </label>
-      <div class="admin-course-selector-pills">
-        <span class="admin-course-meta-pill"><b>${rows.modules.length}</b><small>Modules</small></span>
-        <span class="admin-course-meta-pill"><b>${rows.lessons.length}</b><small>Lessons</small></span>
-        <span class="admin-course-meta-pill"><b>${profileCount}</b><small>Enrollments</small></span>
-        <span class="admin-course-meta-pill"><b>${pendingRequestCount}</b><small>Pending requests</small></span>
-      </div>
+      <p class="admin-course-context-meta">${escapeHtml([
+        `${rows.modules.length} ${rows.modules.length === 1 ? "module" : "modules"}`,
+        `${rows.lessons.length} ${rows.lessons.length === 1 ? "lesson" : "lessons"}`,
+        `${profileCount} ${profileCount === 1 ? "enrollment" : "enrollments"}`,
+        `${pendingRequestCount} pending ${pendingRequestCount === 1 ? "request" : "requests"}`,
+      ].join(" · "))}</p>
       <button class="btn ghost admin-btn-sm admin-course-context-all" type="button" data-action="admin-course-platform-section" data-section="overview">All courses</button>
     </div>
   `;
@@ -53826,8 +55421,6 @@ function renderAdminGlobalSuggestions() {
   });
   return `
     <div class="course-builder-form">
-      <h4>All course suggestions</h4>
-      <p class="subtle">Suggestions across every platform course. Select a course below to edit its settings.</p>
       <div class="course-builder-list">
         ${suggestions.length ? suggestions.map((suggestion) => {
           const course = courses.find((entry) => String(entry?.id || "") === String(suggestion?.course_id || ""));
@@ -53840,12 +55433,33 @@ function renderAdminGlobalSuggestions() {
                 <small>${escapeHtml(getAdminCourseBuilderCourseLabel(suggestion.course_id))}</small>
                 <small>${escapeHtml(statusLabel)}${featured ? " • Featured for all" : ""} • Priority ${escapeHtml(suggestion.priority || 0)}</small>
               </span>
-              <span class="${suggestion.is_active ? "admin-badge-published" : "admin-badge-draft"}">${escapeHtml(statusLabel)}</span>
+              <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <span class="${suggestion.is_active ? "admin-badge-published" : "admin-badge-draft"}">${escapeHtml(statusLabel)}</span>
+                ${renderAdminRowMenu({
+                  id: `course-suggestion-${suggestion.id}`,
+                  label: `More actions for ${suggestion.title || "this suggestion"}`,
+                  items: [
+                    { label: "Edit", attrs: `data-action="admin-edit-course-suggestion" data-course-id="${escapeHtml(suggestion.course_id)}"` },
+                    { label: "Delete", attrs: `data-action="admin-delete-course-suggestion" data-suggestion-id="${escapeHtml(suggestion.id)}"`, danger: true },
+                  ],
+                })}
+              </div>
             </div>
           `;
-        }).join("") : `<p class="subtle">No suggestions configured yet.</p>`}
+        }).join("") : `<p class="subtle">No suggestions configured yet. Select a course above and use Add suggestion.</p>`}
       </div>
     </div>
+  `;
+}
+
+function renderAdminCourseAnnouncementComposerForm(selectedCourseId) {
+  const dk = `admin-course-announcement-form_${selectedCourseId}`;
+  return `
+    <form id="admin-course-announcement-form" class="course-builder-form">
+      <label>Title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "title", ""))}" required /></label>
+      <label>Body<textarea name="body" rows="3" required>${escapeHtml(getAdminCourseBuilderFieldValue(dk, "body", ""))}</textarea></label>
+      <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published</label>
+    </form>
   `;
 }
 
@@ -53857,17 +55471,8 @@ function renderAdminAnnouncementsSection(courses, selectedCourseId, rows) {
   const filteredAnnouncements = filterCourseId === "all"
     ? allAnnouncements
     : allAnnouncements.filter((item) => String(item?.course_id || "").trim() === filterCourseId);
-  const dk = `admin-course-announcement-form_${selectedCourseId}`;
   return `
-    <form id="admin-course-announcement-form" class="course-builder-form">
-      <h4>Announcements</h4>
-      <p class="subtle">Post to the selected course. Browse announcements from all courses below.</p>
-      <label>Title<input name="title" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "title", ""))}" required /></label>
-      <label>Body<textarea name="body" rows="3" required>${escapeHtml(getAdminCourseBuilderFieldValue(dk, "body", ""))}</textarea></label>
-      <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published</label>
-      <button class="btn admin-btn-sm" type="submit">Post announcement</button>
-    </form>
-    <div class="course-builder-form" style="margin-top: 1rem;">
+    <div class="course-builder-form">
       <div class="admin-course-filter-row">
         <label>Filter by course
           <select id="admin-announcement-course-filter">
@@ -53885,12 +55490,16 @@ function renderAdminAnnouncementsSection(courses, selectedCourseId, rows) {
               <p class="subtle">${escapeHtml(item.body || "")}</p>
               <small class="admin-announcement-date">${escapeHtml(formatReportDateTime(item.created_at || ""))}</small>
             </div>
-            <div class="stack">
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
               <span class="${item.is_published ? "admin-badge-published" : "admin-badge-draft"}">${item.is_published ? "Published" : "Draft"}</span>
-              <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-announcement" data-announcement-id="${escapeHtml(item.id)}">Delete</button>
+              ${renderAdminRowMenu({
+                id: `course-announcement-${item.id}`,
+                label: `More actions for ${item.title || "this announcement"}`,
+                items: [{ label: "Delete", attrs: `data-action="admin-delete-announcement" data-announcement-id="${escapeHtml(item.id)}"`, danger: true }],
+              })}
             </div>
           </div>
-        `).join("") : `<p class="subtle">No announcements yet.</p>`}
+        `).join("") : `<p class="subtle">No announcements yet. Use New announcement to post one.</p>`}
       </div>
     </div>
   `;
@@ -53904,9 +55513,13 @@ function renderAdminRequestsSection(courses) {
   const filteredRequests = statusFilter === "all"
     ? allRequests
     : allRequests.filter((request) => String(request?.status || "").trim() === statusFilter);
+  const requestsLimitKey = `requests:${statusFilter}`;
+  const requestsLimit = getAdminCourseListRenderLimit(requestsLimitKey);
+  const renderedRequests = filteredRequests.slice(0, requestsLimit);
+  const hiddenRequestsCount = filteredRequests.length - renderedRequests.length;
   const globalPendingCount = allRequests.filter((request) => String(request?.status || "").trim() === "pending").length;
   const requestsByCourse = new Map();
-  filteredRequests.forEach((request) => {
+  renderedRequests.forEach((request) => {
     const courseId = String(request?.course_id || "").trim() || "unknown";
     if (!requestsByCourse.has(courseId)) requestsByCourse.set(courseId, []);
     requestsByCourse.get(courseId).push(request);
@@ -53925,10 +55538,7 @@ function renderAdminRequestsSection(courses) {
   ];
   return `
     <div class="course-builder-form">
-      <div class="admin-requests-head">
-        <h4>Enrollment requests</h4>
-        ${globalPendingCount ? `<button class="btn admin-btn-sm" type="button" data-action="admin-approve-all-pending-global" ${state.adminApproveAllPendingRunning ? "disabled" : ""}>${state.adminApproveAllPendingRunning ? "Approving..." : `Approve all pending (${globalPendingCount})`}</button>` : ""}
-      </div>
+      ${globalPendingCount ? `<div class="admin-requests-head"><button class="btn admin-btn-sm" type="button" data-action="admin-approve-all-pending-global" ${state.adminApproveAllPendingRunning ? "disabled" : ""}>${state.adminApproveAllPendingRunning ? "Approving..." : `Approve all pending (${globalPendingCount})`}</button></div>` : ""}
       <div class="admin-request-filter-tabs">
         ${filterTabs.map(([value, label]) => `
           <button class="btn ghost admin-btn-sm ${statusFilter === value ? "is-active" : ""}" type="button" data-action="admin-request-filter" data-status="${escapeHtml(value)}">${escapeHtml(label)}</button>
@@ -53954,20 +55564,19 @@ function renderAdminRequestsSection(courses) {
                 const label = getAdminCourseBuilderProfileLabel(request.user_id);
                 const status = String(request.status || "pending").toLowerCase();
                 let statusBadge = "";
-                let actionsHtml = "";
+                let inlineActionHtml = "";
+                let menuItems = [];
 
                 if (status === "approved") {
                   statusBadge = `<span class="status-badge is-approved">Approved</span>`;
-                  actionsHtml = `<button class="btn danger admin-btn-sm ghost" type="button" data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}">Reject</button>`;
+                  menuItems = [{ label: "Reject", attrs: `data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}"`, danger: true }];
                 } else if (status === "rejected") {
                   statusBadge = `<span class="status-badge is-rejected">Rejected</span>`;
-                  actionsHtml = `<button class="btn good admin-btn-sm ghost" type="button" data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}">Approve</button>`;
+                  menuItems = [{ label: "Approve", attrs: `data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}"` }];
                 } else {
                   statusBadge = `<span class="status-badge is-pending">Pending</span>`;
-                  actionsHtml = `
-                    <button class="btn good admin-btn-sm" type="button" data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}">Approve</button>
-                    <button class="btn danger admin-btn-sm outline" type="button" data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}">Reject</button>
-                  `;
+                  inlineActionHtml = `<button class="btn good admin-btn-sm" type="button" data-action="admin-approve-course-request" data-request-id="${escapeHtml(request.id)}">Approve</button>`;
+                  menuItems = [{ label: "Reject", attrs: `data-action="admin-reject-course-request" data-request-id="${escapeHtml(request.id)}"`, danger: true }];
                 }
 
                 return `
@@ -53980,8 +55589,9 @@ function renderAdminRequestsSection(courses) {
                         <div style="margin-top: 0.25rem;">${statusBadge}</div>
                       </span>
                     </div>
-                    <div class="stack" style="gap: 0.45rem;">
-                      ${actionsHtml}
+                    <div class="stack" style="gap: 0.45rem; align-items: center;">
+                      ${inlineActionHtml}
+                      ${renderAdminRowMenu({ id: `course-request-${request.id}`, label: `More actions for ${label}`, items: menuItems })}
                     </div>
                   </div>
                 `;
@@ -53990,6 +55600,7 @@ function renderAdminRequestsSection(courses) {
           </section>
         `;
       }).join("") : `<p class="subtle">No enrollment requests match this filter.</p>`}
+      ${renderAdminCourseShowMoreButton(hiddenRequestsCount, requestsLimitKey)}
     </div>
   `;
 }
@@ -54081,10 +55692,14 @@ function renderAdminCourseEnrollmentProfileRow(profile, options = {}) {
   const name = getAdminPlatformProfileDisplayName(profile);
   const meta = profile ? getAdminPlatformProfileMeta(profile) : "Profile details unavailable";
   const action = String(options.action || "").trim();
-  const buttonHtml = action === "add"
+  const actionHtml = action === "add"
     ? `<button class="btn admin-btn-sm" type="button" data-action="admin-enroll-course-user" data-user-id="${escapeHtml(profileId)}">Enroll</button>`
     : action === "remove"
-      ? `<button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-remove-course-user" data-user-id="${escapeHtml(profileId)}">Remove</button>`
+      ? renderAdminRowMenu({
+        id: `course-enrollment-${profileId}`,
+        label: `More actions for ${name}`,
+        items: [{ label: "Remove from course", attrs: `data-action="admin-remove-course-user" data-user-id="${escapeHtml(profileId)}"`, danger: true }],
+      })
       : "";
   const dateLabel = options.assignedAt
     ? `<small>Enrolled ${escapeHtml(formatReportDateTime(options.assignedAt))}</small>`
@@ -54102,9 +55717,9 @@ function renderAdminCourseEnrollmentProfileRow(profile, options = {}) {
           ${dateLabel}
         </span>
       </div>
-      <div class="stack">
+      <div class="stack" style="align-items: center;">
         ${profile ? statusBadge : `<span class="status-badge is-rejected">Missing profile</span>`}
-        ${buttonHtml}
+        ${actionHtml}
       </div>
     </div>
   `;
@@ -54804,36 +56419,25 @@ function renderAdminCourseEnrollmentsSection(courses, selectedCourseId, rows) {
       if (profile) return matchesAdminCourseEnrollmentQuery(profile, enrolledSearch);
       return !String(enrolledSearch || "").trim() || String(enrollment?.user_id || "").includes(String(enrolledSearch || "").trim());
     });
-  const selectedCourse = getAdminCourseBuilderCourse(selectedCourseId);
+  const enrollmentsLimitKey = `enrollments:${selectedCourseId}`;
+  const enrollmentsLimit = getAdminCourseListRenderLimit(enrollmentsLimitKey);
+  const renderedEnrollmentRows = enrollmentRows.slice(0, enrollmentsLimit);
+  const hiddenEnrollmentCount = enrollmentRows.length - renderedEnrollmentRows.length;
   return `
     <div class="course-builder-form admin-course-enrollments-panel">
-      <div class="admin-requests-head">
-        <div>
-          <h4>Enrolled users</h4>
-          <p class="subtle">Selected course: ${escapeHtml(getCoursePlatformCourseTitle(selectedCourse))}</p>
-        </div>
-        <div class="admin-enrollment-head-actions">
-          <button class="admin-enrollment-add-btn" type="button" data-action="admin-open-course-enrollment-picker" aria-label="Add users to this course" title="Add users to this course">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </button>
-          <span class="admin-enrollment-count-badge"><b>${rows.enrollments.length}</b> enrolled</span>
-        </div>
-      </div>
       <div class="admin-enrollment-search">
         <input id="admin-course-enrollment-search" type="search" value="${escapeHtml(enrolledSearch)}" placeholder="Search enrolled users..." autocomplete="off" />
       </div>
       <div class="course-builder-list">
-        ${enrollmentRows.length
-          ? enrollmentRows.map(({ enrollment, profile }) => renderAdminCourseEnrollmentProfileRow(profile, {
+        ${renderedEnrollmentRows.length
+          ? renderedEnrollmentRows.map(({ enrollment, profile }) => renderAdminCourseEnrollmentProfileRow(profile, {
             action: "remove",
             userId: enrollment.user_id,
             assignedAt: enrollment.assigned_at,
           })).join("")
           : `<p class="subtle">No enrolled users match this course and search.</p>`}
       </div>
+      ${renderAdminCourseShowMoreButton(hiddenEnrollmentCount, enrollmentsLimitKey)}
     </div>
   `;
 }
@@ -54913,44 +56517,52 @@ function exportAdminCourseCoupons(rows = state.adminCourseCoupons, options = {})
   downloadBlobFile(new Blob([[header.join(","), ...body].join("\n")], { type: "text/csv;charset=utf-8" }), generated ? "medbank-new-coupons.csv" : "medbank-coupon-report.csv");
 }
 
+function renderAdminCourseCouponGeneratorForm(courses, selectedId) {
+  const courseModules = (state.adminCoursesPlatformModules || []).filter((module) => String(module.course_id || "") === selectedId);
+  return `
+    <form id="admin-course-coupon-generate-form" autocomplete="off">
+      <p class="subtle">Plain codes are shown once. MedBank stores only a SHA-256 hash and a four-character preview.</p>
+      <div class="course-builder-grid compact">
+        <label>Course<select name="course_id" id="admin-coupon-course">${courses.map((course) => `<option value="${escapeHtml(course.id)}" ${String(course.id) === selectedId ? "selected" : ""}>${escapeHtml(getCoursePlatformCourseTitle(course))}</option>`).join("")}</select></label>
+        <label>Access type<select name="coupon_type" id="admin-coupon-type"><option value="full_course" ${state.adminCourseCouponType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponType === "module_access" ? "selected" : ""}>Selected modules</option></select></label>
+        <label>Quantity<input name="quantity" type="number" min="1" max="500" value="${escapeHtml(state.adminCourseCouponQuantity)}" required /></label>
+        <label>Expires at (optional)<input name="expires_at" type="datetime-local" value="${escapeHtml(state.adminCourseCouponExpiresAt)}" /></label>
+        <label>Batch name<input name="batch_name" maxlength="120" value="${escapeHtml(state.adminCourseCouponBatchName)}" /></label>
+        <label>Internal note<input name="note" maxlength="500" value="${escapeHtml(state.adminCourseCouponNote)}" /></label>
+      </div>
+      ${state.adminCourseCouponType === "module_access" ? `<fieldset class="admin-coupon-modules"><legend>Modules granted</legend>${courseModules.map((module) => `<label><input type="checkbox" name="module_ids" value="${escapeHtml(module.id)}" ${state.adminCourseCouponModuleIds.includes(String(module.id)) ? "checked" : ""} /> ${escapeHtml(module.title)}</label>`).join("") || `<p class="subtle">This course has no modules.</p>`}</fieldset>` : `<p class="subtle">Full-course coupons include all current and future published modules.</p>`}
+    </form>
+  `;
+}
+
 function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
   const selectedId = String(state.adminCourseCouponCourseId || selectedCourseId || courses[0]?.id || "").trim();
   if (selectedId && state.adminCourseCouponCourseId !== selectedId) state.adminCourseCouponCourseId = selectedId;
   if (selectedId && !state.adminCourseCouponLoading && !state.adminCourseCouponStats && !state.adminCourseCouponError) {
-    loadAdminCourseCouponData({ courseId: selectedId }).then(() => {
-      if (state.route === "admin" && getAdminCoursePlatformSection() === "coupons") { state.skipNextRouteAnimation = true; render(); }
+    // Re-render after a load or a recorded error (the error stops the next
+    // attempt). With no client the load returns false and records nothing, so
+    // re-rendering then would retry in a loop.
+    loadAdminCourseCouponData({ courseId: selectedId }).then((loaded) => {
+      if ((loaded || state.adminCourseCouponError) && state.route === "admin" && getAdminCoursePlatformSection() === "coupons") { state.skipNextRouteAnimation = true; render(); }
     });
   }
-  const courseModules = (state.adminCoursesPlatformModules || []).filter((module) => String(module.course_id || "") === selectedId);
   const stats = state.adminCourseCouponStats || {};
   const generated = state.adminCourseCouponGenerated || [];
   const coupons = state.adminCourseCoupons || [];
+  const couponsLimitKey = `coupons:${selectedId}`;
+  const couponsLimit = getAdminCourseListRenderLimit(couponsLimitKey);
+  const renderedCoupons = coupons.slice(0, couponsLimit);
+  const hiddenCouponCount = coupons.length - renderedCoupons.length;
   return `
     <div class="admin-coupon-page">
-      <section class="card admin-coupon-generator">
-        <div class="flex-between"><div><h3>Activation coupons</h3><p class="subtle">Plain codes are displayed only once. MedBank stores only a SHA-256 hash and a four-character preview.</p></div><button class="btn ghost admin-btn-sm" type="button" data-action="admin-refresh-coupons">Refresh</button></div>
-        <form id="admin-course-coupon-generate-form" autocomplete="off">
-          <div class="course-builder-grid compact">
-            <label>Course<select name="course_id" id="admin-coupon-course">${courses.map((course) => `<option value="${escapeHtml(course.id)}" ${String(course.id) === selectedId ? "selected" : ""}>${escapeHtml(getCoursePlatformCourseTitle(course))}</option>`).join("")}</select></label>
-            <label>Access type<select name="coupon_type" id="admin-coupon-type"><option value="full_course" ${state.adminCourseCouponType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponType === "module_access" ? "selected" : ""}>Selected modules</option></select></label>
-            <label>Quantity<input name="quantity" type="number" min="1" max="500" value="${escapeHtml(state.adminCourseCouponQuantity)}" required /></label>
-            <label>Expires at (optional)<input name="expires_at" type="datetime-local" value="${escapeHtml(state.adminCourseCouponExpiresAt)}" /></label>
-            <label>Batch name<input name="batch_name" maxlength="120" value="${escapeHtml(state.adminCourseCouponBatchName)}" /></label>
-            <label>Internal note<input name="note" maxlength="500" value="${escapeHtml(state.adminCourseCouponNote)}" /></label>
-          </div>
-          ${state.adminCourseCouponType === "module_access" ? `<fieldset class="admin-coupon-modules"><legend>Modules granted</legend>${courseModules.map((module) => `<label><input type="checkbox" name="module_ids" value="${escapeHtml(module.id)}" ${state.adminCourseCouponModuleIds.includes(String(module.id)) ? "checked" : ""} /> ${escapeHtml(module.title)}</label>`).join("") || `<p class="subtle">This course has no modules.</p>`}</fieldset>` : `<p class="subtle">Full-course coupons include all current and future published modules.</p>`}
-          <button class="btn" type="submit">Generate secure coupon${Number(state.adminCourseCouponQuantity) === 1 ? "" : "s"}</button>
-        </form>
-      </section>
-
       ${generated.length ? `<section class="card admin-coupon-generated" role="status"><div class="flex-between"><div><h3>New codes — save now</h3><p class="subtle">These plaintext values cannot be recovered after leaving this screen.</p></div><div class="stack"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-copy-generated-coupons">Copy all</button><button class="btn ghost admin-btn-sm" type="button" data-action="admin-download-generated-coupons">Download CSV</button></div></div><textarea readonly rows="${Math.min(12, generated.length + 1)}">${escapeHtml(generated.map((row) => row.coupon_code).join("\n"))}</textarea></section>` : ""}
 
-      <section class="admin-coupon-stats" aria-label="Coupon statistics">
-        ${[["Total", stats.total], ["Full course", stats.full_course], ["Module", stats.module_access], ["Redeemed", stats.redeemed], ["Students", stats.students], ["Unused", stats.unused], ["Expired", stats.expired], ["Disabled", stats.disabled], ["Rate", `${Number(stats.redemption_rate || 0)}%`]].map(([label, value]) => `<article class="card"><b>${escapeHtml(String(value ?? 0))}</b><span>${escapeHtml(label)}</span></article>`).join("")}
+      <section class="admin-coupon-stats admin-flat-grid" aria-label="Coupon statistics">
+        ${[["Total", stats.total], ["Full course", stats.full_course], ["Module", stats.module_access], ["Redeemed", stats.redeemed], ["Students", stats.students], ["Unused", stats.unused], ["Expired", stats.expired], ["Disabled", stats.disabled], ["Rate", `${Number(stats.redemption_rate || 0)}%`]].map(([label, value]) => `<article><b>${escapeHtml(String(value ?? 0))}</b><span>${escapeHtml(label)}</span></article>`).join("")}
       </section>
 
-      <section class="card admin-coupon-report">
-        <div class="flex-between"><div><h3>Coupon records</h3><p class="subtle">Search previews, batches, student names, or MedBank IDs.</p></div><button class="btn ghost admin-btn-sm" type="button" data-action="admin-export-coupons">Export report</button></div>
+      <section class="admin-coupon-report">
+        <div class="flex-between"><div><h3>Coupon records</h3><p class="subtle">Search previews, batches, student names, or MedBank IDs.</p></div></div>
         <form id="admin-course-coupon-filter-form" class="admin-coupon-filters" autocomplete="off">
           <input name="search" type="search" value="${escapeHtml(state.adminCourseCouponSearch)}" placeholder="Preview, batch, student ID..." />
           <select name="coupon_type"><option value="all">All types</option><option value="full_course" ${state.adminCourseCouponFilterType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponFilterType === "module_access" ? "selected" : ""}>Module</option></select>
@@ -54959,11 +56571,11 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
           <label>Redeemed from<input name="redeemed_from" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedFrom)}" /></label><label>Redeemed to<input name="redeemed_to" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedTo)}" /></label>
           <button class="btn ghost admin-btn-sm" type="submit">Apply filters</button>
         </form>
-        ${state.adminCourseCouponLoading ? `<div class="courses-empty"><span class="inline-loader"></span><p>Loading coupons...</p></div>` : state.adminCourseCouponError ? `<p class="form-error">${escapeHtml(state.adminCourseCouponError)}</p>` : coupons.length ? `<div class="table-wrap"><table><thead><tr><th>Preview</th><th>Type / modules</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead><tbody>${coupons.map((coupon) => `<tr><td><code>••••-${escapeHtml(coupon.code_preview)}</code></td><td>${escapeHtml(coupon.coupon_type === "full_course" ? "Full course" : (coupon.module_titles || []).join(", ") || "Modules")}</td><td><span class="status-badge is-${coupon.status === "used" ? "approved" : coupon.status === "unused" ? "pending" : "rejected"}">${escapeHtml(coupon.status)}</span></td><td>${escapeHtml(coupon.batch_name || "—")}</td><td>${escapeHtml(formatReportDateTime(coupon.created_at))}</td><td>${coupon.redeemed_public_user_id ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(coupon.redeemed_public_user_id)}">${escapeHtml(coupon.redeemed_name || "Student")} · ${escapeHtml(coupon.redeemed_public_user_id)}</button><small>${escapeHtml(formatReportDateTime(coupon.redeemed_at))}</small>` : "—"}</td><td>${coupon.status === "unused" ? `<button class="btn danger ghost admin-btn-sm" type="button" data-action="admin-disable-coupon" data-coupon-id="${escapeHtml(coupon.id)}">Disable</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="subtle">No coupons match these filters.</p>`}
+        ${state.adminCourseCouponLoading ? `<div class="courses-empty"><span class="inline-loader"></span><p>Loading coupons...</p></div>` : state.adminCourseCouponError ? `<p class="form-error">${escapeHtml(state.adminCourseCouponError)}</p>` : renderedCoupons.length ? `<div class="table-wrap"><table><thead><tr><th>Preview</th><th>Type / modules</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead><tbody>${renderedCoupons.map((coupon) => `<tr><td><code>••••-${escapeHtml(coupon.code_preview)}</code></td><td>${escapeHtml(coupon.coupon_type === "full_course" ? "Full course" : (coupon.module_titles || []).join(", ") || "Modules")}</td><td><span class="status-badge is-${coupon.status === "used" ? "approved" : coupon.status === "unused" ? "pending" : "rejected"}">${escapeHtml(coupon.status)}</span></td><td>${escapeHtml(coupon.batch_name || "—")}</td><td>${escapeHtml(formatReportDateTime(coupon.created_at))}</td><td>${coupon.redeemed_public_user_id ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(coupon.redeemed_public_user_id)}">${escapeHtml(coupon.redeemed_name || "Student")} · ${escapeHtml(coupon.redeemed_public_user_id)}</button><small>${escapeHtml(formatReportDateTime(coupon.redeemed_at))}</small>` : "—"}</td><td>${coupon.status === "unused" ? renderAdminRowMenu({ id: `coupon-${coupon.id}`, label: "More actions", items: [{ label: "Disable", attrs: `data-action="admin-disable-coupon" data-coupon-id="${escapeHtml(coupon.id)}"`, danger: true }] }) : ""}</td></tr>`).join("")}</tbody></table></div>${renderAdminCourseShowMoreButton(hiddenCouponCount, couponsLimitKey)}` : `<p class="subtle">No coupons match these filters.</p>`}
       </section>
 
-      <div class="grid-2 admin-coupon-insights"><section class="card"><h3>Redemptions over time</h3>${(stats.redemptions_over_time || []).length ? `<ul>${stats.redemptions_over_time.map((item) => `<li><span>${escapeHtml(item.day)}</span><b>${escapeHtml(item.count)}</b></li>`).join("")}</ul>` : `<p class="subtle">No redemptions yet.</p>`}</section><section class="card"><h3>Most activated modules</h3>${(stats.redemptions_by_module || []).length ? `<ul>${stats.redemptions_by_module.map((item) => `<li><span>${escapeHtml(item.module_title)}</span><b>${escapeHtml(item.redemptions)}</b></li>`).join("")}</ul>` : `<p class="subtle">No module redemptions yet.</p>`}</section></div>
-      <section class="card admin-coupon-insights"><h3>Recent redemptions</h3>${(stats.recent_redemptions || []).length ? `<ul>${stats.recent_redemptions.map((item) => `<li><span><button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(item.public_user_id)}">${escapeHtml(item.student_name || "Student")} · ${escapeHtml(item.public_user_id)}</button><small>${escapeHtml(item.course_name || "Video Course")} · ${escapeHtml(item.coupon_type === "module_access" ? "Module access" : "Full course")}</small></span><b>${escapeHtml(formatReportDateTime(item.redeemed_at))}</b></li>`).join("")}</ul>` : `<p class="subtle">No recent redemptions.</p>`}</section>
+      <div class="grid-2 admin-coupon-insights"><section><h3>Redemptions over time</h3>${(stats.redemptions_over_time || []).length ? `<ul>${stats.redemptions_over_time.map((item) => `<li><span>${escapeHtml(item.day)}</span><b>${escapeHtml(item.count)}</b></li>`).join("")}</ul>` : `<p class="subtle">No redemptions yet.</p>`}</section><section><h3>Most activated modules</h3>${(stats.redemptions_by_module || []).length ? `<ul>${stats.redemptions_by_module.map((item) => `<li><span>${escapeHtml(item.module_title)}</span><b>${escapeHtml(item.redemptions)}</b></li>`).join("")}</ul>` : `<p class="subtle">No module redemptions yet.</p>`}</section></div>
+      <section class="admin-coupon-insights"><h3>Recent redemptions</h3>${(stats.recent_redemptions || []).length ? `<ul>${stats.recent_redemptions.map((item) => `<li><span><button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(item.public_user_id)}">${escapeHtml(item.student_name || "Student")} · ${escapeHtml(item.public_user_id)}</button><small>${escapeHtml(item.course_name || "Video Course")} · ${escapeHtml(item.coupon_type === "module_access" ? "Module access" : "Full course")}</small></span><b>${escapeHtml(formatReportDateTime(item.redeemed_at))}</b></li>`).join("")}</ul>` : `<p class="subtle">No recent redemptions.</p>`}</section>
     </div>
   `;
 }
@@ -55459,71 +57071,103 @@ function adminRenderCourseBuilder(courseId) {
   ).length;
   const activePlatformSection = getAdminCoursePlatformSection();
   const showsCourseContextBar = ["builder", "enrollments", "suggestions", "announcements"].includes(activePlatformSection);
-  const sectionCopy = {
-    overview: {
-      title: "Course metadata",
-      description: "Review every course students can see, then edit the selected course details, cover, instructor, status, and enrollment mode.",
-    },
-    builder: {
-      title: "Course Builder",
-      description: "Create new student courses, then build their modules, video lessons, and lesson materials.",
-    },
-    approvals: {
-      title: "Course approvals",
-      description: "Review courses creators submitted from the app before they reach students.",
-    },
-    enrollments: {
-      title: "Enrolled users",
-      description: "Choose a course, review enrolled students, and manually enroll users into that course.",
-    },
-    coupons: {
-      title: "Activation coupons",
-      description: "Generate one-time activation codes and track redemptions for a course.",
-    },
-    suggestions: {
-      title: "Suggestions",
-      description: "Choose which courses appear on the Course Suggestions page and feature important courses first for students.",
-    },
-    announcements: {
-      title: "Announcements",
-      description: "Push course announcements to enrolled students from the selected course.",
-    },
-    requests: {
-      title: "Enrollment requests",
-      description: "Approve or reject student requests so approved courses move into their My Courses page.",
-    },
-    availability: {
-      title: "Course availability",
-      description: "Open or pause the student Courses learning portal without changing MCQ Bank access.",
-    },
-  }[activePlatformSection] || {
-    title: "Courses learning platform",
-    description: "Build modules, lessons, resources, announcements, and requests without changing MCQ question-bank tools.",
-  };
+
+  const refreshPlatformActionHtml = renderAdminIconButton({
+    icon: "refresh",
+    label: "Refresh platform",
+    attrs: `data-action="admin-courses-platform-refresh"`,
+    busy: Boolean(state.adminCoursesPlatformLoading),
+  });
+  const newCourseActionHtml = renderAdminIconButton({
+    icon: "plus",
+    label: "New course",
+    attrs: `data-action="admin-create-platform-course"`,
+    variant: "primary",
+  });
+  const pendingApprovalsCount = (courses || []).filter((course) => String(course?.review_status || "").trim() === "pending").length;
+
+  let headerTitle = "Video Courses";
+  let headerCount = null;
+  let headerActions = refreshPlatformActionHtml;
+  let headerNotes = [];
+  if (activePlatformSection === "overview") {
+    headerTitle = "Catalog";
+    headerCount = courses.length;
+    headerActions = `${refreshPlatformActionHtml}${newCourseActionHtml}`;
+    headerNotes = [
+      "Every course students can see, with modules, lessons, and enrollment counts.",
+      "Select a course below to edit its details, cover, instructor, status, and enrollment mode.",
+    ];
+  } else if (activePlatformSection === "builder") {
+    headerTitle = "Course Builder";
+    headerActions = `${refreshPlatformActionHtml}${newCourseActionHtml}`;
+    headerNotes = ["Create new student courses, then build their modules, video lessons, and lesson materials."];
+  } else if (activePlatformSection === "approvals") {
+    headerTitle = "Course approvals";
+    headerCount = pendingApprovalsCount;
+    headerNotes = [
+      "Creators build courses in the MedBank app and submit them here for review.",
+      "A course stays hidden from students until it is approved and published.",
+    ];
+  } else if (activePlatformSection === "enrollments") {
+    headerTitle = "Enrolled users";
+    headerCount = rows.enrollments.length;
+    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Enroll users", attrs: `data-action="admin-open-course-enrollment-picker"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Choose a course above, then review or search its enrolled students.",
+      "Use Enroll users to manually add students to this course.",
+    ];
+  } else if (activePlatformSection === "coupons") {
+    headerTitle = "Activation coupons";
+    headerCount = state.adminCourseCouponStats ? Number(state.adminCourseCouponStats.total) || 0 : (state.adminCourseCoupons || []).length;
+    headerActions = `${renderAdminIconButton({ icon: "refresh", label: "Refresh coupons", attrs: `data-action="admin-refresh-coupons"`, busy: Boolean(state.adminCourseCouponLoading) })}${renderAdminIconButton({ icon: "download", label: "Export report", attrs: `data-action="admin-export-coupons"` })}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Generate coupons", attrs: `data-action="admin-open-course-coupon-generator"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Generate one-time activation codes and track redemptions for a course.",
+      "Plain codes are shown once — MedBank stores only a SHA-256 hash and a four-character preview.",
+    ];
+  } else if (activePlatformSection === "suggestions") {
+    headerTitle = "Suggestions";
+    headerCount = (state.adminCoursesPlatformSuggestions || []).length;
+    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Add suggestion", attrs: `data-action="admin-open-course-suggestion-editor"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Choose which courses appear on the Course Suggestions page.",
+      "Feature important courses first for students by year and semester.",
+    ];
+  } else if (activePlatformSection === "announcements") {
+    headerTitle = "Announcements";
+    headerCount = (state.adminCoursesPlatformAnnouncements || []).length;
+    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "New announcement", attrs: `data-action="admin-open-course-announcement-composer"`, variant: "primary" }) : ""}`;
+    headerNotes = [
+      "Push announcements to enrolled students from the selected course.",
+      "Browse posts from every course in the feed below.",
+    ];
+  } else if (activePlatformSection === "requests") {
+    headerTitle = "Enrollment requests";
+    headerCount = (state.adminCoursesPlatformRequests || []).length;
+    headerNotes = [
+      "Approve or reject requests so courses move into a student's My Courses page.",
+      "Filter by status and expand a course group to review its requests.",
+    ];
+  } else if (activePlatformSection === "availability") {
+    headerTitle = "Course availability";
+    headerNotes = ["Open or pause the student Courses learning portal without changing MCQ Bank access."];
+  }
+  const coursesPlatformHeaderHtml = renderAdminPageHeader({
+    id: `video-courses-${activePlatformSection}`,
+    title: headerTitle,
+    count: headerCount,
+    actions: headerActions,
+    notes: headerNotes,
+  });
 
   return `
     <section class="card admin-section courses-admin-builder" id="admin-courses-platform-builder">
-      <div class="admin-courses-minimal-head">
-        <div>
-          <h3 style="margin: 0;">${escapeHtml(sectionCopy.title)}</h3>
-          <p class="subtle" style="margin: 0.22rem 0 0;">${escapeHtml(sectionCopy.description)}</p>
-        </div>
-        <div class="stack">
-          <button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.25rem; vertical-align: middle;">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            New course
-          </button>
-          <button class="btn ghost admin-btn-sm ${state.adminCoursesPlatformLoading ? "is-loading" : ""}" type="button" data-action="admin-courses-platform-refresh">${state.adminCoursesPlatformLoading ? "Refreshing..." : "Refresh platform"}</button>
-        </div>
-      </div>
+      ${coursesPlatformHeaderHtml}
 
       ${state.adminCoursesPlatformError ? `<div class="courses-error"><b>Courses platform admin error</b><p>${escapeHtml(state.adminCoursesPlatformError)}</p></div>` : ""}
       ${state.adminCoursesPlatformLoading && !state.adminCoursesPlatformLoadedAt ? `<p class="subtle loading-inline"><span class="inline-loader" aria-hidden="true"></span><span>Loading Courses platform builder...</span></p>` : ""}
-      
-      ${activePlatformSection === "availability" ? renderAdminCoursesComingSoonControl() : !selectedCourse && activePlatformSection !== "builder" && activePlatformSection !== "overview" ? `<div class="admin-course-empty-state"><h4 style="margin: 0;">No platform courses yet</h4><p class="subtle" style="margin: 0;">Create the first course for students.</p><button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">New course</button></div>` : `
+
+      ${activePlatformSection === "availability" ? renderAdminCoursesComingSoonControl() : !selectedCourse && activePlatformSection !== "builder" && activePlatformSection !== "overview" ? renderAdminCoursesEmptyState() : `
         ${showsCourseContextBar && selectedCourse ? renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingRequestCount) : ""}
 
         ${activePlatformSection === "overview" ? `
@@ -55648,10 +57292,10 @@ function adminRenderCourseBuilder(courseId) {
               <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
             </div>
             </form>
-          ` : `<div class="admin-course-empty-state"><h4 style="margin: 0;">No platform courses yet</h4><p class="subtle" style="margin: 0;">Create the first course for students.</p><button class="btn admin-btn-sm" type="button" data-action="admin-create-platform-course">New course</button></div>`}
+          ` : renderAdminCoursesEmptyState()}
         ` : ""}
 
-        ${activePlatformSection === "suggestions" && selectedCourse ? `${renderAdminGlobalSuggestions()}${adminRenderSuggestionSettings(selectedCourseId)}` : ""}
+        ${activePlatformSection === "suggestions" ? renderAdminGlobalSuggestions() : ""}
 
         ${activePlatformSection === "builder" ? `
           <div class="course-builder-split-layout">
@@ -55674,6 +57318,57 @@ function adminRenderCourseBuilder(courseId) {
       `}
     </section>
   `;
+}
+
+// The coupon/announcement/suggestion "create" forms open as dialogs rendered
+// into adminGlobalOverlay (see renderAdminDialog's contract) rather than inside
+// #admin-courses-platform-builder, so a hovered card's transform or the admin
+// shell's backdrop-filter can never trap their position:fixed panel.
+function renderAdminCoursesPlatformDialogs() {
+  const courses = state.adminCoursesPlatformCourses || [];
+  const selectedCourseId = String(state.adminCourseBuilderCourseId || courses[0]?.id || "").trim();
+  let html = "";
+
+  if (state.adminCourseCouponGeneratorOpen) {
+    const couponCourseId = String(state.adminCourseCouponCourseId || selectedCourseId || courses[0]?.id || "").trim();
+    html += renderAdminDialog({
+      id: "course-coupon-generator",
+      title: "Generate activation coupons",
+      closeAction: "admin-close-course-coupon-generator",
+      body: renderAdminCourseCouponGeneratorForm(courses, couponCourseId),
+      actions: `
+        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-close-course-coupon-generator">Cancel</button>
+        <button class="btn admin-btn-sm" type="submit" form="admin-course-coupon-generate-form">Generate secure coupon${Number(state.adminCourseCouponQuantity) === 1 ? "" : "s"}</button>
+      `,
+    });
+  }
+
+  if (state.adminCourseAnnouncementComposerOpen) {
+    html += renderAdminDialog({
+      id: "course-announcement-composer",
+      title: "New announcement",
+      subtitle: getCoursePlatformCourseTitle(getAdminCourseBuilderCourse(selectedCourseId)),
+      closeAction: "admin-close-course-announcement-composer",
+      body: renderAdminCourseAnnouncementComposerForm(selectedCourseId),
+      actions: `
+        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-close-course-announcement-composer">Cancel</button>
+        <button class="btn admin-btn-sm" type="submit" form="admin-course-announcement-form">Post announcement</button>
+      `,
+    });
+  }
+
+  if (state.adminCourseSuggestionEditorOpen) {
+    html += renderAdminDialog({
+      id: "course-suggestion-editor",
+      title: "Course suggestion",
+      subtitle: getCoursePlatformCourseTitle(getAdminCourseBuilderCourse(selectedCourseId)),
+      closeAction: "admin-close-course-suggestion-editor",
+      body: adminRenderSuggestionSettings(selectedCourseId),
+      actions: `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-close-course-suggestion-editor">Close</button>`,
+    });
+  }
+
+  return html;
 }
 
 function readFormDataObject(form) {
@@ -55702,7 +57397,43 @@ function readFormDataObject(form) {
   return payload;
 }
 
+// The announcement/suggestion forms move into a body-level dialog (see
+// renderAdminCoursesPlatformDialogs), outside #admin-courses-platform-builder,
+// so the generic root-scoped draft-persist listener below never sees their
+// keystrokes. This is wired once (guarded), delegated on appEl, so it survives
+// every dialog open/close without ever being re-attached.
+let adminCoursePlatformDialogFormDraftWired = false;
+function wireAdminCoursePlatformDialogFormDrafts() {
+  if (adminCoursePlatformDialogFormDraftWired) return;
+  adminCoursePlatformDialogFormDraftWired = true;
+  const draftFormIds = new Set(["admin-course-announcement-form", "admin-course-suggestion-form"]);
+  const draftTimers = new WeakMap();
+  const persist = (form) => {
+    if (!form) return;
+    const draftKey = getAdminCourseBuilderDraftKey(form);
+    if (!draftKey) return;
+    if (!state.adminCourseBuilderDrafts) state.adminCourseBuilderDrafts = {};
+    state.adminCourseBuilderDrafts[draftKey] = readFormDataObject(form);
+  };
+  const handle = (event) => {
+    const target = event.target;
+    if (!target) return;
+    const form = target.closest("form");
+    if (!form || !draftFormIds.has(form.id)) return;
+    if (event.type === "input") {
+      window.clearTimeout(draftTimers.get(form));
+      draftTimers.set(form, window.setTimeout(() => persist(form), 140));
+      return;
+    }
+    window.clearTimeout(draftTimers.get(form));
+    persist(form);
+  };
+  appEl.addEventListener("input", handle);
+  appEl.addEventListener("change", handle);
+}
+
 function wireAdminCoursesPlatformBuilder() {
+  wireAdminCoursePlatformDialogFormDrafts();
   const root = document.getElementById("admin-courses-platform-builder");
   if (!root) return;
 
@@ -55873,9 +57604,6 @@ function wireAdminCoursesPlatformBuilder() {
     } else if (id === "admin-course-metadata-form") {
       event.preventDefault();
       runAdminCourseAction("Course metadata saved.", () => adminSaveCourseMetadata(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);
-    } else if (id === "admin-course-suggestion-form") {
-      event.preventDefault();
-      runAdminCourseAction("Course suggestion saved.", () => adminSaveCourseSuggestion(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);
     } else if (id === "admin-course-module-create-form") {
       event.preventDefault();
       runAdminCourseAction("Module created.", async () => {
@@ -55925,9 +57653,6 @@ function wireAdminCoursesPlatformBuilder() {
       } else if (courseResourceId) {
         runAdminCourseAction("Resource added.", () => adminCreateCourseResource(courseResourceId, readFormDataObject(form)), form);
       }
-    } else if (id === "admin-course-coupon-generate-form") {
-      event.preventDefault();
-      runAdminCourseAction("Coupon codes generated. Save the plaintext codes now.", () => generateAdminCourseCoupons(form), form);
     } else if (id === "admin-course-coupon-filter-form") {
       event.preventDefault();
       const data = new FormData(form);
@@ -55939,9 +57664,6 @@ function wireAdminCoursesPlatformBuilder() {
       state.adminCourseCouponRedeemedFrom = String(data.get("redeemed_from") || "");
       state.adminCourseCouponRedeemedTo = String(data.get("redeemed_to") || "");
       runAdminCourseAction("Coupon filters applied.", () => loadAdminCourseCouponData({ courseId: state.adminCourseCouponCourseId }), form);
-    } else if (id === "admin-course-announcement-form") {
-      event.preventDefault();
-      runAdminCourseAction("Announcement posted.", () => adminCreateAnnouncement(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);
     }
   });
 
@@ -55998,23 +57720,9 @@ function wireAdminCoursesPlatformBuilder() {
       state.adminCourseBuilderActiveParentId = "";
       state.skipNextRouteAnimation = true;
       render();
-    } else if (target.id === "admin-coupon-course") {
-      state.adminCourseCouponCourseId = String(target.value || "");
-      state.adminCourseBuilderCourseId = state.adminCourseCouponCourseId;
-      state.adminCourseCouponStats = null;
-      state.adminCourseCoupons = [];
-      state.adminCourseCouponGenerated = [];
-      state.adminCourseCouponModuleIds = [];
-      rerenderAdminCourses();
-    } else if (target.id === "admin-coupon-type") {
-      state.adminCourseCouponType = String(target.value || "full_course");
-      rerenderAdminCourses();
-    } else if (target.name === "module_ids") {
-      state.adminCourseCouponModuleIds = [...root.querySelectorAll("input[name='module_ids']:checked")].map((input) => String(input.value || ""));
-    } else if (
-      target.id === "admin-course-table-filter-year" || 
-      target.hasAttribute("data-action") && target.getAttribute("data-action") === "admin-course-table-filter"
-    ) {
+    } else if (target.id === "admin-course-table-filter-year") {
+      // Match by id only: all three filter selects share the data-action, so
+      // matching on it sent Semester and Status values into the Year filter.
       state.adminCourseTableFilterYear = String(target.value || "");
       rerenderAdminCourses();
     } else if (target.id === "admin-course-table-filter-semester") {
@@ -56276,6 +57984,18 @@ function wireAdminCoursesPlatformBuilder() {
           state.adminApproveAllPendingRunning = false;
         }
       });
+    } else if (action === "admin-course-list-show-more") {
+      bumpAdminCourseListRenderLimit(button.getAttribute("data-limit-key") || "");
+      rerenderAdminCourses();
+    } else if (action === "admin-edit-course-suggestion") {
+      const courseId = button.getAttribute("data-course-id") || "";
+      if (isUuidValue(courseId)) {
+        state.adminCourseBuilderCourseId = courseId;
+      }
+      state.adminCourseSuggestionEditorOpen = true;
+      state.skipNextRouteAnimation = true;
+      render();
+      focusIntoAdminDialog("course-suggestion-editor");
     }
   });
 
@@ -56292,6 +58012,95 @@ function wireAdminCoursesPlatformBuilder() {
     state.adminCourseBuilderActiveId = "";
     state.adminCourseBuilderActiveParentId = "";
     rerenderAdminCourses();
+  });
+
+  // The coupon generator, announcement composer, and suggestion editor render
+  // via adminGlobalOverlay (renderAdminCoursesPlatformDialogs), outside `root`,
+  // so their open/close controls and form submissions need their own
+  // appEl-scoped wiring instead of the root-scoped delegation above. These
+  // attach to freshly rendered elements every call, so nothing accumulates.
+  const coursePlatformDialogSpecs = [
+    { dialogId: "course-coupon-generator", openAction: "admin-open-course-coupon-generator", closeAction: "admin-close-course-coupon-generator", openField: "adminCourseCouponGeneratorOpen" },
+    { dialogId: "course-announcement-composer", openAction: "admin-open-course-announcement-composer", closeAction: "admin-close-course-announcement-composer", openField: "adminCourseAnnouncementComposerOpen" },
+    { dialogId: "course-suggestion-editor", openAction: "admin-open-course-suggestion-editor", closeAction: "admin-close-course-suggestion-editor", openField: "adminCourseSuggestionEditorOpen" },
+  ];
+  coursePlatformDialogSpecs.forEach(({ dialogId, openAction, closeAction, openField }) => {
+    appEl.querySelectorAll(`[data-action='${openAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        state[openField] = true;
+        state.skipNextRouteAnimation = true;
+        render();
+        focusIntoAdminDialog(dialogId);
+      });
+    });
+    appEl.querySelectorAll(`[data-action='${closeAction}']`).forEach((button) => {
+      button.addEventListener("click", () => {
+        state[openField] = false;
+        state.skipNextRouteAnimation = true;
+        render();
+      });
+    });
+  });
+
+  appEl.querySelector("#admin-course-coupon-generate-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    // The dialog's submit button lives outside <form> (associated via
+    // form="..."), so runAdminCourseAction's own button-disabling can't reach
+    // it. It still toggles "is-saving" on the form itself, so reuse that as
+    // the double-submit guard.
+    if (form.classList.contains("is-saving")) return;
+    runAdminCourseAction("Coupon codes generated. Save the plaintext codes now.", async () => {
+      await generateAdminCourseCoupons(form);
+      state.adminCourseCouponGeneratorOpen = false;
+    }, form);
+  });
+  appEl.querySelector("#admin-coupon-course")?.addEventListener("change", (event) => {
+    state.adminCourseCouponCourseId = String(event.target.value || "");
+    state.adminCourseBuilderCourseId = state.adminCourseCouponCourseId;
+    state.adminCourseCouponStats = null;
+    state.adminCourseCoupons = [];
+    state.adminCourseCouponGenerated = [];
+    state.adminCourseCouponModuleIds = [];
+    rerenderAdminCourses();
+  });
+  appEl.querySelector("#admin-coupon-type")?.addEventListener("change", (event) => {
+    state.adminCourseCouponType = String(event.target.value || "full_course");
+    rerenderAdminCourses();
+  });
+  appEl.querySelectorAll("#admin-course-coupon-generate-form input[name='module_ids']").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      state.adminCourseCouponModuleIds = [...appEl.querySelectorAll("#admin-course-coupon-generate-form input[name='module_ids']:checked")].map((input) => String(input.value || ""));
+    });
+  });
+
+  appEl.querySelector("#admin-course-announcement-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    if (form.classList.contains("is-saving")) return;
+    runAdminCourseAction("Announcement posted.", async () => {
+      await adminCreateAnnouncement(state.adminCourseBuilderCourseId, readFormDataObject(form));
+      state.adminCourseAnnouncementComposerOpen = false;
+    }, form);
+  });
+
+  appEl.querySelector("#admin-course-suggestion-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    if (form.classList.contains("is-saving")) return;
+    runAdminCourseAction("Course suggestion saved.", async () => {
+      await adminSaveCourseSuggestion(state.adminCourseBuilderCourseId, readFormDataObject(form));
+      state.adminCourseSuggestionEditorOpen = false;
+    }, form);
+  });
+  // "Delete suggestion" inside adminRenderSuggestionSettings() is part of the
+  // dialog body, so it never reaches root's click delegation above.
+  appEl.querySelector("#admin-dialog-course-suggestion-editor")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-action='admin-delete-course-suggestion']");
+    if (!button) return;
+    const suggestionId = button.getAttribute("data-suggestion-id") || "";
+    if (!window.confirm("Delete this course suggestion?")) return;
+    runAdminCourseAction("Course suggestion deleted.", () => adminDeleteCourseSuggestion(suggestionId));
   });
 }
 

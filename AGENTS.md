@@ -189,6 +189,247 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-30 — Admin pages: one box level (flatten pass)
+Frontend only; no schema, RLS, auth or access change. Static cache bust:
+`2026-09-30.10` (shipped to `main` 2026-09-30). Spec:
+`docs/admin-ui-style-guide.md` (rules F1–F6).
+
+1. **One CSS block, scoped to `.admin-main`**, appended at the end of
+   `styles.css` under `/* Admin flatten: one box level */`. Grouping
+   containers inside the page card lose border, background and shadow and are
+   separated by a hairline instead. Dialogs render in `adminGlobalOverlay`
+   (outside `.admin-main`), so they keep their own styling on purpose. Do not
+   widen these selectors to unscoped class names: `.admin-settings-row`, for
+   one, is also used in the Users settings dialog.
+2. **Shared pieces, reuse them:** `.admin-flat-toolbar` (one filter row, no
+   visible labels, `aria-label` on each control), `.admin-flat-list` /
+   `.admin-flat-row` (divided rows, chevron, hover `--brand-soft`),
+   `.admin-flat-stats` / `.admin-flat-stat` (number strip), `.admin-flat-warn`
+   with the new themed token `--admin-warn-fg` (amber; light/comfort/dark), and
+   `.admin-flat-grid`, which draws dividers between grid items whatever the
+   column count (each item has a `-1px -1px` hairline shadow, and the grid's
+   `overflow: hidden` clips the ones on its outer edge). An automated box
+   counter will count those shadows as boxes; they are dividers.
+3. **Markup changes (handlers untouched; ids and data-actions kept):**
+   MCQ Subjects is the approved target: filters in one toolbar row and the
+   subjects as a divided list (`.admin-course-picker-row`, "4 topics ·
+   8 questions", amber "no questions yet", chevron instead of OPEN). Activity
+   stats are a `.admin-flat-stats` strip. The Video Courses catalog filters are
+   one toolbar row, the Course Builder context bar shows "3 modules · 9 lessons
+   · …" as muted text instead of pills. The `card` class was removed from boxes
+   nested inside the page card (Bulk Import tool cards, coupon stats/report/
+   insights, approval cards), per F6.
+4. **Deliberately kept as the one inner surface:** the Site Access student
+   preview, the Hermes setup panel, the Pop-ups phone mock-up, the Course
+   Builder editor panel, the "save these codes" coupon notice, and error
+   notices. Status badges (PENDING, PUBLISHED…) were left as they are; turning
+   them into dot + text across every page is a separate pass.
+5. **Three pre-existing bugs fixed on the way (all also on `main`):**
+   - Notifications: a failed Video Course options load (no session, timeout,
+     network) re-rendered the page, which retried the load at once — a tight
+     loop that froze the tab and would hammer Supabase while the query kept
+     failing. It now re-renders only after a successful load.
+   - Activation Coupons: with no Supabase client the coupon load returned
+     `false` without recording an error, so the same re-render loop ran. It
+     now re-renders after a load or a recorded error only.
+   - Catalog filters: all three selects share
+     `data-action="admin-course-table-filter"` and the handler matched that
+     attribute in its Year branch, so choosing a Semester or Status wrote that
+     value into the Year filter (Status → Draft emptied the table). It now
+     dispatches by id only.
+6. **Verified** in the preview as the local demo admin, with a stubbed Video
+   Courses dataset (7 courses, modules, lessons, requests, enrollments,
+   announcements, suggestions, one course awaiting review), at 1366, 768 and
+   375px: box depth inside `.admin-main` is ≤ 2 on every page except Site
+   Access (the badge inside the student preview) and Course Builder (the
+   editor panel's own icon and quick-action buttons); no horizontal overflow
+   at any width. Clicked through: a subject row opens the subject dialog,
+   Year/Semester/search filter the list (search keeps focus), the Catalog
+   Year/Semester/Status filters and search narrow the table. Warn colour
+   checked in comfort and dark. Not verified with a real Supabase admin
+   session. `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`docs/admin-ui-style-guide.md`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-09-30 — Admin pages: Dashboard, top-bar notice, Users toolbar, Universities
+Frontend only; no schema, RLS, auth or access change. Static cache bust:
+`2026-09-30.07-local` (drop `-local` before shipping).
+
+1. **Shared admin UI pieces** (block above `function renderAdmin()`, plus
+   helpers near the sidebar code): `renderAdminPageHeader({ id, title, count,
+   actions, notes })` (title, icon actions, ⓘ "How this page works" note —
+   open state per page in localStorage `medbank_admin_help_open_v1`, toggled
+   DOM-only by ONE delegated listener in `wireAdminSharedUi`),
+   `renderAdminIconButton`, `renderAdminRowMenu` (⋯ menu) and
+   `renderAdminDialog` (centered dialog, sheet on phones). **Adopt these for
+   the remaining admin pages instead of writing new ones.** Two parallel
+   implementations were merged into one: never add a second
+   `admin-help-toggle` listener — two listeners toggle the note twice and it
+   never opens.
+1a. **Render every admin dialog through `adminGlobalOverlay`, never inside the
+   page content.** `.panel.admin-shell` has `backdrop-filter`, and a hovered
+   `.card` gets a GSAP `transform: translateY(-2px)` — either one becomes the
+   containing block for `position: fixed`, so a dialog inside them only covers
+   that card and slides under the top bar. Universities was moved out for this
+   (`renderAdminUniversityDialog`); its wiring therefore looks the dialog up via
+   `appEl`, not the section. A `:has(.admin-dialog)` rule also drops the shell
+   blur while a dialog is open, as a backstop.
+2. **Row menu inside the blurred panel.** `.panel.admin-shell` has
+   `backdrop-filter`, which makes it the containing block for
+   `position: fixed`; `positionAdminRowMenu` measures where the list landed and
+   cancels the offset. Any future fixed popover inside the admin shell needs
+   the same correction (or must be portalled to `body`).
+3. **Dialog focus survives re-renders.** Dialogs are re-rendered from state
+   (the 30 s poll, a filter change), which dropped focus to `<body>` and broke
+   Escape. `trackAdminDialogFocus` / `restoreAdminDialogFocusAfterRender`
+   restore focus to the last focused element inside the dialog.
+4. **Dashboard** (`admin-dash-*`): needs-attention cards open pages
+   pre-filtered via `data-action="admin-dashboard-open"`;
+   `loadAdminDashboardCounts` does count-only reads, each isolated (a failure
+   shows "—"), cached 60 s, no extra polling. Student numbers come from the
+   local users cache via the pure `buildAdminDashboardUserSnapshot` (tested in
+   `tests/admin-dashboard.test.js`) so they always agree with the Users page.
+   `resetAdminUserFilters()` is the single reset used by the cards, the chips
+   and "Reset filters".
+5. **Top-bar notice** (`#topbar-system-notice`, created in `syncTopbar`):
+   `state.adminDataSyncError` is shown there, not in the page body. Dismissal
+   is per message text (`state.adminSystemNoticeDismissed`) and clears when the
+   error clears.
+6. **Users page**: one toolbar (search, pending chip, Filters / Export / Add
+   user / Approval settings icons), removable filter chips; the filters,
+   add-user form and approval switches live in dialogs whose open state is in
+   `state` (`adminUsersFiltersOpen`, `adminAddUserPanelOpen`,
+   `adminUsersSettingsOpen`). `shouldDeferAdminUsersAutoRender` also defers
+   while Filters is open. **Export CSV had no click handler on production** —
+   `downloadAdminUsersCsv` was never called; it is now wired to the filtered
+   list.
+7. **Universities**: header + notes, ⋯ row menu, add/edit in a dialog with an
+   unsaved-changes confirm.
+6a. **Questions rows use inline icon buttons, not a ⋯ menu** (owner request):
+   pencil = `admin-edit`, red trash = `admin-delete` (still confirms). New
+   `renderAdminIconButton` icons `pencil` / `trash` and `variant: "danger"`
+   (`.admin-icon-btn.is-danger`) — reuse them where a row has only 1–2 actions.
+6b. **Bulk Import step 1 is Year → Subject → Topic.**
+   `buildAdminCourseYearGroups(allCourses)` groups subjects by
+   `MEDBANK_CURRICULUM` year/semester ("Other" for the rest);
+   `renderAdminCourseYearGroupOptions` renders the semester `<optgroup>`s. The
+   year is derived from `state.adminImportCourse`; there is no year state.
+   Reuse these for any other year-first subject picker.
+7a. **Users table rows are read-only** (2026-09-30). Name, phone, year,
+   semester and role are edited in an "Edit details" dialog
+   (`state.adminUserEditId`); everything else lives in the row's ⋯ menu.
+   **Load-bearing design:** the dialog root is `[data-user-edit-root][data-user-id]`
+   and carries the same `data-field` inputs and `save-user-enrollment` button the
+   old inline row had, so `saveUserEnrollmentFromRow()` saves from it
+   unchanged; the save and role handlers look up
+   `closest("tr[data-user-id], [data-user-edit-root][data-user-id]")`. Menu
+   items stay inside the `<tr>`, so every other row handler's
+   `closest("tr[data-user-id]")` still works. When an element has no inputs (a
+   read-only row during bulk approve / Approve all pending),
+   `saveUserEnrollmentFromRow` now falls back to the stored name, phone and
+   term instead of failing with "Full name is required". The dialog keeps a
+   draft while typing (pauses the poll and the auto-approval sweep) but never
+   auto-saves. `patchAdminUserRowUi` updates the status dot, term, access
+   tags, the inline Approve (hidden once approved) and the menu labels. The
+   bulk bar renders only while rows are selected; select-all moved to the
+   table header.
+8. **Sidebar**: Enrollment Requests moved from People to Video Courses.
+8a. **Every admin page now uses the shared pieces** (2026-09-30): MCQ Subjects,
+   Questions, Bulk Import, Notifications, Pop-ups, Site Access, Hermes,
+   Activity, Logs and all nine Video Courses sections have a
+   `renderAdminPageHeader` header with notes; row actions are ⋯ menus; create
+   forms (add subject, question filters, new notification, coupon batch,
+   announcement, suggestion) are `renderAdminDialog`s in `adminGlobalOverlay`,
+   registered in `adminSimpleDialogSpecs` (renamed from
+   `adminUsersDialogSpecs`) or, for Video Courses, wired on `appEl` in
+   `wireAdminCoursesPlatformBuilder` (the section `root` cannot see them).
+   `is-admin-dialog-open` is set generically from the DOM at the top of
+   `wireAdmin` — do not add per-page toggles. Long lists render in pages with
+   "Show more": Logs 100 (was every entry, ~9,600 nodes), Questions 100,
+   Notifications 50 up to the old 200 ceiling, enrollments/coupons/requests
+   100. Logs have no severity field, so there is no level filter.
+   `renderAdminPopupsSection` stays inside the test-sliced region, so its
+   header is added in the renderAdmin branch instead.
+9. **Verified** in the preview as the local demo admin at 1366px, 768px and
+   375px (dialogs, menus, focus, Escape, chips, CSV contents, card
+   navigation). Not verified with a real Supabase admin session. Implemented by
+   Codex (Dashboard, top-bar notice, Universities — all three stopped at the
+   ChatGPT usage limit after passing gates) and Claude Sonnet (Users); merged,
+   fixed and reviewed by the orchestrator. `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`tests/admin-dashboard.test.js` (new), `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-09-29 — Admin panel: one grouped sidebar (step 1 of the admin split)
+Navigation only; no data, sync, Supabase, auth or access behaviour changed.
+Static cache bust: `2026-09-29.03-local`.
+
+1. **`ADMIN_NAV_GROUPS`** (next to `ADMIN_DATA_PAGES`) is the single nav
+   definition. An item is `{ page }` (a data page, `data-action="admin-page"`)
+   or `{ section }` (a Video Courses section, `data-action="admin-course-platform-section"`).
+   **Every one of the 12 data pages and 9 sections appears exactly once** —
+   add a new admin page here or it is unreachable. Page/section ids,
+   `KNOWN_ADMIN_PAGES` and `ADMIN_COURSES_PLATFORM_SECTIONS` are unchanged.
+2. **`renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection)`**
+   replaces `renderAdminDataSidebarNav` + `renderAdminCoursesPlatformSidebarNav`.
+   Section items are active only while `adminPage === "video-courses"`. The
+   per-item SVG icons were dropped; the requests/approvals badges are kept.
+   `tests/app-popups-utils.test.js` slices main.js up to this function name —
+   rename it and that test silently loads the rest of main.js.
+3. **Top-bar admin tabs removed** (`privateNavEl` is hidden for admins). Safe
+   because admins are always forced to `route = "admin"`. The `admin-top-tab`
+   body handler is left in place, unused.
+4. **`applyAdminPageTransition(previousPage, nextPage)`** holds the page-leave
+   cleanup (question/user selection, topic modals, agent token, presence
+   polling) and is now called from **both** nav handlers. Before, the section
+   handler skipped it, which was harmless only while the two sidebars were
+   separate: Users → Course Builder would otherwise keep a stale user selection
+   and Activity → any section would keep presence polling running.
+5. **The active highlight never worked, and needs `!important`.** The global
+   "Outline & Ghost Button Overrides" block sets every `.btn.ghost` to
+   `background: transparent !important; box-shadow: none !important`, so
+   `.admin-sidebar-nav .btn.is-active` never showed in any theme. The fix is a
+   scoped `body .admin-sidebar-nav .btn.ghost.is-active` rule with `!important`
+   (brand-soft tint + 3px inset brand bar). In dark mode (currently paused) the
+   bar uses `--brand` `#2a2a2a` and is barely visible; the tint still shows.
+6. **Tablet track blow-out.** At 641–960px the nav is a single nowrap flex rail
+   (~2,800px). With `grid-template-columns: 1fr` the grid track grows to the
+   rail's min-content and the whole admin page became ~2,900px wide. That block
+   now uses `minmax(0, 1fr)` + `.admin-sidebar { min-width: 0 }` (the 640px block
+   already had its own guards). Group labels render inline in the rail via
+   `.admin-nav-group { display: contents }`.
+7. Desktop sidebar scrolls internally (`max-height: calc(100vh - 2rem)`).
+7a. **Collapsible groups.** Each group except Overview (`collapsible: false`,
+   rendered as a plain item) has a header button
+   (`data-action="admin-nav-group-toggle"`). Toggling is **DOM-only** — it flips
+   `is-open`/`is-collapsed` + `aria-expanded` and saves; it never calls
+   `render()`, so it cannot reset a half-filled admin form. Open state lives in
+   `state.adminNavOpenGroups`, persisted to `localStorage`
+   `medbank_admin_nav_open_groups_v1` (try/catch; a UI preference, not synced).
+   Missing key = collapsed. `renderAdminSidebarNav` opens the group holding the
+   current page **only when the current page changed** (tracked in
+   `state.adminNavLastActiveKey`), so every navigation path (sidebar, in-page
+   "Open in builder" links, first load) reveals the active item, while the
+   30 s admin poll re-render does not undo an admin's deliberate collapse. A
+   collapsed group shows the summed requests/approvals badge on its header.
+   In rail mode (≤960px) groups are chips; an open group's items render inline
+   (`display: contents`), and `wireAdmin` scrolls the rail (`scrollLeft`, not
+   `scrollIntoView`, so the page does not jump) to the current page.
+   The helpers (`getAdminNavOpenGroups`, `setAdminNavGroupOpen`,
+   `isAdminNavItemActive`) are placed **after** `renderAdminSidebarNav` on
+   purpose — `tests/app-popups-utils.test.js` slices main.js up to that function.
+8. **Verified** in the preview as the local demo admin: 6 groups / 21 buttons;
+   Users → Catalog → Enrollment Requests → Activity → Course Builder → Users
+   each opens the right page with exactly one `aria-current`; top tabs hidden;
+   highlight measured in light/comfort/dark; no page overflow at the pane's
+   phone width, 768px or 1366px. Not verified against a real Supabase admin
+   session. Implemented via the Codex implement lane; the highlight and tablet
+   fixes were added in review. `node --check`, `npm run lint`, `npm test` (67) clean.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`,
+`tests/app-popups-utils.test.js`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-28 — Auto MCQ access for new students (admin switch)
 Backend: migration `20260928125817_student_auto_mcq_access.sql` (authored with
 the Flutter app; already live — **do not re-apply**). Flag

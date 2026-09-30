@@ -16,6 +16,8 @@
      to #ef4444, a light red meant for dark surfaces, which only reaches 3.1:1 on
      comfort's parchment card. Comfort inherits this :root value. */
   --approval-gap-fg: #99201f;
+  --admin-dash-attention-fg: #8f1d1d;
+  --admin-dash-attention-bg: #fff0f0;
   --good: #2b9348;
   --shadow: 0 18px 36px rgba(9, 25, 39, 0.1);
   --shadow-soft: 0 10px 24px rgba(9, 25, 39, 0.08);
@@ -908,6 +910,8 @@ body.theme-dark {
   --accent: #8f8f8f;
   --danger: #ef4444;
   --approval-gap-fg: #f87171;
+  --admin-dash-attention-fg: #fca5a5;
+  --admin-dash-attention-bg: #2b1515;
   --good: #22c55e;
   --shadow: 0 20px 38px rgba(0, 0, 0, 0.58);
   --shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.44);
@@ -933,6 +937,8 @@ body.theme-comfort {
   --line-strong: rgba(105, 81, 61, 0.36);
   --brand: #76563f;
   --brand-strong: #5d4330;
+  --admin-dash-attention-fg: #7d1d1d;
+  --admin-dash-attention-bg: #f4ded8;
   --brand-soft: rgba(118, 86, 63, 0.14);
   --accent: #9d795d;
   --danger: #ef4444;
@@ -1038,6 +1044,65 @@ body.is-google-auth-loading {
 .topbar.admin-only-header .brand-wrap {
   justify-self: start;
   min-width: 0;
+}
+
+.topbar-notice {
+  grid-column: 2;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: min(560px, 100%);
+  min-width: 0;
+  padding: 0.38rem 0.42rem 0.38rem 0.72rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 80%, var(--brand) 20%);
+  color: var(--ink);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.topbar-notice[hidden] {
+  display: none !important;
+}
+
+.topbar-notice-text {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.topbar .topbar-notice .topbar-notice-close {
+  flex: 0 0 28px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.topbar .topbar-notice .topbar-notice-close:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.topbar .topbar-notice .topbar-notice-close:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .topbar::after {
@@ -4442,12 +4507,115 @@ body.theme-comfort .btn {
 .admin-sidebar {
   position: sticky;
   top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
 }
 
 .admin-sidebar-nav {
   display: grid;
   gap: 0.55rem;
   margin-top: 0.7rem;
+}
+
+.admin-sidebar-nav {
+  gap: 0.3rem;
+}
+
+.admin-nav-group + .admin-nav-group {
+  border-top: 1px solid var(--line);
+  padding-top: 0.3rem;
+}
+
+.admin-nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.5rem 0.4rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-nav-group-toggle:hover {
+  background: var(--brand-soft);
+}
+
+.admin-nav-group-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.admin-nav-group-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+
+.admin-nav-group.is-open .admin-nav-group-chevron {
+  transform: rotate(90deg);
+}
+
+.admin-nav-group-label {
+  flex: 1 1 auto;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.admin-nav-group.has-active .admin-nav-group-label {
+  color: var(--brand-strong);
+}
+
+.admin-nav-group-count {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+/* A collapsed group still surfaces its pending counts. */
+.admin-nav-group-badge:empty,
+.admin-nav-group.is-open .admin-nav-group-badge {
+  display: none;
+}
+
+.admin-nav-group-badge .nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--brand-strong);
+  color: #fff;
+  font-size: 0.68rem;
+}
+
+.admin-nav-group-items {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.1rem 0 0.4rem 0.95rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--line);
+}
+
+.admin-nav-group.is-collapsed .admin-nav-group-items {
+  display: none;
+}
+
+.admin-nav-group.is-static {
+  display: grid;
+  margin-bottom: 0.2rem;
+}
+
+.admin-nav-group-items .btn {
+  min-height: 34px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.88rem;
 }
 
 .admin-sidebar-nav .btn {
@@ -4468,6 +4636,33 @@ body.theme-comfort .btn {
   color: var(--ink);
 }
 
+/* The global "Outline & Ghost Button Overrides" block forces every .btn.ghost
+   to `background: transparent !important; box-shadow: none !important`, so the
+   plain .is-active rule above never showed and the current page was not
+   highlighted. !important is needed to beat it; scoped to this one state. */
+body .admin-sidebar-nav .btn.ghost.is-active,
+body .admin-sidebar-nav .btn.ghost.is-active:hover {
+  background: var(--brand-soft) !important;
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent) !important;
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--brand) !important;
+}
+
+.admin-sidebar-sync-help {
+  width: 100%;
+}
+
+.admin-sidebar-sync-help summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+}
+
+.admin-sidebar-sync-help small {
+  display: block;
+  margin-top: 0.45rem;
+}
+
 #admin-cloud-sync-slot {
   width: 100%;
 }
@@ -4480,6 +4675,261 @@ body.theme-comfort .btn {
 .admin-main {
   display: grid;
   gap: 0.9rem;
+}
+
+.admin-dash-shell {
+  display: grid;
+  gap: 1.15rem;
+  min-width: 0;
+}
+
+.admin-dash-header h2,
+.admin-dash-header p,
+.admin-dash-attention h3,
+.admin-dash-panel h3,
+.admin-dash-more-head h3 {
+  margin: 0;
+}
+
+.admin-dash-header p {
+  margin-top: 0.25rem;
+  color: var(--muted);
+}
+
+.admin-dash-attention {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.admin-dash-attention h3,
+.admin-dash-panel h3,
+.admin-dash-more-head h3 {
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.admin-dash-attention-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.admin-dash-attention-card {
+  appearance: none;
+  display: grid;
+  align-content: start;
+  gap: 0.28rem;
+  min-width: 0;
+  min-height: 132px;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.admin-dash-attention-card:hover {
+  border-color: var(--brand);
+}
+
+.admin-dash-attention-card:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.admin-dash-attention-card.is-attention {
+  border-color: color-mix(in srgb, var(--admin-dash-attention-fg) 54%, var(--line));
+  background: var(--admin-dash-attention-bg);
+  color: var(--admin-dash-attention-fg);
+}
+
+.admin-dash-attention-value {
+  font-family: var(--font-admin-display);
+  font-size: clamp(1.75rem, 3vw, 2.35rem);
+  line-height: 1;
+}
+
+.admin-dash-attention-label {
+  font-size: 0.92rem;
+  line-height: 1.3;
+}
+
+.admin-dash-attention-detail {
+  margin-top: auto;
+  color: currentColor;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  opacity: 0.82;
+}
+
+.admin-dash-panels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.admin-dash-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.78rem;
+  min-width: 0;
+  padding: 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-dash-panel-lead {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+  gap: 0.18rem 0.55rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-panel-value {
+  grid-row: span 2;
+  color: var(--ink);
+  font-family: var(--font-admin-display);
+  font-size: clamp(1.8rem, 3.2vw, 2.5rem);
+  line-height: 1;
+}
+
+.admin-dash-panel-secondary {
+  color: var(--muted);
+}
+
+.admin-dash-inline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem 0.9rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-year-list,
+.admin-dash-panel-rows {
+  display: grid;
+  gap: 0.48rem;
+}
+
+.admin-dash-year-row {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.admin-dash-year-track {
+  display: block;
+  height: 0.38rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--brand-soft);
+}
+
+.admin-dash-year-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+}
+
+.admin-dash-panel-rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-top: 0.52rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-panel-rows b {
+  color: var(--ink);
+  text-align: right;
+}
+
+.admin-dash-empty,
+.admin-dash-error {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-dash-panel-link {
+  width: 100%;
+  min-height: 44px;
+  margin-top: auto;
+}
+
+.admin-dashboard-more {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-dashboard-more > summary {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.72rem 0.9rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.admin-dashboard-more > summary:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.admin-dash-more-content {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+  padding: 0 0.9rem 0.9rem;
+}
+
+.admin-dash-more-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-block: 1px solid var(--line);
+}
+
+.admin-dash-more-stat {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  padding: 0.7rem 0.45rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.admin-dash-more-stat b {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.admin-dash-more-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.admin-dash-more-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .admin-dashboard-breakdowns {
@@ -10682,6 +11132,14 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
 }
 
 @media (max-width: 960px) {
+  .admin-dash-attention-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-dash-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .app-shell {
     width: min(1200px, 94vw);
     margin: 1.2rem auto 2rem;
@@ -10816,8 +11274,10 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
     width: 100%;
   }
 
+  /* minmax(0, ...) + min-width: 0 stop the single-row nav rail (thousands of
+     px of nowrap buttons) from widening the whole grid track. */
   .admin-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .admin-dashboard-breakdowns {
@@ -10826,6 +11286,63 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
 
   .admin-sidebar {
     position: static;
+    max-height: none;
+    overflow-y: visible;
+    min-width: 0;
+  }
+
+  .admin-sidebar-nav {
+    display: flex;
+    gap: 0.42rem;
+    overflow-x: auto;
+    padding-bottom: 0.12rem;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+  }
+
+  .admin-sidebar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Rail mode: each group is a chip; opening it shows its pages inline. */
+  .admin-nav-group,
+  .admin-nav-group.is-static,
+  .admin-nav-group.is-open .admin-nav-group-items {
+    display: contents;
+  }
+
+  .admin-nav-group + .admin-nav-group {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .admin-nav-group-toggle {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 42px;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .admin-nav-group.is-open .admin-nav-group-toggle {
+    border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  }
+
+  .admin-nav-group-label {
+    flex: 0 0 auto;
+  }
+
+  .admin-nav-group-items .btn {
+    min-height: 42px;
+  }
+
+  .admin-sidebar-nav .btn {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
   }
 
   .admin-topic-add {
@@ -10844,6 +11361,13 @@ body.theme-comfort .exam-question-meta .exam-meta-link:hover {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
+  }
+
+  .topbar.admin-only-header .topbar-notice {
+    flex: 1 0 100%;
+    order: 3;
+    width: 100%;
+    max-width: 100%;
   }
 
   .top-nav {
@@ -11615,6 +12139,27 @@ html body :is(.exam-choice .exam-choice-text,
 
 /* Mobile phone layout layer. Desktop rules above stay unchanged. */
 @media (max-width: 640px) {
+  .admin-dash-attention-grid,
+  .admin-dash-more-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-dash-attention-card,
+  .admin-dash-panel-link,
+  .admin-dashboard-more > summary {
+    min-height: 44px;
+  }
+
+  .admin-dash-more-head,
+  .admin-dash-panel-rows > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-dash-panel-rows b {
+    text-align: left;
+  }
+
   html {
     -webkit-text-size-adjust: 100%;
     scroll-padding-top: 126px;
@@ -11787,6 +12332,13 @@ html body :is(.exam-choice .exam-choice-text,
     justify-content: center;
     flex-wrap: wrap;
     gap: 0.54rem;
+  }
+
+  .topbar.admin-only-header .topbar-notice {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    width: 100%;
+    max-width: 100%;
   }
 
   #auth-actions:has(button[data-nav="login"]) {
@@ -12276,6 +12828,40 @@ html body :is(.exam-choice .exam-choice-text,
     width: auto;
     min-height: 42px;
     white-space: nowrap;
+  }
+
+  /* Rail mode: each group is a chip; opening it shows its pages inline. */
+  .admin-nav-group,
+  .admin-nav-group.is-static,
+  .admin-nav-group.is-open .admin-nav-group-items {
+    display: contents;
+  }
+
+  .admin-nav-group + .admin-nav-group {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .admin-nav-group-toggle {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 42px;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .admin-nav-group.is-open .admin-nav-group-toggle {
+    border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  }
+
+  .admin-nav-group-label {
+    flex: 0 0 auto;
+  }
+
+  .admin-nav-group-items .btn {
+    min-height: 42px;
   }
 
   #admin-cloud-sync-slot .cloud-sync-pill {
@@ -20665,9 +21251,303 @@ small.admin-account-approval-gap {
   color: var(--muted);
 }
 
+/* Shared admin page chrome: compact actions, contextual help, row menus and
+   the reusable dialog shell. All colours are theme tokens. */
+.admin-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.admin-page-header h3 {
+  margin: 0;
+  min-width: 0;
+}
+
+.admin-page-header-count {
+  color: var(--muted);
+  font-size: 0.82em;
+}
+
+.admin-page-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-inline-start: auto;
+}
+
+.admin-icon-btn {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface-strong);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.admin-icon-btn:hover {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+
+.admin-icon-btn:active {
+  transform: translateY(1px);
+}
+
+.admin-icon-btn:focus-visible,
+.admin-row-menu-item:focus-visible,
+.admin-help-note-close:focus-visible,
+.admin-dialog-close:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.admin-icon-btn.is-primary {
+  border-color: var(--brand-strong);
+  background: var(--brand-strong);
+  color: #fff;
+}
+
+.admin-icon-btn.is-primary:hover {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+
+.admin-icon-btn.is-danger {
+  color: var(--danger);
+}
+
+.admin-icon-btn.is-danger:hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.admin-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.admin-icon-svg {
+  pointer-events: none;
+}
+
+.admin-icon-svg.is-spinning {
+  animation: admin-icon-spin 0.9s linear infinite;
+}
+
+@keyframes admin-icon-spin {
+  to { transform: rotate(360deg); }
+}
+
+.admin-help-note {
+  position: relative;
+  margin: -0.25rem 0 1rem;
+  padding: 0.9rem 2.7rem 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--brand-soft);
+  color: var(--ink);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.admin-help-note[hidden],
+.admin-row-menu-list[hidden] {
+  display: none !important;
+}
+
+.admin-help-note h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
+}
+
+.admin-help-note ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-inline-start: 1.15rem;
+}
+
+.admin-help-note-close,
+.admin-dialog-close {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.admin-help-note-close {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+}
+
+.admin-help-note-close:hover,
+.admin-dialog-close:hover {
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+}
+
+.admin-row-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.admin-row-menu-list {
+  position: fixed;
+  z-index: 12000;
+  display: grid;
+  width: max-content;
+  min-width: 220px;
+  max-width: calc(100vw - 16px);
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.24);
+}
+
+.admin-row-menu-item {
+  width: 100%;
+  min-height: 40px;
+  padding: 0.58rem 0.7rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-row-menu-item:hover,
+.admin-row-menu-item:focus-visible {
+  background: var(--brand-soft);
+}
+
+.admin-row-menu-item.is-danger {
+  color: var(--danger);
+}
+
+.admin-row-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.admin-row-menu-divider {
+  height: 1px;
+  margin: 0.3rem 0.25rem;
+  background: var(--line);
+}
+
+#admin-universities-section .admin-university-actions-column,
+#admin-universities-section th:last-child {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+body.is-admin-dialog-open {
+  overflow: hidden;
+}
+
+.admin-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 11000;
+  display: grid;
+  place-items: center;
+  padding: clamp(0.75rem, 3vw, 1.5rem);
+}
+
+.admin-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.58);
+  cursor: pointer;
+}
+
+.admin-dialog-backdrop:disabled {
+  cursor: wait;
+}
+
+.admin-dialog-panel {
+  position: relative;
+  z-index: 1;
+  width: min(560px, calc(100vw - 2rem));
+  max-height: calc(100svh - 2rem);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.34);
+}
+
+.admin-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1rem 0.9rem 1.15rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-dialog-head h3,
+.admin-dialog-subtitle {
+  margin: 0;
+}
+
+.admin-dialog-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.55rem;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.admin-dialog-close:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.admin-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.2rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
 .admin-university-editor {
-  margin-top: 2rem;
-  max-width: 720px;
+  margin: 0;
+  max-width: none;
+  padding: 1rem 1.15rem 1.15rem;
 }
 
 .admin-university-editor fieldset,
@@ -20685,3 +21565,1267 @@ small.admin-account-approval-gap {
 .admin-user-university-form label { display: grid; gap: 0.4rem; }
 .admin-university-editor label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 0.5rem; }
 .admin-university-editor input[type="checkbox"] { width: auto; }
+.admin-university-sort-hint { margin: -0.55rem 0 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-icon-svg.is-spinning {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-page-header {
+    align-items: center;
+  }
+
+  .admin-page-header-actions {
+    margin-inline-start: 0;
+  }
+
+  .admin-icon-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .admin-row-menu-item {
+    min-height: 44px;
+  }
+
+  .admin-dialog {
+    place-items: end center;
+    padding: 0;
+  }
+
+  .admin-dialog-panel {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100svh - max(0.5rem, env(safe-area-inset-top)));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+  }
+
+  .admin-dialog-actions .btn {
+    flex: 1 1 0;
+  }
+}
+
+/* Users page toolbar and dialogs (shared pieces above are the Universities versions) */
+.admin-icon-btn.is-active {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-strong);
+}
+.admin-icon-btn-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.admin-icon-btn-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+.admin-dialog-panel:focus-visible,
+.admin-dialog-panel:focus {
+  outline: none;
+}
+.admin-dialog-body {
+  padding: 1.1rem 1.2rem;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0.9rem;
+}
+@media (max-width: 640px) {
+  .admin-users-filter-chip button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+.admin-users-toolbar-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 260px;
+  max-width: 100%;
+}
+.admin-users-toolbar-search-icon {
+  position: absolute;
+  left: 0.65rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+.admin-users-toolbar-search input {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  padding: 0 0.75rem 0 2.15rem;
+}
+.admin-users-pending-chip {
+  border: 0;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.7rem;
+}
+.admin-users-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.admin-users-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.35rem 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 0.78rem;
+}
+.admin-users-filter-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+.admin-users-filter-chip button:hover,
+.admin-users-filter-chip button:focus-visible {
+  background: rgba(0, 0, 0, 0.08);
+}
+.admin-users-filter-chips-clear {
+  margin-left: 0.2rem;
+}
+.admin-users-settings-block {
+  display: grid;
+  gap: 0.5rem;
+}
+@media (max-width: 640px) {
+  .admin-users-toolbar-search {
+    width: 100%;
+    order: -1;
+  }
+}
+
+/* Users table: read-only rows (editing happens in the "Edit details" dialog). */
+.admin-users-table {
+  min-width: 720px;
+}
+
+.admin-users-table .col-select { width: 44px; }
+.admin-users-table .col-account { width: 42%; }
+.admin-users-table .col-term { width: 16%; }
+.admin-users-table .col-status { width: 17%; }
+.admin-users-table .col-access { width: 15%; }
+.admin-users-table .col-actions { width: 56px; }
+
+.admin-users-table th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.admin-users-table .admin-user-account {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.admin-user-name {
+  color: var(--ink);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-users-table .admin-account-email,
+.admin-account-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-users-table .admin-account-email {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.admin-users-table .admin-account-approval-gap {
+  margin-top: 0.15rem;
+}
+
+.admin-user-term-cell {
+  display: table-cell;
+}
+
+.admin-user-term-cell [data-user-term] {
+  display: block;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.admin-user-term-cell .admin-course-preview {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.admin-user-term-missing {
+  color: var(--approval-gap-fg, var(--muted));
+}
+
+.admin-user-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.admin-user-status::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.admin-user-status.is-approved::before {
+  background: #1f9d6b;
+}
+
+.admin-user-status.is-pending::before {
+  background: #d98a1c;
+}
+
+.admin-user-inline-approve {
+  display: inline-flex;
+  margin-left: 0.4rem;
+  padding: 0.18rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.admin-user-inline-approve:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.admin-user-inline-approve:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.admin-user-inline-approve[hidden] {
+  display: none;
+}
+
+.admin-user-access-tag {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.25rem 0.2rem 0;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.74rem;
+}
+
+.admin-user-access-tag.is-off {
+  color: var(--muted);
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.admin-users-table .admin-user-actions-cell {
+  text-align: right;
+}
+
+/* Bulk bar: only rendered while rows are selected. */
+.admin-users-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+}
+
+.admin-users-bulk-count {
+  flex: 1 1 auto;
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+body .admin-users-bulk-bar .admin-users-bulk-suspend {
+  color: var(--danger);
+}
+
+.admin-users-showing {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* Edit details dialog */
+.admin-user-edit {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.admin-user-edit label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.admin-user-edit-label {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.admin-user-edit-subjects .admin-course-preview {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.admin-user-edit .admin-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0;
+  border: 0;
+}
+
+.admin-users-pending-chip {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.admin-user-full-access {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  /* Compact card: checkbox and ⋯ in the corners, no per-field labels, and
+     term · status · access on one wrapped line. */
+  .admin-users-table-wrap .admin-users-table tr {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+    padding: 0.75rem 3.25rem 0.75rem 2.6rem;
+  }
+
+  .admin-users-table-wrap .admin-users-table td {
+    display: block;
+    width: auto;
+    padding: 0;
+    border: 0;
+  }
+
+  .admin-users-table-wrap .admin-users-table td::before {
+    content: none !important;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-select-cell {
+    position: absolute;
+    top: 0.85rem;
+    left: 0.75rem;
+  }
+
+  .admin-users-table-wrap .admin-users-table td:nth-child(2) {
+    flex: 1 1 100%;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-actions-cell {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-term-cell [data-user-term],
+  .admin-users-table-wrap .admin-users-table td.admin-user-term-cell .admin-course-preview {
+    display: inline;
+  }
+
+  .admin-users-table-wrap .admin-users-table td.admin-user-term-cell .admin-course-preview::before {
+    content: " · ";
+  }
+
+  .admin-users-table-wrap .admin-users-table td[colspan] {
+    flex: 1 1 100%;
+  }
+
+  .admin-user-inline-approve {
+    min-height: 36px;
+    padding: 0.3rem 0.85rem;
+  }
+
+  .admin-page-header-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* An open .admin-dialog inside the blurred admin shell was positioned
+   against the shell (backdrop-filter creates a containing block for
+   position: fixed), so it slid under the top bar when the page was
+   scrolled. Drop the blur while a dialog is open. */
+.panel.admin-shell:has(.admin-dialog) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Users > Approval settings dialog */
+.admin-settings-section {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--line);
+}
+.admin-settings-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.admin-settings-section-title {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.admin-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+}
+.admin-settings-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.admin-settings-row-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.admin-settings-row-desc {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.admin-settings-row-control {
+  flex: 0 0 auto;
+}
+.admin-settings-row .admin-access-switch .admin-access-switch-text {
+  display: none;
+}
+.admin-settings-row .admin-access-switch {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+.admin-settings-section .admin-auto-mcq-panel {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  margin: 0;
+}
+.admin-settings-section .admin-auto-mcq-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.admin-settings-section .admin-auto-mcq-head .admin-access-switch {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  flex: 1 1 auto;
+  justify-content: space-between;
+}
+.admin-settings-section .admin-auto-mcq-state {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+/* Switches: track sits right next to ON/OFF, and every switch ends at the
+   same right edge so the three rows line up. */
+.admin-settings-section .admin-access-switch {
+  min-width: 0;
+  min-height: 32px;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+.admin-settings-section .admin-access-switch .admin-access-switch-state {
+  min-width: 2.2em;
+  text-align: left;
+}
+.admin-settings-section .admin-auto-mcq-head .admin-access-switch {
+  width: 100%;
+  justify-content: flex-start;
+}
+.admin-settings-section .admin-auto-mcq-head .admin-access-switch .admin-access-switch-text {
+  flex: 1 1 auto;
+  text-align: left;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.admin-settings-section .admin-access-switch:not(:disabled):hover {
+  transform: none;
+  box-shadow: none;
+}
+@media (max-width: 640px) {
+  .admin-settings-row {
+    flex-wrap: wrap;
+  }
+  .admin-settings-row-control {
+    width: 100%;
+  }
+  .admin-settings-row-control .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
+/* Admin System pages */
+.admin-logs-show-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.9rem;
+}
+.admin-activity-sync-line {
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+}
+.admin-site-maintenance-preview-details {
+  margin-top: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  background: var(--surface-strong);
+}
+.admin-site-maintenance-preview-details summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--ink);
+}
+.admin-site-maintenance-preview-details[open] summary {
+  margin-bottom: 0.75rem;
+}
+.admin-site-maintenance-preview-details .admin-site-maintenance-preview {
+  margin: 0;
+}
+.admin-agent-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+@media (max-width: 640px) {
+  .admin-logs-show-more .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
+/* Admin Messaging pages */
+.admin-list-show-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.75rem;
+}
+#admin-popups-section > .flex-between {
+  justify-content: flex-end;
+}
+@media (max-width: 640px) {
+  .admin-list-show-more .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
+/* Admin MCQ Bank pages */
+.admin-question-stem-cell {
+  max-width: 34rem;
+}
+
+.admin-question-stem-preview {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.92rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.admin-question-stem-meta {
+  margin: 0.28rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.admin-question-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ink);
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.admin-question-status::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.admin-question-status.is-published::before {
+  background: #1f9d6b;
+}
+
+.admin-question-status.is-draft::before {
+  background: #d98a1c;
+}
+
+.admin-question-status.is-archived::before {
+  background: var(--muted);
+}
+
+.admin-question-actions-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.admin-bulk-import-target-row {
+  grid-template-columns: minmax(8rem, 0.5fr) minmax(0, 1.5fr) minmax(0, 1fr);
+}
+
+@media (max-width: 760px) {
+  .admin-bulk-import-target-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.admin-question-row-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.admin-question-show-more {
+  margin: 0.8rem 0 0;
+  text-align: center;
+}
+
+.admin-bulk-import-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 0.7rem;
+}
+
+.admin-bulk-import-step {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 12px);
+  padding: 0.85rem 0.95rem;
+  background: var(--surface);
+}
+
+.admin-bulk-import-step h4 {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 0.6rem;
+  font-size: 0.98rem;
+}
+
+.admin-bulk-import-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 0.82rem;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.admin-bulk-import-secondary {
+  margin-top: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 12px);
+  padding: 0.15rem 0.95rem 0.85rem;
+}
+
+.admin-bulk-import-secondary > summary {
+  cursor: pointer;
+  padding: 0.7rem 0;
+  font-weight: 600;
+  color: var(--ink);
+  list-style: none;
+}
+
+.admin-bulk-import-secondary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-bulk-import-secondary > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.5rem;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.admin-bulk-import-secondary[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.admin-bulk-import-secondary .admin-import-tool-card {
+  margin-top: 0.2rem;
+}
+
+@media (max-width: 640px) {
+  .admin-question-stem-cell {
+    max-width: none;
+  }
+}
+
+/* Admin Video Courses pages */
+.admin-course-empty-state-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.admin-course-show-more {
+  display: block;
+  margin: 0.75rem auto 0;
+}
+
+.admin-approval-card .admin-row-menu,
+.course-request-row .admin-row-menu,
+.admin-announcement-card .admin-row-menu,
+.admin-coupon-report .admin-row-menu {
+  flex: 0 0 auto;
+}
+
+.admin-announcement-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.admin-announcement-card > div:first-child {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .admin-approval-card > .flex-between {
+    flex-wrap: wrap;
+  }
+  .admin-announcement-card {
+    flex-wrap: wrap;
+  }
+  .course-request-row .stack .admin-row-menu {
+    width: auto;
+  }
+}
+
+/* Admin flatten: one box level (2026-09-30).
+   Inside the admin page card, groups are separated by spacing, a small
+   section title and at most one hairline, never by nested bordered boxes.
+   Collections render as divided rows. Scoped to .admin-main on purpose. */
+:root {
+  --admin-warn-fg: #92400e;
+}
+body.theme-comfort {
+  --admin-warn-fg: #8a3a07;
+}
+body.theme-dark {
+  --admin-warn-fg: #fbbf24;
+}
+.admin-flat-warn {
+  color: var(--admin-warn-fg);
+}
+.admin-flat-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.admin-flat-toolbar select {
+  width: auto;
+  min-width: 8.5rem;
+  height: 40px;
+  padding: 0 2rem 0 0.8rem;
+  border-radius: 999px;
+}
+.admin-flat-toolbar .admin-flat-toolbar-search {
+  flex: 1 1 14rem;
+  width: auto;
+  max-width: 22rem;
+}
+.admin-flat-list {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.admin-flat-list > li {
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+.admin-main .admin-flat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 0.65rem 0.6rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transform: none;
+}
+.admin-main .admin-flat-row:hover,
+.admin-main .admin-flat-row:focus-visible,
+.admin-main .admin-flat-row.is-active {
+  background: var(--brand-soft);
+}
+.admin-main .admin-flat-row:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+.admin-flat-row-main {
+  display: grid;
+  gap: 0.15rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.admin-flat-row-title {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.admin-flat-row-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.admin-flat-row-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+.admin-flat-empty {
+  margin: 0.8rem 0 0;
+  color: var(--muted);
+}
+.admin-flat-section {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.admin-flat-section-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .admin-flat-toolbar select {
+    flex: 1 1 8rem;
+    min-height: 44px;
+  }
+  .admin-flat-toolbar .admin-flat-toolbar-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .admin-flat-toolbar .admin-flat-toolbar-search input {
+    height: 44px;
+  }
+}
+/* Flatten helper for grids of items: each item draws a hairline on its top
+   and left edge, and the grid clips the ones on its outer edge, so only the
+   dividers between items remain, whatever the column count. */
+.admin-main .admin-dash-attention-grid,
+.admin-main .admin-dash-panels,
+.admin-main .admin-flat-grid {
+  gap: 0;
+  overflow: hidden;
+}
+.admin-main .admin-dash-attention-grid > *,
+.admin-main .admin-dash-panels > *,
+.admin-main .admin-flat-grid > * {
+  box-shadow: -1px -1px 0 var(--line);
+}
+
+/* Dashboard */
+.admin-main .admin-dash-attention-card,
+.admin-main .admin-dash-attention-card.is-attention {
+  min-height: 112px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.admin-main .admin-dash-attention-card:hover,
+.admin-main .admin-dash-attention-card:focus-visible {
+  background: var(--brand-soft);
+}
+.admin-main .admin-dash-attention-card:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+.admin-main .admin-dash-attention-card.is-attention .admin-dash-attention-value,
+.admin-main .admin-dash-attention-card.is-attention .admin-dash-attention-label {
+  color: var(--admin-dash-attention-fg);
+}
+.admin-main .admin-dash-attention-card .admin-dash-attention-detail {
+  color: var(--muted);
+  opacity: 1;
+}
+.admin-main .admin-dash-panels {
+  border-top: 1px solid var(--line);
+}
+.admin-main .admin-dash-panel {
+  padding: 1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .admin-dash-panels > .admin-dash-panel:first-child {
+  padding-left: 0;
+}
+.admin-main .admin-dashboard-more {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .admin-dashboard-more > summary {
+  padding-left: 0;
+  padding-right: 0;
+}
+.admin-main .admin-dash-more-content {
+  padding-left: 0;
+  padding-right: 0;
+}
+@media (max-width: 960px) {
+  .admin-main .admin-dash-panels > .admin-dash-panel {
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+/* Bulk Import */
+.admin-main .admin-bulk-import-steps {
+  gap: 0;
+}
+.admin-main .admin-bulk-import-step {
+  padding: 1rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .admin-bulk-import-secondary {
+  margin-top: 0;
+  padding: 0 0 0.4rem;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .admin-import-tool-card {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Stat strips (Activity, Coupons): numbers in a row, hairline dividers. */
+.admin-flat-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  margin-top: 0.85rem;
+  border-block: 1px solid var(--line);
+}
+.admin-flat-stat {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.7rem 0.9rem;
+}
+.admin-flat-stat b {
+  color: var(--ink);
+  font-family: var(--font-admin-display);
+  font-size: 1.45rem;
+  line-height: 1.1;
+}
+.admin-flat-stat span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* Site Access (and any settings rows inside the page card; dialogs keep theirs) */
+.admin-main .admin-settings-row {
+  padding: 0.35rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .admin-site-maintenance-preview-details {
+  padding: 0.8rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Video Courses */
+.admin-main .admin-course-context-bar {
+  margin-bottom: 1rem;
+  padding: 0 0 0.9rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.admin-course-context-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.admin-main .admin-course-table-stats {
+  margin-top: 0.85rem;
+  border-block: 1px solid var(--line);
+}
+.admin-main .admin-course-stat-card {
+  padding: 0.7rem 0.9rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .admin-course-table-wrap {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .admin-course-table-toolbar {
+  display: flex;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.admin-main .admin-course-table-toolbar .admin-course-search-input {
+  width: 100%;
+}
+.admin-main .course-platform-section-note {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.admin-main .course-metadata-card {
+  padding: 1rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.admin-main .course-metadata-card-header {
+  padding: 0 0 0.6rem;
+  border: 0;
+  background: transparent;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.admin-main .course-metadata-card-body {
+  padding: 0;
+}
+.admin-main .course-cover-upload-placeholder {
+  border: 0;
+  background: transparent;
+}
+/* Wrapper forms/panels only group content: no frame. */
+.admin-main .course-builder-form {
+  margin: 1rem 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* Syllabus outline: modules are headed groups, lessons divided rows. */
+.admin-main .outline-module-card,
+.admin-main .outline-module-card:hover,
+.admin-main .outline-module-card.is-active {
+  margin-bottom: 0.4rem;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.admin-main .outline-module-header {
+  padding: 0.6rem 0.2rem;
+  border: 0;
+  background: transparent;
+}
+.admin-main .outline-module-card.is-active > .outline-module-header {
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+.admin-main .outline-lessons-list {
+  gap: 0;
+  padding: 0 0 0 1.4rem;
+  background: transparent;
+}
+.admin-main .outline-lesson-item {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.admin-main .outline-lesson-item:hover,
+.admin-main .outline-lesson-item.is-active {
+  border-color: var(--line);
+  background: var(--brand-soft);
+}
+/* Requests, enrollments, suggestions, announcements, approvals: rows. */
+.admin-main .admin-request-group {
+  margin-top: 1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.admin-main .admin-request-group-header {
+  padding: 0.4rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+}
+.admin-main .admin-request-group-body {
+  gap: 0;
+  padding: 0;
+}
+.admin-main .course-request-row,
+.admin-main .admin-announcement-card,
+.admin-main .admin-approval-card {
+  margin: 0;
+  padding: 0.75rem 0.2rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.admin-main .admin-course-enrollments-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* Coupons */
+.admin-main .admin-coupon-stats {
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+.admin-main .admin-coupon-stats article {
+  padding: 0.7rem 0.9rem;
+}
+.admin-main .admin-coupon-report,
+.admin-main .admin-coupon-insights {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 640px) {
+  .admin-main .admin-course-table-toolbar select {
+    flex: 1 1 8rem;
+  }
+}

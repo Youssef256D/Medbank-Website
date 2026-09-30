@@ -9,6 +9,74 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Admin pages: no more boxes inside boxes
+- Shipped as `2026-09-30.10`.
+- Inside every admin page, groups are now separated by spacing and a thin
+  line instead of nested bordered boxes; lists are plain rows.
+- **MCQ Subjects**: Year, Semester and search sit in one row; subjects are a
+  list showing "4 topics · 8 questions", with "no questions yet" in amber and
+  a › to open.
+- **Dashboard**, **Bulk Import**, **Site Access**, **Activity** and all
+  **Video Courses** pages (Catalog, Course Builder outline, requests,
+  enrollments, coupons, approvals, suggestions, announcements) follow the same
+  flat look. Pop-ups (dialogs) are unchanged.
+- **Fixed:** the Catalog Semester and Status filters changed the Year filter
+  instead (choosing Draft emptied the table).
+- **Fixed:** the Notifications page could freeze the tab, retrying a failed
+  Video Course list load in a loop; Activation Coupons had the same loop
+  without a Supabase connection.
+
+### 2026-09-30 — Bulk Import: pick the year before the subject
+- Step 1 is now Year → Subject → Topic. The Subject list shows only that
+  year's subjects, grouped by semester (subjects missing from the curriculum
+  go under "Other"). Nothing new is stored: the year is worked out from the
+  chosen subject. Cache bust `2026-09-30.09-local`.
+
+### 2026-09-30 — Questions: inline edit/delete icons
+- Admin → Questions rows show a pencil (Edit) and a red trash (Delete) icon
+  button instead of the ⋯ menu. Same `admin-edit` / `admin-delete` handlers,
+  same delete confirm. `renderAdminIconButton` gained `pencil` / `trash` icons
+  and a `danger` variant. Cache bust `2026-09-30.08-local`.
+
+### 2026-09-30 — Admin pages redesign
+- **Dashboard** leads with "Needs your attention" (students awaiting approval,
+  waiting for MCQ access, course requests, broken questions — each opens the
+  right page already filtered), then Students / MCQ Bank / Video Courses
+  panels. Detailed tables fold under "More statistics".
+- **System messages** (e.g. "No active Supabase session…") show in the top
+  bar and can be dismissed instead of taking space above every page.
+- **Users**: one compact toolbar; filters, "Add user" and the approval
+  switches open in pop-ups; active filters show as removable chips.
+  **Export CSV now works** (the button did nothing before).
+- **Users rows are read-only and calm**: name, email, ID, term, a status dot,
+  MCQ/Video tags and one ⋯ menu per row (pending students also get a small
+  Approve). Editing moves to an "Edit details" pop-up with one Save. The bulk
+  bar only appears after you tick rows.
+- **Universities**: icon buttons, a "How this page works" note, a ⋯ menu per
+  row, and editing in a pop-up.
+- **Sidebar**: Enrollment Requests moved under Video Courses.
+- **Every other admin page** follows the same style: one header with a count,
+  icon actions and a "How this page works" note; ⋯ menus instead of button
+  rows; create forms in pop-ups; no red buttons on the page. **Logs open much
+  faster** (100 entries at a time instead of all of them).
+
+### 2026-09-29 — Admin panel: one grouped sidebar
+- The admin panel has **one sidebar** listing every page, grouped as Overview,
+  People, MCQ Bank, Video Courses, Messaging and System. The old
+  "Questions / Video Courses" switch in the top bar is gone — Users,
+  Notifications, Pop-ups, Site Access etc. no longer look like MCQ-only pages.
+- Enrollment Requests sits under People; "Course metadata" is now **Catalog**;
+  "MCQ Subjects" is **Subjects** under the MCQ Bank group.
+- The current page is now actually highlighted (it never was — see AGENTS.md).
+- The sync help text is folded under **About sync**.
+- Tablet widths (641–960px) use the same one-row scrolling menu as phones.
+- **Collapsible groups.** Each group has a header (arrow, name, page count)
+  that opens and closes it. Only the group holding the current page starts
+  open, so the sidebar fits on screen. A collapsed group still shows its
+  pending count. Open/closed choices are remembered in this browser. On phones
+  and tablets each group is a chip in the scrolling row, and the row scrolls to
+  the current page.
+
 ### 2026-09-28 — Auto MCQ access switch on Admin → Users
 - New **Auto MCQ access for new students** switch at the top of Admin → Users,
   with a one-line explanation of the current state. Off: new Medicine students
