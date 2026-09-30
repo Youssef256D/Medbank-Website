@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Users: delete selected accounts
+- The bulk bar on Admin → Users has a red **Delete** button next to Approve
+  and Suspend. It permanently deletes the selected accounts after you type
+  `DELETE` to confirm. Admin accounts and your own can't be selected, so they
+  can't be deleted this way. Shipped as `2026-09-30.11`.
+
 ### 2026-09-30 — Admin pages: no more boxes inside boxes
 - Shipped as `2026-09-30.10`.
 - Inside every admin page, groups are now separated by spacing and a thin

@@ -34345,8 +34345,11 @@ function renderAdmin() {
             <button class="btn admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-approve-users" ${bulkDeactivateRunning ? "disabled" : ""}>
               ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve"}
             </button>
-            <button class="btn ghost admin-btn-sm admin-users-bulk-suspend ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-deactivate-users" ${bulkDeactivateRunning ? "disabled" : ""}>
-              ${bulkDeactivateRunning && state.adminBulkActionType !== "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Suspending...</span>` : "Suspend"}
+            <button class="btn ghost admin-btn-sm admin-users-bulk-suspend ${bulkDeactivateRunning && state.adminBulkActionType === "suspend" ? "is-loading" : ""}" type="button" data-action="admin-bulk-deactivate-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+              ${bulkDeactivateRunning && state.adminBulkActionType === "suspend" ? `<span class="inline-loader" aria-hidden="true"></span><span>Suspending...</span>` : "Suspend"}
+            </button>
+            <button class="btn danger admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "delete" ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+              ${bulkDeactivateRunning && state.adminBulkActionType === "delete" ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete"}
             </button>
             <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning ? "disabled" : ""}>Clear</button>
           </div>`
@@ -38213,7 +38216,7 @@ function wireAdmin() {
       return;
     }
     const action = String(actionEl.getAttribute("data-action") || "").trim();
-    if (!["admin-clear-user-selection", "admin-bulk-deactivate-users", "admin-bulk-approve-users"].includes(action)) {
+    if (!["admin-clear-user-selection", "admin-bulk-deactivate-users", "admin-bulk-approve-users", "admin-bulk-delete-users"].includes(action)) {
       return;
     }
 
@@ -38239,6 +38242,81 @@ function wireAdmin() {
     const isApproveAction = action === "admin-bulk-approve-users";
     const selectedIdSet = new Set(selectedIds);
     const current = getCurrentUser();
+
+    if (action === "admin-bulk-delete-users") {
+      // Admins and the signed-in account are never bulk-selectable
+      // (canBulkSelectAdminUser), so they can never be bulk-deleted.
+      const deletableUsers = getUsers()
+        .filter((entry) => selectedIdSet.has(String(entry.id || "").trim()))
+        .filter((entry) => canBulkSelectAdminUser(entry, current));
+      if (!deletableUsers.length) {
+        toast("Selected accounts cannot be deleted.");
+        return;
+      }
+      const count = deletableUsers.length;
+      const typed = window.prompt(
+        `Permanently delete ${count} account(s)? This removes their sign-in, profile, enrollments and test history, and cannot be undone.\n\nType DELETE to confirm.`,
+        "",
+      );
+      if (typed === null) {
+        return;
+      }
+      if (String(typed).trim().toUpperCase() !== "DELETE") {
+        toast("Nothing was deleted. Type DELETE to confirm.");
+        return;
+      }
+
+      startAdminUserBulkAction("delete");
+      const deletedUsers = [];
+      const queuedUsers = [];
+      const failedUsers = [];
+      let firstFailureMessage = "";
+      try {
+        // One at a time: each delete is an admin Edge Function call, and a
+        // burst of parallel calls would trip its rate limit.
+        for (const target of deletableUsers) {
+          let result;
+          try {
+            result = await deleteAdminUserAccount(target);
+          } catch (deleteError) {
+            result = { ok: false, queued: false, message: getErrorMessage(deleteError, "Delete failed.") };
+          }
+          if (!result.ok) {
+            failedUsers.push(target);
+            firstFailureMessage = firstFailureMessage || result.message;
+          } else if (result.queued) {
+            queuedUsers.push(target);
+          } else {
+            deletedUsers.push(target);
+          }
+        }
+        state.adminSelectedUserIds = [];
+
+        let syncNote = "";
+        if (deletedUsers.length || queuedUsers.length) {
+          try {
+            await flushAdminUserAccountSyncNow({ throwOnRelationalFailure: !queuedUsers.length });
+          } catch (syncError) {
+            syncNote = ` Cloud sync is still catching up: ${getErrorMessage(syncError, "Sync failed.")}`;
+          }
+        }
+
+        const parts = [];
+        if (deletedUsers.length) {
+          parts.push(`${deletedUsers.length} account(s) deleted.`);
+        }
+        if (queuedUsers.length) {
+          parts.push(`${queuedUsers.length} pending cloud cleanup (hidden until Supabase confirms).`);
+        }
+        if (failedUsers.length) {
+          parts.push(`Failed: ${formatAdminUserActionLabelList(failedUsers)}. ${firstFailureMessage}`.trim());
+        }
+        toast(`${parts.join(" ")}${syncNote}`.trim() || "No accounts were deleted.");
+      } finally {
+        finishAdminUserBulkAction();
+      }
+      return;
+    }
 
     if (isApproveAction) {
       startAdminUserBulkAction("approve");
@@ -39405,53 +39483,12 @@ function wireAdmin() {
         return;
       }
 
-      const targetProfileId = getUserProfileId(target);
-      let queuedDelete = false;
-      if (target.supabaseAuthId) {
-        const deleteResult = await deleteSupabaseAuthUserAsAdmin(target.supabaseAuthId);
-        if (!deleteResult.ok) {
-          if (shouldAllowSupabaseManagedDeleteFallback(deleteResult.message)) {
-            queuedDelete = true;
-          } else {
-            toast(`Could not delete user from Supabase Auth. ${deleteResult.message || "Unauthorized."}`);
-            return;
-          }
-        }
+      const deleteResult = await deleteAdminUserAccount(target);
+      if (!deleteResult.ok) {
+        toast(deleteResult.message);
+        return;
       }
-      if (targetProfileId && !queuedDelete) {
-        const relationalDeleteResult = await deleteRelationalProfile(targetProfileId);
-        if (!relationalDeleteResult.ok) {
-          if (shouldAllowSupabaseManagedDeleteFallback(relationalDeleteResult.message)) {
-            queuedDelete = true;
-          } else {
-            toast(`Database delete failed. ${relationalDeleteResult.message}`);
-            return;
-          }
-        }
-      }
-
-      if (queuedDelete) {
-        queuePendingAdminAction({
-          type: "delete-user",
-          targetAuthId: String(target.supabaseAuthId || "").trim(),
-          targetProfileId: String(targetProfileId || "").trim(),
-          targetLocalUserId: userId,
-          email: String(target.email || "").trim().toLowerCase(),
-        });
-      } else {
-        clearPendingAdminActionsForTarget({
-          type: "delete-user",
-          targetAuthId: String(target.supabaseAuthId || "").trim(),
-          targetProfileId: String(targetProfileId || "").trim(),
-          targetLocalUserId: userId,
-        });
-        purgeDeletedUserLocalState({
-          targetAuthId: String(target.supabaseAuthId || "").trim(),
-          targetProfileId: String(targetProfileId || "").trim(),
-          targetLocalUserId: userId,
-        });
-      }
-      clearAdminUserEnrollmentDraft(userId);
+      const queuedDelete = deleteResult.queued;
 
       try {
         await flushAdminUserAccountSyncNow({ throwOnRelationalFailure: !queuedDelete });
@@ -43210,6 +43247,54 @@ async function getValidSupabaseAccessToken(authClient) {
     token: "",
     message: "Supabase session expired. Log out and log in again, then retry.",
   };
+}
+
+// Deletes one account the way the Users row "Remove" always has: Supabase
+// Auth first, then the profile row; when the server path is unavailable the
+// delete is queued for cloud cleanup instead. Shared by the row action and
+// bulk Delete so the two can never diverge. No confirm, toast or flush here.
+async function deleteAdminUserAccount(target) {
+  const userId = String(target?.id || "").trim();
+  if (!userId) {
+    return { ok: false, queued: false, message: "Account not found." };
+  }
+  const targetAuthId = String(target.supabaseAuthId || "").trim();
+  const targetProfileId = String(getUserProfileId(target) || "").trim();
+  let queuedDelete = false;
+  if (targetAuthId) {
+    const deleteResult = await deleteSupabaseAuthUserAsAdmin(targetAuthId);
+    if (!deleteResult.ok) {
+      if (shouldAllowSupabaseManagedDeleteFallback(deleteResult.message)) {
+        queuedDelete = true;
+      } else {
+        return { ok: false, queued: false, message: `Could not delete user from Supabase Auth. ${deleteResult.message || "Unauthorized."}` };
+      }
+    }
+  }
+  if (targetProfileId && !queuedDelete) {
+    const relationalDeleteResult = await deleteRelationalProfile(targetProfileId);
+    if (!relationalDeleteResult.ok) {
+      if (shouldAllowSupabaseManagedDeleteFallback(relationalDeleteResult.message)) {
+        queuedDelete = true;
+      } else {
+        return { ok: false, queued: false, message: `Database delete failed. ${relationalDeleteResult.message}` };
+      }
+    }
+  }
+
+  const actionTarget = { targetAuthId, targetProfileId, targetLocalUserId: userId };
+  if (queuedDelete) {
+    queuePendingAdminAction({
+      type: "delete-user",
+      ...actionTarget,
+      email: String(target.email || "").trim().toLowerCase(),
+    });
+  } else {
+    clearPendingAdminActionsForTarget({ type: "delete-user", ...actionTarget });
+    purgeDeletedUserLocalState(actionTarget);
+  }
+  clearAdminUserEnrollmentDraft(userId);
+  return { ok: true, queued: queuedDelete, message: "" };
 }
 
 async function deleteSupabaseAuthUserAsAdmin(targetAuthId) {

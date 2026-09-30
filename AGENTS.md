@@ -189,6 +189,34 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-09-30 — Admin Users: bulk Delete
+Frontend only; no schema, RLS or Edge Function change. Static cache bust:
+`2026-09-30.11`.
+
+1. **`deleteAdminUserAccount(target)`** (next to `deleteSupabaseAuthUserAsAdmin`)
+   is the single delete path: Supabase Auth via the `admin-delete-user` Edge
+   Function (which also removes the user's `app_state` rows), then the profile
+   row, with the existing queued "pending cloud cleanup" fallback. It has no
+   confirm, toast or flush. The row menu's **Remove** and the new bulk
+   **Delete** both call it, so they cannot diverge; do not re-inline it.
+2. **Bulk bar: Approve · Suspend · Delete · Clear.** Delete
+   (`data-action="admin-bulk-delete-users"`, handled in the
+   `#admin-users-section` delegated listener) acts only on rows that
+   `canBulkSelectAdminUser` allows, so admins and the signed-in account can
+   never be bulk-deleted. It asks the admin to type `DELETE` (case-insensitive)
+   in a `window.prompt`. Cancel or any other text deletes nothing. Accounts are
+   deleted **one at a time** (a parallel burst would hit the Edge Function's
+   rate limit), then one `flushAdminUserAccountSyncNow`, then a summary toast
+   (deleted / pending cleanup / failed with the first failure reason).
+3. Suspend's loading label now checks `adminBulkActionType === "suspend"`
+   instead of `!== "approve"`, so it does not spin during a delete.
+4. **Verified** in the preview as the local demo admin: the admin row is
+   pruned from the selection; Cancel and a wrong word delete nothing; `DELETE`
+   removes both students and clears the bar; row **Remove** still works.
+   Not run against real Supabase accounts. `node --check`, lint, 69 tests.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-30 — Admin pages: one box level (flatten pass)
 Frontend only; no schema, RLS, auth or access change. Static cache bust:
 `2026-09-30.10` (shipped to `main` 2026-09-30). Spec:
