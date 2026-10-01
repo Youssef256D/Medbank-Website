@@ -189,6 +189,34 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-10-01 — Landing page audit fixes (impeccable audit)
+Frontend only. Static cache bust: `2026-10-01.02-local`.
+
+1. **The marketing intro plays once per route** (`gsapMarketingIntroRoute`,
+   next to `setupGsapMarketingPageMotion`). Boot re-renders the same route
+   several times, and each new `.marketing-page` node replayed the intro from
+   `autoAlpha: 0`, so the hero sat invisible or half-faded for seconds. Intro
+   and scroll reveals now start from a dimmed but readable state (opacity
+   0.3–0.35), never hidden, so a trigger that never fires cannot hide content.
+2. **`body.is-public-marketing-route { overflow-x: clip }`.** `body`'s global
+   `overflow-x: hidden` makes it a scroll container that never scrolls, which
+   silently disables every `position: sticky` inside it. `clip` keeps the
+   no-horizontal-scroll guarantee. Scoped to public routes on purpose; the
+   same fix would apply app-wide but was not tested there.
+3. Kickers (`.lp-eyebrow`, `.lp-kicker`), the "Inside the app" label and the
+   01–06 screenshot numbers were removed from both `main.js` and the
+   `index.html` first-paint fallback — keep the two in sync.
+4. CSS is one appended block, "Landing refinement (2026-10-01)", after the
+   `.lp-*` mobile rules: flattened `.lp-app-release`, ruled `.lp-points`, text
+   at or above 11px, sticky showcase at >960px, 20px phone gutter.
+5. **Verified** in the preview at 1024px and 375px, light and comfort: no
+   horizontal scroll, sticky engages, text contrast 5.7:1+. The impeccable
+   detector went from 35 to 12 findings; the rest are the shared marketing
+   background (brand teal glows), a hidden `::before` it still reads, and
+   pixel contrast sampled mid-fade. `npm run lint`, `npm test` (76) clean.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-09-30 — Admin layers: super admins and admins limited to areas
 Adds super admins and per-admin areas (People, MCQ Bank, Video Courses,
 Messaging, System), **enforced in the database**. Static cache bust:

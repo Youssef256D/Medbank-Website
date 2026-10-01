@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-01 — Landing page audit fixes
+- Content no longer disappears on load: the marketing intro plays once per
+  route instead of restarting on every boot re-render, and entrances start
+  dimmed rather than invisible.
+- Removed the tracked-caps labels above headings, the screenshot numbers and
+  the pulsing dot; nothing functional is under 11px any more.
+- The mobile section is no longer a card holding cards; the MCQ Bank and
+  Video Courses points are a ruled list instead of boxes; the app showcase
+  stays in view while the copy scrolls on desktop.
+- "Explore:" reads "Jump to". Static cache bust: `2026-10-01.02-local`.
+
 ### 2026-09-30 — Admin layers (super admins and limited admins)
 - **Super admins** can do everything. Other admins can be limited to areas:
   People, MCQ Bank, Video Courses, Messaging, System. Choose them on the new
