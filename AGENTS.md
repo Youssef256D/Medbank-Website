@@ -190,7 +190,7 @@ can reactivate them.
 ## 7. Refactor log (most recent first)
 
 ### 2026-10-01 — Add user dialog by role; dialog footers; row menus open downward
-Frontend only. Static cache bust: `2026-10-01.05-local`.
+Frontend only. Static cache bust: `2026-10-02.01`.
 
 1. **Add user**: Year and Semester sit in one row
    (`[data-add-user-student-only]`) shown only for Student. The role select
@@ -221,7 +221,7 @@ Frontend only. Static cache bust: `2026-10-01.05-local`.
 Frontend only. Admin → Questions now starts its filters with Year, and the MCQ
 subject select shows only that year's subjects grouped by semester. It reuses
 the Bulk Import year-group helpers; the year is derived from the selected
-subject, so there is no new state. Static cache bust: `2026-10-01.03-local`.
+subject, so there is no new state. Static cache bust: `2026-10-02.01` (was `2026-10-01.03-local` in preview).
 
 **`resolveAdminQuestionListView` no longer swaps an empty subject for another.**
 It used to replace a picked subject that had no questions with the first

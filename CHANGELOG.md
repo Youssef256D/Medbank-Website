@@ -16,13 +16,13 @@ hosted Supabase is the source of truth.
   touch the edge).
 - The ⋯ row menu always opens downward, scrolling the page to make room,
   so "Edit details" is never hidden under the top bar. Static cache bust:
-  `2026-10-01.05-local`.
+  `2026-10-02.01`.
 
 ### 2026-10-01 — Admin Questions: choose year before subject
 - Admin → Questions now starts with Year, then shows only that year's MCQ
   subjects grouped by semester before Topic. The year is derived from the
   selected subject, just like Bulk Import. Static cache bust:
-  `2026-10-01.03-local`.
+  `2026-10-02.01` (was `2026-10-01.03-local` in preview).
 - A subject with no questions stays selected (it used to jump to another
   subject). Picking a year opens its first subject that has questions.
 
