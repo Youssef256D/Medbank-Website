@@ -189,6 +189,49 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-10-01 — Add user dialog by role; dialog footers; row menus open downward
+Frontend only. Static cache bust: `2026-10-02.01`.
+
+1. **Add user**: Year and Semester sit in one row
+   (`[data-add-user-student-only]`) shown only for Student. The role select
+   toggles `hidden` in place (no `render()`). Admin and creator records already
+   saved `null` year/semester (and `admin-create-user` nulls them server side);
+   only the form changed. "Add user" moved into the dialog footer as
+   `type="submit" form="admin-add-user-form"`; the submit handler finds it by
+   that `form` attribute for the "Creating..." state.
+2. **`.admin-dialog-actions` now has its own inset** (`0.9rem 1.2rem 1rem`,
+   safe-area bottom on phones). It had only `padding-top`, so footer buttons
+   touched the panel edge in **every** admin dialog. Footers that live inside
+   an already-padded body opt out: `.admin-user-edit` (padding 0) and
+   `.admin-university-editor` (top only). A new dialog with its footer inside
+   a padded form needs the same opt-out.
+3. **Row ⋯ menus always open downward.** `positionAdminRowMenu` no longer flips
+   upward (on short pages the flipped menu went under the sticky top bar,
+   hiding "Edit details"). If the menu would pass the bottom of the screen it
+   scrolls the page down first; when the page is too short to scroll that far
+   it adds a temporary bottom spacer to `appEl` (`adminRowMenuSpacer`,
+   removed by `closeAdminRowMenus` and on the next open). The window scroll
+   listener ignores scrolls for 250 ms after that self-scroll
+   (`adminRowMenuSelfScrollUntil`), otherwise it would close the menu it is
+   making room for. A menu taller than the screen scrolls inside itself.
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
+### 2026-10-01 — Admin Questions: choose year before subject
+Frontend only. Admin → Questions now starts its filters with Year, and the MCQ
+subject select shows only that year's subjects grouped by semester. It reuses
+the Bulk Import year-group helpers; the year is derived from the selected
+subject, so there is no new state. Static cache bust: `2026-10-02.01` (was `2026-10-01.03-local` in preview).
+
+**`resolveAdminQuestionListView` no longer swaps an empty subject for another.**
+It used to replace a picked subject that had no questions with the first
+subject that had some, which made the Year select bounce back to Year 1. A
+picked subject now stays, with "No questions found". Only when no subject is
+chosen yet does it start on the first subject with questions; the Year change
+handler does the same within the chosen year.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-10-01 — Landing page audit fixes (impeccable audit)
 Frontend only. Static cache bust: `2026-10-01.02-local`.
 

@@ -30654,14 +30654,10 @@ function resolveAdminQuestionListView(questions, allCourses, preferredCourse = "
     selectedCourse = availableCourses.find(
       (course) => (questionCountByCourseKey.get(normalizeAdminQuestionFilterToken(course)) || 0) > 0,
     ) || availableCourses[0] || "";
-  } else if ((questionCountByCourseKey.get(normalizeAdminQuestionFilterToken(selectedCourse)) || 0) === 0) {
-    const fallbackCourse = availableCourses.find(
-      (course) => (questionCountByCourseKey.get(normalizeAdminQuestionFilterToken(course)) || 0) > 0,
-    );
-    if (fallbackCourse) {
-      selectedCourse = fallbackCourse;
-    }
   }
+  // A subject the admin picked stays selected even when it has no questions
+  // (the table says so); jumping to another subject would also jump the Year
+  // select to a different year.
 
   const selectedCourseKey = normalizeAdminQuestionFilterToken(selectedCourse);
   const configuredTopics = selectedCourse ? (QBANK_COURSE_TOPICS[selectedCourse] || []) : [];
@@ -32562,6 +32558,27 @@ async function setAdminUserMcqAccessFromRow(row, button, nextEnabledOverride = n
 // goes straight to public.universities (admin-only RLS) and is followed by a
 // fresh read; nothing is merged into the cached list locally.
 let adminSharedUiWired = false;
+// Row menus always open downward. When the page cannot scroll far enough to
+// show the whole menu, a temporary bottom spacer is added to appEl; the
+// scroll we trigger ourselves must not close the menu it is making room for.
+let adminRowMenuSelfScrollUntil = 0;
+let adminRowMenuSpacer = null;
+
+function removeAdminRowMenuSpacer() {
+  if (!adminRowMenuSpacer) return;
+  appEl.style.paddingBottom = adminRowMenuSpacer.originalInline;
+  adminRowMenuSpacer = null;
+}
+
+function addAdminRowMenuSpacer(extra) {
+  const original = adminRowMenuSpacer ? adminRowMenuSpacer.originalInline : appEl.style.paddingBottom;
+  const already = adminRowMenuSpacer ? adminRowMenuSpacer.extra : 0;
+  appEl.style.paddingBottom = original;
+  const base = parseFloat(getComputedStyle(appEl).paddingBottom) || 0;
+  const total = already + extra;
+  appEl.style.paddingBottom = `${Math.ceil(base + total)}px`;
+  adminRowMenuSpacer = { originalInline: original, extra: total };
+}
 
 function loadAdminHelpOpenState() {
   try {
@@ -32669,6 +32686,7 @@ function closeAdminRowMenus({ restoreFocus = false, except = null } = {}) {
     toggle.setAttribute("aria-expanded", "false");
     focusTarget = focusTarget || toggle;
   });
+  if (!except) removeAdminRowMenuSpacer();
   if (restoreFocus) focusTarget?.focus();
 }
 
@@ -32678,16 +32696,32 @@ function positionAdminRowMenu(menu) {
   if (!toggle || !list || list.hidden) return;
   const gutter = 8;
   const gap = 6;
-  const toggleBox = toggle.getBoundingClientRect();
-  const menuBox = list.getBoundingClientRect();
   const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
   const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+  list.style.maxHeight = "";
+  list.style.overflowY = "";
+  const menuBox = list.getBoundingClientRect();
+  // Always below the toggle. If it would run past the bottom of the screen,
+  // scroll the page down first (adding room at the end when the page is too
+  // short to scroll that far).
+  const shortfall = Math.ceil(toggle.getBoundingClientRect().bottom + gap + menuBox.height - (viewportHeight - gutter));
+  if (shortfall > 0) {
+    const scroller = document.scrollingElement || document.documentElement;
+    const scrollable = scroller.scrollHeight - window.innerHeight - window.scrollY;
+    if (shortfall > scrollable) addAdminRowMenuSpacer(shortfall - Math.max(0, scrollable));
+    adminRowMenuSelfScrollUntil = performance.now() + 250;
+    window.scrollBy({ top: shortfall, behavior: "instant" });
+  }
+  const toggleBox = toggle.getBoundingClientRect();
   const left = Math.max(gutter, Math.min(toggleBox.right - menuBox.width, viewportWidth - menuBox.width - gutter));
-  const belowTop = toggleBox.bottom + gap;
-  const aboveTop = toggleBox.top - menuBox.height - gap;
-  const top = belowTop + menuBox.height <= viewportHeight - gutter || aboveTop < gutter ? belowTop : aboveTop;
   const targetLeft = Math.round(left);
-  const targetTop = Math.round(Math.max(gutter, top));
+  const targetTop = Math.round(toggleBox.bottom + gap);
+  // Last resort (a menu taller than the screen): scroll inside the list.
+  const room = viewportHeight - gutter - targetTop;
+  if (menuBox.height > room) {
+    list.style.maxHeight = `${Math.max(120, room)}px`;
+    list.style.overflowY = "auto";
+  }
   list.style.left = `${targetLeft}px`;
   list.style.top = `${targetTop}px`;
   // An ancestor with backdrop-filter/transform/filter (e.g. .panel.admin-shell)
@@ -32707,6 +32741,7 @@ function openAdminRowMenu(menu, focusEdge = "") {
   const list = menu?.querySelector(".admin-row-menu-list");
   if (!toggle || !list || toggle.disabled) return;
   closeAdminRowMenus({ except: menu });
+  removeAdminRowMenuSpacer();
   list.hidden = false;
   toggle.setAttribute("aria-expanded", "true");
   positionAdminRowMenu(menu);
@@ -32776,7 +32811,10 @@ function wireAdminSharedUi() {
     }
   });
   window.addEventListener("resize", () => closeAdminRowMenus(), { passive: true });
-  window.addEventListener("scroll", () => closeAdminRowMenus(), { capture: true, passive: true });
+  window.addEventListener("scroll", () => {
+    if (performance.now() < adminRowMenuSelfScrollUntil) return;
+    closeAdminRowMenus();
+  }, { capture: true, passive: true });
 }
 
 function newAdminUniversityDraft() {
@@ -34648,7 +34686,7 @@ function renderAdmin() {
       ? renderAdminDialog({
         id: "users-add-user",
         title: "Add user",
-        subtitle: "Create a student or admin account only when needed.",
+        subtitle: "Create a student, creator or admin account. Year and semester apply to students only.",
         closeAction: "admin-users-close-add-user",
         body: `
           <form id="admin-add-user-form" autocomplete="off">
@@ -34668,17 +34706,15 @@ function renderAdmin() {
             </div>
             <div class="form-row">
               <label>Phone number <input type="tel" name="phone" autocomplete="off" inputmode="tel" maxlength="20" placeholder="+20 10 0000 0000" value="${escapeHtml(addUserDraft.phone)}" /></label>
+            </div>
+            <div class="form-row" data-add-user-student-only ${addUserDraft.role === "student" ? "" : "hidden"}>
               <label>Year
                 <select name="academicYear">
-                  <option value="1" ${addUserDraft.academicYear === "1" ? "selected" : ""}>Year 1</option>
-                  <option value="2" ${addUserDraft.academicYear === "2" ? "selected" : ""}>Year 2</option>
-                  <option value="3" ${addUserDraft.academicYear === "3" ? "selected" : ""}>Year 3</option>
-                  <option value="4" ${addUserDraft.academicYear === "4" ? "selected" : ""}>Year 4</option>
-                  <option value="5" ${addUserDraft.academicYear === "5" ? "selected" : ""}>Year 5</option>
+                  ${[1, 2, 3, 4, 5]
+          .map((entry) => `<option value="${entry}" ${addUserDraft.academicYear === String(entry) ? "selected" : ""}>Year ${entry}</option>`)
+          .join("")}
                 </select>
               </label>
-            </div>
-            <div class="form-row">
               <label>Semester
                 <select name="academicSemester">
                   <option value="1" ${addUserDraft.academicSemester === "1" ? "selected" : ""}>Semester 1</option>
@@ -34686,13 +34722,11 @@ function renderAdmin() {
                 </select>
               </label>
             </div>
-            <div class="stack">
-              <button class="btn" type="submit">Add user</button>
-            </div>
           </form>
         `,
         actions: `
           <button class="btn ghost admin-btn-sm" type="button" data-action="admin-users-close-add-user">Cancel</button>
+          <button class="btn admin-btn-sm" type="submit" form="admin-add-user-form">Add user</button>
         `,
       })
       : "";
@@ -35265,6 +35299,8 @@ function renderAdmin() {
     const answerKey = String(editing?.correct?.[0] || "A").toUpperCase();
     const saveQuestionLabel = editing ? "Save changes" : "Save question";
     const activeQuestionFilterCount = (selectedTopic ? 1 : 0);
+    const questionYearGroups = buildAdminCourseYearGroups(allCourses);
+    const questionYearGroup = findAdminCourseYearGroup(questionYearGroups, selectedCourse);
     const questionsHeaderActions = `
       ${renderAdminIconButton({
       icon: "plus",
@@ -35279,7 +35315,7 @@ function renderAdmin() {
       count: courseQuestions.length,
       actions: questionsHeaderActions,
       notes: [
-        "Filter by MCQ subject and topic, then edit the stem, choices, and explanation for a question.",
+        "Pick the year, then the MCQ subject and topic. Edit the stem, choices, and explanation for a question.",
         "Select rows with the checkboxes to draft, publish, or delete several questions at once.",
         "Drag and drop rows (or swipe up/down on touch) to reorder them.",
       ],
@@ -35288,10 +35324,13 @@ function renderAdmin() {
     // apply as soon as a select changes; see the change handlers in wireAdmin.
     const questionsFiltersToolbarHtml = `
       <form id="admin-question-filter-form" class="admin-flat-toolbar" autocomplete="off">
-        <select id="admin-filter-course" name="course" aria-label="MCQ subject">
-          ${allCourses
-      .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+        <select id="admin-filter-year" aria-label="Year">
+          ${questionYearGroups
+      .map((group) => `<option value="${escapeHtml(group.key)}" ${questionYearGroup?.key === group.key ? "selected" : ""}>${escapeHtml(group.label)}</option>`)
       .join("")}
+        </select>
+        <select id="admin-filter-course" name="course" aria-label="MCQ subject">
+          ${renderAdminCourseYearGroupOptions(questionYearGroup, selectedCourse)}
         </select>
         <select id="admin-filter-topic" name="topic" aria-label="Topic">
           <option value="" ${selectedTopic ? "" : "selected"}>All topics</option>
@@ -38319,6 +38358,13 @@ function wireAdmin() {
   };
   addUserForm?.addEventListener("input", syncAdminAddUserDraftFromForm);
   addUserForm?.addEventListener("change", syncAdminAddUserDraftFromForm);
+  // Year and semester only apply to students; toggled in place (no render) so
+  // the open dialog does not flicker.
+  const addUserRoleSelect = addUserForm?.querySelector("select[name='role']");
+  addUserRoleSelect?.addEventListener("change", () => {
+    const studentOnlyRow = addUserForm.querySelector("[data-add-user-student-only]");
+    if (studentOnlyRow) studentOnlyRow.hidden = addUserRoleSelect.value !== "student";
+  });
   addUserForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (addUserForm.dataset.submitting === "1") {
@@ -38386,7 +38432,9 @@ function wireAdmin() {
     // Admins and creators are provisioned deliberately by an admin, so they do
     // not go through the student approval queue.
     const newUserApproved = normalizedRole === "student" ? newStudentAutoApproval : true;
-    const submitButton = addUserForm.querySelector("button[type='submit']");
+    // The submit button sits in the dialog footer, outside the form.
+    const submitButton = document.querySelector("button[type='submit'][form='admin-add-user-form']")
+      || addUserForm.querySelector("button[type='submit']");
     if (submitButton) {
       submitButton.dataset.baseLabel = submitButton.dataset.baseLabel || String(submitButton.textContent || "Add user").trim();
       submitButton.disabled = true;
@@ -39991,6 +40039,7 @@ function wireAdmin() {
   });
 
   const adminFilterForm = document.getElementById("admin-question-filter-form");
+  const adminFilterYear = document.getElementById("admin-filter-year");
   const adminFilterCourse = document.getElementById("admin-filter-course");
   const adminFilterTopic = document.getElementById("admin-filter-topic");
   const adminClearFilters = document.getElementById("admin-clear-filters");
@@ -40268,6 +40317,22 @@ function wireAdmin() {
 
   // The filters apply on change. A new subject resets the topic, and the
   // selection is cleared because it only ever covers visible rows.
+  adminFilterYear?.addEventListener("change", () => {
+    const groups = buildAdminCourseYearGroups(allCourses);
+    const group = groups.find((entry) => entry.key === adminFilterYear.value) || groups[0] || null;
+    const yearCourses = (group?.semesters || []).flatMap((term) => term.courses);
+    // Prefer the year's first subject that already has questions.
+    const coursesWithQuestions = new Set(
+      getQuestions().map((question) => normalizeAdminQuestionFilterToken(getQbankCourseTopicMeta(question).course)),
+    );
+    state.adminFilters.course = yearCourses.find((course) => coursesWithQuestions.has(normalizeAdminQuestionFilterToken(course)))
+      || yearCourses[0]
+      || "";
+    state.adminFilters.topic = "";
+    state.adminSelectedQuestionIds = [];
+    state.skipNextRouteAnimation = true;
+    render();
+  });
   adminFilterCourse?.addEventListener("change", () => {
     state.adminFilters.course = String(adminFilterCourse.value || "");
     state.adminFilters.topic = "";

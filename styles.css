@@ -21678,7 +21678,7 @@ body.is-admin-dialog-open {
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 0.2rem;
-  padding-top: 0.9rem;
+  padding: 0.9rem 1.2rem 1rem;
   border-top: 1px solid var(--line);
 }
 
@@ -21686,6 +21686,15 @@ body.is-admin-dialog-open {
   margin: 0;
   max-width: none;
   padding: 1rem 1.15rem 1.15rem;
+}
+
+/* The university form carries its own padding; its footer must not add more. */
+.admin-university-editor .admin-dialog-actions {
+  padding: 0.9rem 0 0;
+}
+
+#admin-add-user-form [data-add-user-student-only][hidden] {
+  display: none;
 }
 
 .admin-university-editor fieldset,
@@ -21745,6 +21754,10 @@ body.is-admin-dialog-open {
     border-bottom: 0;
     border-left: 0;
     border-radius: var(--radius-md) var(--radius-md) 0 0;
+  }
+
+  .admin-dialog-actions {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
 
   .admin-dialog-actions .btn {
