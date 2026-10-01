@@ -200,7 +200,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs", "admin-access"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -255,6 +255,7 @@ const ADMIN_NAV_GROUPS = [
     id: "system",
     label: "System",
     items: [
+      { page: "admin-access", label: "Admin access" },
       { page: "site-access", label: "Site Access" },
       { page: "ai-agents", label: "Hermes Assistant" },
       { page: "activity", label: "Activity" },
@@ -686,6 +687,16 @@ const state = {
   adminActivityReportRunning: false,
   adminLogsVisibleCount: 100,
   adminPopups: [],
+  adminAccess: null,
+  adminAccessLoadedAt: 0,
+  adminAccessLoading: false,
+  adminAccessRows: [],
+  adminAccessRowsLoadedAt: 0,
+  adminAccessRowsLoading: false,
+  adminAccessRowsError: "",
+  adminAccessRowsMissing: false,
+  adminAccessDrafts: {},
+  adminAccessSavingId: "",
   adminPopupMetrics: {},
   adminPopupsLoading: false,
   adminPopupsLoadedAt: 0,
@@ -6577,6 +6588,10 @@ function canRunStudentAutoApprovalSweep() {
     return false;
   }
   if (getCurrentUser()?.role !== "admin") {
+    return false;
+  }
+  // The sweep writes profiles, which is the People area.
+  if (!adminAccessHasArea(getCurrentAdminAccess(), "people")) {
     return false;
   }
   if (studentAutoApprovalSweepInFlight) {
@@ -22430,6 +22445,16 @@ function render() {
     state.adminPopupsError = "";
     state.adminPopupsMissing = false;
     state.adminPopupDraft = null;
+    state.adminAccess = null;
+    state.adminAccessLoadedAt = 0;
+    state.adminAccessLoading = false;
+    state.adminAccessRows = [];
+    state.adminAccessRowsLoadedAt = 0;
+    state.adminAccessRowsLoading = false;
+    state.adminAccessRowsError = "";
+    state.adminAccessRowsMissing = false;
+    state.adminAccessDrafts = {};
+    state.adminAccessSavingId = "";
     state.adminImportHistory = [];
     state.adminImportHistoryLoading = false;
     state.adminImportHistoryLoaded = false;
@@ -31640,7 +31665,10 @@ function patchAdminUserRowUi(row, account, actorUser = null) {
 
 function renderAdminUserRoleOptions(currentRole) {
   const selected = sanitizeUserRole(currentRole);
+  // Only super admins may grant the admin role (the database refuses it
+  // otherwise), so the option is not offered to anyone else.
   return USER_ROLES
+    .filter((role) => role !== "admin" || selected === "admin" || isCurrentAdminSuper())
     .map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${escapeHtml(getUserRoleLabel(role))}</option>`)
     .join("");
 }
@@ -33450,8 +33478,18 @@ function renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection) {
     }
   }
   const openGroups = getAdminNavOpenGroups();
+  // Admin layers: pages outside this admin's areas are not listed, and a
+  // group left with nothing is not shown.
+  const adminAccess = getCurrentAdminAccess();
 
-  return ADMIN_NAV_GROUPS.map((group) => {
+  return ADMIN_NAV_GROUPS.map((sourceGroup) => {
+    const group = {
+      ...sourceGroup,
+      items: sourceGroup.items.filter((item) => canAdminAccessPage(adminAccess, item.section ? ADMIN_COURSES_PLATFORM_PAGE : item.page)),
+    };
+    if (!group.items.length) {
+      return "";
+    }
     const itemsHtml = group.items.map((item) => {
       const isActive = isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection);
       const dataAttributes = item.section
@@ -33469,7 +33507,7 @@ function renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection) {
     }
     const isOpen = openGroups[group.id] === true;
     const groupBadgeCount = group.items.reduce((sum, item) => sum + badgeFor(item), 0);
-    const containsActive = group === activeGroup;
+    const containsActive = sourceGroup === activeGroup;
     const itemsId = `admin-nav-group-items-${escapeHtml(group.id)}`;
     return `
       <div class="admin-nav-group ${isOpen ? "is-open" : "is-collapsed"} ${containsActive ? "has-active" : ""}" data-nav-group="${escapeHtml(group.id)}">
@@ -33524,6 +33562,404 @@ function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection
     : activeAdminPage === item.page;
 }
 
+// Admin layers: area helpers. Pure; tests/admin-access.test.js loads this
+// block on its own, up to the closing end-of-helpers marker below.
+// The database is the real gate (migrations 20260930030000 and
+// 20260930030100): an admin without an area cannot change that area's data
+// even through the API. These helpers only decide what the website shows.
+const ADMIN_AREAS = [
+  { id: "people", label: "People", description: "Users and universities" },
+  { id: "mcq", label: "MCQ Bank", description: "Subjects, questions and bulk import" },
+  { id: "video_courses", label: "Video Courses", description: "Every Video Courses page" },
+  { id: "messaging", label: "Messaging", description: "Notifications and pop-ups" },
+  { id: "system", label: "System", description: "Activity and logs" },
+];
+const ADMIN_AREA_IDS = ADMIN_AREAS.map((area) => area.id);
+// Super admins only, whatever areas an admin has.
+const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "ai-agents", "admin-access"]);
+const ADMIN_PAGE_AREAS = {
+  users: "people",
+  universities: "people",
+  "mcq-subjects": "mcq",
+  questions: "mcq",
+  "bulk-import": "mcq",
+  "video-courses": "video_courses",
+  notifications: "messaging",
+  popups: "messaging",
+  activity: "system",
+  logs: "system",
+};
+
+// `row` is an admin_permissions row (or null when the admin has none).
+// `tableMissing` = the migration is not applied yet: every admin keeps full
+// access, exactly as before admin layers existed.
+function normalizeAdminAccess(row, options = {}) {
+  if (options.tableMissing) {
+    return { isSuper: true, areas: [...ADMIN_AREA_IDS], legacy: true };
+  }
+  const isSuper = row?.is_super === true;
+  const areas = [...new Set(
+    (Array.isArray(row?.areas) ? row.areas : [])
+      .map((area) => String(area || "").trim())
+      .filter((area) => ADMIN_AREA_IDS.includes(area)),
+  )];
+  return { isSuper, areas: isSuper ? [...ADMIN_AREA_IDS] : areas, legacy: false };
+}
+
+function adminAccessHasArea(access, area) {
+  if (!access) {
+    return true;
+  }
+  return access.isSuper === true || (Array.isArray(access.areas) && access.areas.includes(area));
+}
+
+function canAdminAccessPage(access, page) {
+  const pageId = String(page || "").trim();
+  if (pageId === "dashboard") {
+    return true;
+  }
+  if (!access) {
+    return true;
+  }
+  if (ADMIN_SUPER_ONLY_PAGES.has(pageId)) {
+    return access.isSuper === true;
+  }
+  const area = ADMIN_PAGE_AREAS[pageId];
+  return area ? adminAccessHasArea(access, area) : access.isSuper === true;
+}
+
+function describeAdminAccess(access) {
+  if (!access) {
+    return "";
+  }
+  if (access.isSuper) {
+    return "Super admin";
+  }
+  const labels = ADMIN_AREAS.filter((area) => access.areas.includes(area.id)).map((area) => area.label);
+  return labels.length ? labels.join(", ") : "No areas yet";
+}
+// End admin layers helpers.
+
+function isAdminPermissionsMissingError(error) {
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "");
+  return code === "42P01" || code === "PGRST205"
+    || (/admin_permissions/i.test(message) && /does not exist|schema cache/i.test(message));
+}
+
+// What the signed-in admin may see. Until the first read lands (and in the
+// local demo, with no Supabase client) nothing is hidden; the database still
+// refuses what the admin may not change.
+function getCurrentAdminAccess() {
+  return state.adminAccess || null;
+}
+
+function isCurrentAdminSuper() {
+  const access = getCurrentAdminAccess();
+  return !access || access.isSuper === true;
+}
+
+async function loadCurrentAdminAccess() {
+  const user = getCurrentUser();
+  const client = getRelationalClient();
+  const profileId = String(getUserProfileId(user) || "").trim();
+  if (!client || user?.role !== "admin" || !isUuidValue(profileId)) {
+    return false;
+  }
+  if (state.adminAccessLoading) {
+    return false;
+  }
+  state.adminAccessLoading = true;
+  try {
+    const { data, error } = await runWithTimeoutResult(
+      client.from("admin_permissions").select("user_id,is_super,areas").eq("user_id", profileId).maybeSingle(),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Admin permissions query timed out.",
+    );
+    if (error && !isAdminPermissionsMissingError(error)) {
+      throw error;
+    }
+    const next = normalizeAdminAccess(error ? null : data, { tableMissing: Boolean(error) });
+    const previous = state.adminAccess;
+    state.adminAccess = next;
+    state.adminAccessLoadedAt = Date.now();
+    return !previous
+      || previous.isSuper !== next.isSuper
+      || previous.areas.join(",") !== next.areas.join(",");
+  } catch (error) {
+    console.warn("Could not load admin permissions.", error?.message || error);
+    state.adminAccessLoadedAt = Date.now();
+    return false;
+  } finally {
+    state.adminAccessLoading = false;
+  }
+}
+
+// Admin access page (super admins only): who is a super admin and which areas
+// every other admin may change. Rows are admin_permissions; admins without a
+// row have no areas. The database refuses these writes from anyone but a super
+// admin, and refuses to remove the last super admin.
+async function loadAdminAccessRows(options = {}) {
+  const client = getRelationalClient();
+  if (!client || state.adminAccessRowsLoading) {
+    return false;
+  }
+  if (!options.force && state.adminAccessRowsLoadedAt) {
+    return false;
+  }
+  state.adminAccessRowsLoading = true;
+  state.adminAccessRowsError = "";
+  try {
+    const { data, error } = await runWithTimeoutResult(
+      client.from("admin_permissions").select("user_id,is_super,areas,updated_at,updated_by"),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Admin permissions query timed out.",
+    );
+    if (error) {
+      if (isAdminPermissionsMissingError(error)) {
+        state.adminAccessRowsMissing = true;
+        state.adminAccessRows = [];
+        return true;
+      }
+      throw error;
+    }
+    state.adminAccessRowsMissing = false;
+    state.adminAccessRows = Array.isArray(data) ? data : [];
+    return true;
+  } catch (error) {
+    state.adminAccessRowsError = getErrorMessage(error, "Could not load admin permissions.");
+    return true;
+  } finally {
+    state.adminAccessRowsLoading = false;
+    state.adminAccessRowsLoadedAt = Date.now();
+  }
+}
+
+function getAdminAccessDraft(profileId) {
+  const draft = state.adminAccessDrafts?.[profileId];
+  if (draft) {
+    return draft;
+  }
+  const row = (state.adminAccessRows || []).find((entry) => String(entry?.user_id || "") === profileId) || null;
+  return normalizeAdminAccess(row);
+}
+
+function isAdminAccessDraftDirty(profileId) {
+  const draft = state.adminAccessDrafts?.[profileId];
+  if (!draft) {
+    return false;
+  }
+  const row = (state.adminAccessRows || []).find((entry) => String(entry?.user_id || "") === profileId) || null;
+  const saved = normalizeAdminAccess(row);
+  return saved.isSuper !== draft.isSuper || saved.areas.join(",") !== draft.areas.join(",");
+}
+
+function renderAdminAccessSection() {
+  if (!state.adminAccessRowsLoadedAt && !state.adminAccessRowsLoading) {
+    loadAdminAccessRows().then((changed) => {
+      if (changed && state.route === "admin" && state.adminPage === "admin-access") {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+    });
+  }
+  const currentProfileId = String(getUserProfileId(getCurrentUser()) || "");
+  const admins = getUsers()
+    .filter((entry) => sanitizeUserRole(entry?.role) === "admin")
+    .map((entry) => ({ user: entry, profileId: String(getUserProfileId(entry) || "").trim() }))
+    .filter((entry) => isUuidValue(entry.profileId))
+    .sort((a, b) => String(a.user.name || "").localeCompare(String(b.user.name || "")));
+
+  const header = renderAdminPageHeader({
+    id: "admin-access",
+    title: "Admin access",
+    count: admins.length,
+    actions: renderAdminIconButton({
+      icon: "refresh",
+      label: "Reload",
+      attrs: `data-action="admin-access-reload"`,
+      busy: Boolean(state.adminAccessRowsLoading),
+    }),
+    notes: [
+      "A <b>super admin</b> can do everything, including this page, Site Access and Hermes.",
+      "Every other admin can change only the areas ticked here. They can still open the Dashboard, and read what other pages show, but the database refuses their changes outside their areas.",
+      "Admin accounts themselves (making someone an admin, editing, suspending or deleting an admin) are for super admins only. At least one super admin must always remain.",
+      "To add an admin, give the user the Admin role on the Users page, then choose their areas here. A new admin has no areas until you do.",
+    ],
+  });
+
+  if (state.adminAccessRowsMissing) {
+    return `
+      <section class="card admin-section" id="admin-access-section">
+        ${header}
+        <div class="admin-popup-notice" role="status">Admin layers are not set up in the database yet. Apply migrations <code>20260930030000_admin_permission_areas</code> and <code>20260930030100_admin_area_enforcement</code>. Until then every admin has full access.</div>
+      </section>
+    `;
+  }
+
+  const rowsHtml = admins.map(({ user: adminUser, profileId }) => {
+    const draft = getAdminAccessDraft(profileId);
+    const dirty = isAdminAccessDraftDirty(profileId);
+    const saving = state.adminAccessSavingId === profileId;
+    const isSelf = profileId === currentProfileId;
+    const areaBoxes = ADMIN_AREAS.map((area) => `
+      <label class="admin-access-area" title="${escapeHtml(area.description)}">
+        <input type="checkbox" data-admin-access-area="${escapeHtml(area.id)}" ${draft.isSuper || draft.areas.includes(area.id) ? "checked" : ""} ${draft.isSuper || saving ? "disabled" : ""} />
+        <span>${escapeHtml(area.label)}</span>
+      </label>
+    `).join("");
+    return `
+      <tr data-admin-access-id="${escapeHtml(profileId)}">
+        <td>
+          <span class="admin-access-name">${escapeHtml(adminUser.name || adminUser.email || "Admin")}${isSelf ? ` <span class="admin-access-you">(you)</span>` : ""}</span>
+          <span class="admin-access-email">${escapeHtml(adminUser.email || "")}</span>
+        </td>
+        <td>
+          <label class="admin-access-super">
+            <input type="checkbox" data-admin-access-super ${draft.isSuper ? "checked" : ""} ${saving ? "disabled" : ""} />
+            <span>Super admin</span>
+          </label>
+        </td>
+        <td><div class="admin-access-areas">${areaBoxes}</div></td>
+        <td class="admin-access-actions">
+          <button class="btn admin-btn-sm ${saving ? "is-loading" : ""}" type="button" data-action="admin-access-save" ${dirty && !saving ? "" : "disabled"}>${saving ? "Saving..." : "Save"}</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <section class="card admin-section" id="admin-access-section">
+      ${header}
+      ${state.adminAccessRowsError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.adminAccessRowsError)}</div>` : ""}
+      <div class="table-wrap" style="margin-top: 0.9rem;">
+        <table class="admin-access-table">
+          <thead>
+            <tr><th>Admin</th><th>Role</th><th>Areas</th><th><span class="sr-only">Save</span></th></tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || `<tr><td colspan="4" class="subtle">No admin accounts loaded yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+async function saveAdminAccessRow(profileId) {
+  const client = getRelationalClient();
+  const draft = state.adminAccessDrafts?.[profileId];
+  if (!client || !draft || !isUuidValue(profileId)) {
+    return;
+  }
+  state.adminAccessSavingId = profileId;
+  state.skipNextRouteAnimation = true;
+  render();
+  try {
+    const { error } = await runWithTimeoutResult(
+      client.from("admin_permissions").upsert({
+        user_id: profileId,
+        is_super: draft.isSuper === true,
+        areas: draft.isSuper ? [...ADMIN_AREA_IDS] : draft.areas.filter((area) => ADMIN_AREA_IDS.includes(area)),
+      }, { onConflict: "user_id" }),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Saving admin permissions timed out.",
+    );
+    if (error) {
+      throw error;
+    }
+    delete state.adminAccessDrafts[profileId];
+    toast("Admin access saved.");
+  } catch (error) {
+    const message = getErrorMessage(error, "Could not save admin access.");
+    toast(/super admin must remain/i.test(message)
+      ? "At least one super admin must remain. Make another admin super first."
+      : message);
+  } finally {
+    state.adminAccessSavingId = "";
+    await loadAdminAccessRows({ force: true });
+    if (profileId === String(getUserProfileId(getCurrentUser()) || "")) {
+      await loadCurrentAdminAccess();
+    }
+    if (state.route === "admin") {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  }
+}
+
+function wireAdminAccess() {
+  const section = appEl.querySelector("#admin-access-section");
+  if (!section) {
+    return;
+  }
+  section.addEventListener("change", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    const row = input.closest("tr[data-admin-access-id]");
+    const profileId = String(row?.getAttribute("data-admin-access-id") || "");
+    if (!profileId) {
+      return;
+    }
+    const current = getAdminAccessDraft(profileId);
+    const next = { isSuper: current.isSuper, areas: [...current.areas], legacy: false };
+    if (input.hasAttribute("data-admin-access-super")) {
+      next.isSuper = input.checked;
+      // Unticking super keeps whatever areas were ticked underneath it.
+      next.areas = input.checked ? [...ADMIN_AREA_IDS] : next.areas;
+    } else {
+      const area = String(input.getAttribute("data-admin-access-area") || "");
+      next.areas = input.checked
+        ? [...new Set([...next.areas, area])]
+        : next.areas.filter((entry) => entry !== area);
+    }
+    next.areas = ADMIN_AREA_IDS.filter((area) => next.areas.includes(area));
+    state.adminAccessDrafts = { ...(state.adminAccessDrafts || {}), [profileId]: next };
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+  section.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+    if (!button) {
+      return;
+    }
+    const action = button.getAttribute("data-action");
+    if (action === "admin-access-save") {
+      const profileId = String(button.closest("tr[data-admin-access-id]")?.getAttribute("data-admin-access-id") || "");
+      if (profileId) {
+        saveAdminAccessRow(profileId);
+      }
+    } else if (action === "admin-access-reload") {
+      state.adminAccessDrafts = {};
+      loadAdminAccessRows({ force: true }).then(() => {
+        state.skipNextRouteAnimation = true;
+        render();
+      });
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  });
+}
+
+const ADMIN_ACCESS_REFRESH_MS = 60 * 1000;
+
+function ensureCurrentAdminAccessFresh() {
+  if (state.adminAccessLoading) {
+    return;
+  }
+  if (state.adminAccessLoadedAt && Date.now() - state.adminAccessLoadedAt < ADMIN_ACCESS_REFRESH_MS) {
+    return;
+  }
+  loadCurrentAdminAccess().then((changed) => {
+    if (changed && state.route === "admin") {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  });
+}
+
 // Shared admin UI pieces (page header, icon buttons, dialog shell, row menu).
 // Centered dialog shell. `body`/`actions` are trusted HTML; `closeAction` is
 // the data-action shared by the backdrop and the × button, so a caller only
@@ -33557,9 +33993,15 @@ function renderAdmin() {
   if (!user || user.role !== "admin") {
     return `<section class="panel"><p>Access denied.</p></section>`;
   }
-  const activeAdminPage = KNOWN_ADMIN_PAGES.has(String(state.adminPage || "").trim())
+  ensureCurrentAdminAccessFresh();
+  let activeAdminPage = KNOWN_ADMIN_PAGES.has(String(state.adminPage || "").trim())
     ? state.adminPage
     : "dashboard";
+  // Admin layers: a page outside this admin's areas opens the Dashboard.
+  if (!canAdminAccessPage(getCurrentAdminAccess(), activeAdminPage)) {
+    activeAdminPage = "dashboard";
+    state.adminPage = "dashboard";
+  }
   const activeCoursePlatformSection = getAdminCoursePlatformSection();
   if (activeAdminPage === "users" || activeAdminPage === "mcq-subjects" || activeAdminPage === "notifications") {
     syncUsersWithCurriculum();
@@ -33625,6 +34067,8 @@ function renderAdmin() {
       .join("");
 
     const nowMs = Date.now();
+    // Admin layers: cards and panels for areas this admin lacks are left out.
+    const dashboardAccess = getCurrentAdminAccess();
     const dashboardUsers = buildAdminDashboardUserSnapshot(users, nowMs);
     const dashboardCounts = state.adminDashboardCounts || createEmptyAdminDashboardCounts();
     const dashboardCountsLoading = Boolean(state.adminDashboardCountsLoading && !state.adminDashboardCountsLoadedAt);
@@ -33685,7 +34129,12 @@ function renderAdmin() {
             ? "Published but missing an answer"
             : "All published questions usable",
       },
-    ].map((card) => {
+    ].filter((card) => adminAccessHasArea(dashboardAccess, {
+      "users-pending": "people",
+      "users-mcq-held": "people",
+      "course-requests": "video_courses",
+      questions: "mcq",
+    }[card.target] || "people")).map((card) => {
       const countText = formatAdminCount(card.value, { loading: card.loading });
       const attention = Number.isFinite(Number(card.value)) && Number(card.value) > 0;
       return `
@@ -33739,7 +34188,7 @@ function renderAdmin() {
           </section>
 
           <div class="admin-dash-panels">
-            <article class="admin-dash-panel">
+            ${adminAccessHasArea(dashboardAccess, "people") ? `<article class="admin-dash-panel">
               <h3>Students</h3>
               <div class="admin-dash-panel-lead">
                 <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(dashboardUsers.totalStudents))}</span>
@@ -33753,9 +34202,9 @@ function renderAdmin() {
                 ${studentYearRows}
               </div>
               <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-page" data-page="users">Open Users</button>
-            </article>
+            </article>` : ""}
 
-            <article class="admin-dash-panel">
+            ${adminAccessHasArea(dashboardAccess, "mcq") ? `<article class="admin-dash-panel">
               <h3>MCQ Bank</h3>
               <div class="admin-dash-panel-lead">
                 <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(questionCountLoading ? null : questionTotals.published, { loading: questionCountLoading }))}</span>
@@ -33768,9 +34217,9 @@ function renderAdmin() {
                 <div><span>Question counts updated</span><b>${escapeHtml(formatRelativeSyncTime(state.adminQuestionCountLastSyncAt))}</b></div>
               </div>
               <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-page" data-page="questions">Open Questions</button>
-            </article>
+            </article>` : ""}
 
-            <article class="admin-dash-panel">
+            ${adminAccessHasArea(dashboardAccess, "video_courses") ? `<article class="admin-dash-panel">
               <h3>Video Courses</h3>
               <div class="admin-dash-panel-lead">
                 <span class="admin-dash-panel-value">${escapeHtml(formatAdminCount(dashboardCounts.videoCourses, { loading: dashboardCountsLoading }))}</span>
@@ -33783,10 +34232,10 @@ function renderAdmin() {
                 <div><span>Coupons redeemed (7 days)</span><b>${escapeHtml(formatAdminCount(dashboardCounts.couponRedemptionsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
               </div>
               <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-course-platform-section" data-section="overview">Open Catalog</button>
-            </article>
+            </article>` : ""}
           </div>
 
-          <details class="admin-dashboard-more">
+          ${adminAccessHasArea(dashboardAccess, "mcq") ? `<details class="admin-dashboard-more">
             <summary>More statistics</summary>
             <div class="admin-dash-more-content">
               <div class="admin-dash-more-stats">
@@ -33817,7 +34266,7 @@ function renderAdmin() {
                 </table>
               </div>
             </div>
-          </details>
+          </details>` : ""}
         </div>
       </section>
     `;
@@ -33957,6 +34406,8 @@ function renderAdmin() {
           menuItems.push({ label: isApproved ? "Suspend" : "Approve", attrs: 'data-action="toggle-user-approval" data-admin-approval-item' });
         }
         menuItems.push({ label: "Remove user", attrs: 'data-action="remove-user"', danger: true, disabled: isSelf });
+        // Admin accounts are managed by super admins only (database-enforced).
+        const hideAdminRowMenu = account.role === "admin" && !isSelf && !isCurrentAdminSuper();
         const termLabel = account.role === "student"
           ? (year !== null && semester !== null ? `Y${year} · S${semester}` : "No term")
           : "—";
@@ -34007,7 +34458,7 @@ function renderAdmin() {
             : `<small class="admin-user-full-access">Full access</small>`}
             </td>
             <td class="admin-user-actions-cell">
-              ${renderAdminRowMenu({ id: `user-${accountId}`, label: `Actions for ${accountLabel}`, items: menuItems })}
+              ${hideAdminRowMenu ? "" : renderAdminRowMenu({ id: `user-${accountId}`, label: `Actions for ${accountLabel}`, items: menuItems })}
             </td>
           </tr>
         `;
@@ -34200,7 +34651,7 @@ function renderAdmin() {
                 <select name="role">
                   <option value="student" ${addUserDraft.role === "student" ? "selected" : ""}>Student</option>
                   <option value="creator" ${addUserDraft.role === "creator" ? "selected" : ""}>Creator</option>
-                  <option value="admin" ${addUserDraft.role === "admin" ? "selected" : ""}>Admin</option>
+                  ${isCurrentAdminSuper() ? `<option value="admin" ${addUserDraft.role === "admin" ? "selected" : ""}>Admin</option>` : ""}
                 </select>
               </label>
             </div>
@@ -35427,6 +35878,10 @@ function renderAdmin() {
     pageContent = renderAdminAgentsSection();
   }
 
+  if (activeAdminPage === "admin-access") {
+    pageContent = renderAdminAccessSection();
+  }
+
   if (activeAdminPage === "logs") {
     const allLogs = getSystemLogs();
     const totalLogsCount = allLogs.length;
@@ -35959,6 +36414,7 @@ function wireAdmin() {
   document.body.classList.toggle("is-admin-dialog-open", Boolean(appEl.querySelector(".admin-dialog")));
   wireAdminPopups();
   wireAdminUniversities();
+  wireAdminAccess();
 
   // In the phone/tablet rail, bring the current page into view. scrollLeft,
   // not scrollIntoView, so the page itself never jumps.
@@ -53676,11 +54132,14 @@ function isCourseCodeConflictError(error) {
 function getAdminCreatorOptions() {
   const byKey = new Map();
   const add = (id, name, email, publicId) => {
+    const profileId = String(id || "").trim();
     const cleanEmail = String(email || "").trim().toLowerCase();
-    const key = cleanEmail || String(id || "").trim();
+    const key = cleanEmail || profileId;
     const cleanName = String(name || "").trim();
-    if (!key || !cleanName || byKey.has(key)) return;
+    // Only real profile rows: the id becomes platform_courses.owner_id.
+    if (!key || !cleanName || !isUuidValue(profileId) || byKey.has(key)) return;
     byKey.set(key, {
+      id: profileId,
       name: cleanName,
       email: cleanEmail,
       publicId: publicId === null || publicId === undefined ? "" : String(publicId).trim(),
@@ -53695,11 +54154,16 @@ function getAdminCreatorOptions() {
   return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Instructor field: search the creator accounts and pick one. The chosen name
-// goes into the hidden instructor_name input, so drafts and saves are unchanged.
-// A name already stored that is not a creator stays shown until replaced.
-function renderAdminInstructorPicker(currentName) {
+// Instructor field: search the creator accounts and pick one. The pick fills
+// two hidden inputs: instructor_name (the name students see) and owner_id (the
+// creator's profile id). owner_id is what lets that creator edit the course in
+// the app (RLS platform_courses_update_creator and the module/lesson/resource
+// policies); admins may set it freely, and the DB guard stops creators from
+// changing it. A name already stored that is not a creator stays shown until
+// replaced.
+function renderAdminInstructorPicker(currentName, currentOwnerId = "") {
   const name = String(currentName || "").trim();
+  const ownerId = isUuidValue(String(currentOwnerId || "").trim()) ? String(currentOwnerId).trim() : "";
   return `
     <div class="admin-instructor-picker" data-instructor-picker>
       <span class="admin-instructor-picker-label">Instructor</span>
@@ -53719,6 +54183,7 @@ function renderAdminInstructorPicker(currentName) {
         <div class="admin-user-suggestions" data-instructor-suggestions role="listbox" aria-label="Creator accounts" hidden></div>
       </div>
       <input type="hidden" name="instructor_name" value="${escapeHtml(name)}" />
+      <input type="hidden" name="owner_id" value="${escapeHtml(ownerId)}" />
     </div>
   `;
 }
@@ -53727,7 +54192,8 @@ function wireAdminInstructorPicker(pickerEl) {
   const search = pickerEl.querySelector("[data-instructor-search]");
   const list = pickerEl.querySelector("[data-instructor-suggestions]");
   const hidden = pickerEl.querySelector("input[type='hidden'][name='instructor_name']");
-  if (!search || !list || !hidden) return;
+  const ownerInput = pickerEl.querySelector("input[type='hidden'][name='owner_id']");
+  if (!search || !list || !hidden || !ownerInput) return;
   let matches = [];
   let activeIndex = -1;
 
@@ -53736,9 +54202,18 @@ function wireAdminInstructorPicker(pickerEl) {
     search.setAttribute("aria-expanded", "false");
     activeIndex = -1;
   };
-  const choose = (name) => {
+  // creator = an option, or null to clear. Clearing only drops an owner that
+  // is a creator: a course owned by an admin (older rows had owner_id backfilled
+  // from created_by) keeps its owner when the instructor is removed.
+  const choose = (creator) => {
+    const name = creator ? creator.name : "";
     hidden.value = name;
     search.value = name;
+    if (creator) {
+      ownerInput.value = creator.id;
+    } else if (getAdminCreatorOptions().some((option) => option.id === ownerInput.value)) {
+      ownerInput.value = "";
+    }
     close();
     hidden.dispatchEvent(new Event("change", { bubbles: true }));
   };
@@ -53786,7 +54261,7 @@ function wireAdminInstructorPicker(pickerEl) {
       paint();
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (activeIndex >= 0) choose(matches[activeIndex].name);
+      if (activeIndex >= 0) choose(matches[activeIndex]);
     }
   });
   // mousedown, not click: choosing must land before the input's blur.
@@ -53795,13 +54270,13 @@ function wireAdminInstructorPicker(pickerEl) {
     if (!option) return;
     event.preventDefault();
     const creator = matches[Number(option.getAttribute("data-instructor-index"))];
-    if (creator) choose(creator.name);
+    if (creator) choose(creator);
   });
   search.addEventListener("blur", () => {
     // Only a picked creator is kept. Emptying the field clears the instructor;
     // any other typed text falls back to the current choice.
     if (!String(search.value || "").trim()) {
-      if (hidden.value) choose("");
+      if (hidden.value) choose(null);
     } else {
       search.value = hidden.value;
     }
@@ -53827,6 +54302,11 @@ function coerceAdminCourseMetadataPayload(data) {
     price: Math.max(0, Number(data.price) || 0),
     is_active: data.is_active !== false,
     updated_at: nowISO(),
+    // Only forms with the instructor picker send owner_id; other callers leave
+    // the course owner untouched.
+    ...(Object.prototype.hasOwnProperty.call(data, "owner_id")
+      ? { owner_id: isUuidValue(String(data.owner_id || "").trim()) ? String(data.owner_id).trim() : null }
+      : {}),
   };
 }
 
@@ -57045,7 +57525,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           </label>
           <label>Priority<input name="priority" type="number" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "priority", 0))}" /></label>
           ${renderAdminCourseCoverUploadField(dk, "")}
-          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", ""))}
+          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", ""), getAdminCourseBuilderFieldValue(dk, "owner_id", ""))}
           <label>Estimated duration<input name="estimated_duration" placeholder="Example: 2 weeks" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "estimated_duration", ""))}" /></label>
           <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", true)} /> Published</label>
           <label class="course-builder-wide">Description<textarea name="description" rows="2">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", ""))}</textarea></label>
@@ -57077,7 +57557,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           <label>Description<textarea name="description" rows="4">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", selectedCourse.description || ""))}</textarea></label>
           ${renderAdminCourseCoverUploadField(dk, selectedCourse.cover_image_url || "")}
           <label>Intro video URL<input name="intro_video_url" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "intro_video_url", selectedCourse.intro_video_url || ""))}" /></label>
-          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", selectedCourse.instructor_name || ""))}
+          ${renderAdminInstructorPicker(getAdminCourseBuilderFieldValue(dk, "instructor_name", selectedCourse.instructor_name || ""), getAdminCourseBuilderFieldValue(dk, "owner_id", selectedCourse.owner_id || ""))}
           <label>Instructor bio<textarea name="instructor_bio" rows="3">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "instructor_bio", selectedCourse.instructor_bio || ""))}</textarea></label>
           <label>Level<input name="level" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "level", selectedCourse.level || ""))}" /></label>
           <label>Estimated duration<input name="estimated_duration" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "estimated_duration", selectedCourse.estimated_duration || ""))}" /></label>
@@ -57543,7 +58023,7 @@ function adminRenderCourseBuilder(courseId) {
                   Instructor Information
                 </div>
                 <div class="course-metadata-card-body" style="display: flex; flex-direction: column; gap: 1rem;">
-                  ${renderAdminInstructorPicker(selectedCourse.instructor_name || "")}
+                  ${renderAdminInstructorPicker(selectedCourse.instructor_name || "", selectedCourse.owner_id || "")}
                   <label>Instructor bio<textarea name="instructor_bio" rows="3">${escapeHtml(selectedCourse.instructor_bio || "")}</textarea></label>
                 </div>
               </div>

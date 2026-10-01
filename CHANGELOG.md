@@ -9,6 +9,23 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-09-30 — Admin layers (super admins and limited admins)
+- **Super admins** can do everything. Other admins can be limited to areas:
+  People, MCQ Bank, Video Courses, Messaging, System. Choose them on the new
+  **System → Admin access** page (super admins only).
+- A limited admin sees only their areas in the sidebar and on the Dashboard,
+  and the database refuses their changes anywhere else, including from the
+  app. Admin accounts, Site Access and Hermes are for super admins only.
+- Both current admins become super admins. **Needs two database migrations
+  and five Edge Function deploys before it takes effect**; see
+  `docs/admin-layers-runbook.md`. Shipped as `2026-09-30.14`.
+
+### 2026-09-30 — Instructor becomes the course owner
+- Choosing an instructor for a Video Course also makes that creator the
+  course's owner, so they can edit its details, modules, lessons and files in
+  the app. Removing the instructor removes a creator's ownership. Shipped as
+  `2026-09-30.13`.
+
 ### 2026-09-30 — Questions filters, Bulk Import spacing, course code and instructor
 - **Questions**: subject and topic are chosen on the page and apply straight
   away (no Filters pop-up).

@@ -96,7 +96,15 @@ rest of this section dates from 2026-06-30.
   **Do not assume this stays true:** migrations have repeatedly been applied to
   the hosted project without being committed. Check with
   `supabase_migrations.schema_migrations` before trusting this line.
-- **Edge Functions:** 10 are deployed, 9 have source in `supabase/functions/`.
+- **Admin layers (2026-09-30): pending.** Migrations `20260930030000` and
+  `20260930030100` are in the repo but **not applied**, and five Edge
+  Function changes are not deployed. Steps: `docs/admin-layers-runbook.md`.
+  Once applied, every new admin table/page needs an area (AGENTS.md entry).
+- **Edge Functions:** 12 are deployed (checked 2026-09-30), 9 have source in
+  `supabase/functions/`. No source here: `dispatch-notification-pushes`,
+  `delete-my-account`, `verify-play-integrity`; and the deployed
+  `send-push-notification` is newer than the repo copy (Flutter repo). Do not
+  deploy that one from here.
   `dispatch-notification-pushes` (called every minute by the
   `dispatch-notification-pushes` cron job) is deployed with **no source in the
   repo** — recover it before changing anything in that path.
