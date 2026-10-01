@@ -23370,17 +23370,19 @@ function setupGsapScrollReveals(excludeNodes = new Set()) {
   if (!targets.length || !window.ScrollTrigger?.batch) {
     return;
   }
-  gsap.set(targets, { autoAlpha: 0, y: 22, willChange: "transform, opacity" });
+  // Start dimmed, never invisible: if a trigger never fires (scroll restored
+  // past it, ScrollTrigger missing) the content must still be readable.
+  gsap.set(targets, { opacity: 0.35, y: 22, willChange: "transform, opacity" });
   window.ScrollTrigger.batch(targets, {
     id: "mcq-scroll-reveal",
     start: "top 88%",
     once: true,
     onEnter: (batch) => {
       gsap.to(batch, {
-        autoAlpha: 1,
+        opacity: 1,
         y: 0,
-        duration: 0.5,
-        ease: "power2.out",
+        duration: 0.7,
+        ease: "expo.out",
         stagger: 0.055,
         overwrite: "auto",
         clearProps: "opacity,visibility,transform,willChange",
@@ -23440,32 +23442,46 @@ function runGsapRouteEnhancements(options = {}) {
   }
 }
 
+// Route whose marketing intro already played. Boot re-renders the same route
+// several times (auth init, sync); replaying the intro on each one made the
+// hero flicker and sit half-faded for seconds.
+let gsapMarketingIntroRoute = "";
+
 function setupGsapMarketingPageMotion(gsap = getGsapMotionApi()) {
   if (!gsap || isReducedMotionEnabled()) {
     return;
   }
 
   const marketingPage = appEl.querySelector(".marketing-page");
-  if (!(marketingPage instanceof HTMLElement) || marketingPage.dataset.gsapMarketingWired === "1") {
+  if (!(marketingPage instanceof HTMLElement)) {
+    gsapMarketingIntroRoute = "";
+    return;
+  }
+  if (marketingPage.dataset.gsapMarketingWired === "1") {
     return;
   }
   marketingPage.dataset.gsapMarketingWired = "1";
+  const route = String(state.route || "");
+  if (gsapMarketingIntroRoute === route) {
+    return;
+  }
+  gsapMarketingIntroRoute = route;
 
   const _vp = window.innerHeight || document.documentElement.clientHeight || 0;
   const _inVp = (el) => el.getBoundingClientRect().top < _vp * 1.1;
   const heroItems = Array.from(marketingPage.querySelectorAll(
     ".marketing-page-kicker, .marketing-page-title, .marketing-page-lede, .marketing-page-stat, "
-    + ".lp-eyebrow, .lp-hero-title, .lp-hero-lede, .lp-hero-actions, .lp-hero-note, "
-    + ".lp-kicker, .lp-product-title, .lp-product-lede"
+    + ".lp-hero-title, .lp-hero-lede, .lp-hero-actions, .lp-hero-note, "
+    + ".lp-product-title, .lp-product-lede"
   )).filter(_inVp);
   if (heroItems.length) {
     gsap.fromTo(heroItems,
-      { autoAlpha: 0, y: 18 },
+      { opacity: 0.3, y: 14 },
       {
-        autoAlpha: 1,
+        opacity: 1,
         y: 0,
-        duration: 0.58,
-        ease: "power2.out",
+        duration: 0.8,
+        ease: "expo.out",
         stagger: 0.065,
         clearProps: "opacity,visibility,transform",
       },
@@ -23478,13 +23494,12 @@ function setupGsapMarketingPageMotion(gsap = getGsapMotionApi()) {
   )).filter(_inVp);
   if (featureCards.length) {
     gsap.fromTo(featureCards,
-      { autoAlpha: 0, y: 24, scale: 0.985 },
+      { opacity: 0.35, y: 18 },
       {
-        autoAlpha: 1,
+        opacity: 1,
         y: 0,
-        scale: 1,
-        duration: 0.52,
-        ease: "power2.out",
+        duration: 0.7,
+        ease: "expo.out",
         stagger: 0.07,
         delay: 0.06,
         clearProps: "opacity,visibility,transform",
@@ -23809,7 +23824,6 @@ function landingMcqBankSectionHtml() {
   return `
     <div class="lp-product">
       <div class="lp-product-head">
-        <p class="lp-kicker">MCQ Bank</p>
         <h2 class="lp-product-title">A medical MCQ bank made for real exam practice.</h2>
         <p class="lp-product-lede">Build focused blocks by course and topic, answer in tutor or timed mode, and read a clear explanation after every question.</p>
       </div>
@@ -23888,33 +23902,33 @@ function landingMobileAppsSectionHtml() {
 
       <div class="lp-app-showcase">
         <div class="lp-screen-intro">
-          <div><span>Inside the app</span><strong>Real screens. One connected workspace.</strong></div>
+          <strong>Real screens. One connected workspace.</strong>
           <span aria-hidden="true">Swipe to explore →</span>
         </div>
         <div class="lp-screen-reel" tabindex="0" aria-label="MedBank mobile app screenshots. Scroll horizontally to explore all six screens.">
           <figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-01-learning-overview.png" alt="MedBank mobile learning overview with question, subject, course, and lesson progress cards" width="660" height="1434" loading="lazy" decoding="async" />
-            <figcaption><span>01</span>Learning overview</figcaption>
+            <figcaption>Learning overview</figcaption>
           </figure>
           <figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-02-mcq-bank.png" alt="MedBank MCQ Bank showing test statistics, assigned subjects, notebook, and unfinished tests" width="660" height="1434" loading="lazy" decoding="async" />
-            <figcaption><span>02</span>MCQ Bank</figcaption>
+            <figcaption>MCQ Bank</figcaption>
           </figure>
           <figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-03-tutor-question.png" alt="MedBank tutor-mode medical question with the correct answer and explanation revealed" width="660" height="1434" loading="lazy" decoding="async" />
-            <figcaption><span>03</span>Tutor explanations</figcaption>
+            <figcaption>Tutor explanations</figcaption>
           </figure>
           <figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-04-test-results.png" alt="MedBank test results with score, correct and incorrect counts, and answer review" width="660" height="1434" loading="lazy" decoding="async" />
-            <figcaption><span>04</span>Results &amp; review</figcaption>
+            <figcaption>Results &amp; review</figcaption>
           </figure>
           <figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-05-video-courses.png" alt="MedBank Video Courses screen with enrolled course progress" width="660" height="1434" loading="lazy" decoding="async" />
-            <figcaption><span>05</span>Video Courses</figcaption>
+            <figcaption>Video Courses</figcaption>
           </figure>
           <figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-06-profile-settings.png" alt="MedBank profile showing assigned subjects, appearance, language, and help settings" width="660" height="1434" loading="lazy" decoding="async" />
-            <figcaption><span>06</span>Profile &amp; settings</figcaption>
+            <figcaption>Profile &amp; settings</figcaption>
           </figure>
         </div>
       </div>
@@ -23926,7 +23940,6 @@ function landingCoursesSectionHtml() {
   return `
     <div class="lp-product">
       <div class="lp-product-head">
-        <p class="lp-kicker">Video Courses</p>
         <h2 class="lp-product-title">Secure course video, on any device.</h2>
         <p class="lp-product-lede">Watch lectures through a protected streaming pipeline, with access controlled by your course admin.</p>
       </div>
@@ -23954,7 +23967,6 @@ function landingCoursesSectionHtml() {
 function landingContactBodyHtml() {
   return `
     <div class="lp-product-head">
-      <p class="lp-kicker">Contact</p>
       <h2 class="lp-product-title">Get in touch.</h2>
       <p class="lp-product-lede">To bring your courses to MedBank, or for access and pricing details, reach the platform owner directly.</p>
     </div>
@@ -24022,14 +24034,13 @@ function renderLanding() {
 
       <section id="landing-home" class="landing-scroll-section lp-home">
         <div class="lp-hero">
-          <p class="lp-eyebrow">MedBank</p>
           <h1 class="lp-hero-title">Protected courses <span class="lp-plus" aria-hidden="true">+</span> a medical MCQ bank.</h1>
           <p class="lp-hero-lede">Stream lectures securely and practise course-aligned MCQs with instant explanations. One simple platform.</p>
           <div class="lp-hero-actions">
             ${heroActionsHtml}
           </div>
           <div class="lp-hero-explore">
-            <span class="lp-hero-explore-label">Explore:</span>
+            <span class="lp-hero-explore-label">Jump to</span>
             <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mobile-app">Mobile App</button>
             <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
             <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mcqs">MCQ Bank</button>
