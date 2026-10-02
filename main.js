@@ -16276,7 +16276,42 @@ async function syncProfilesToRelational(usersPayload, options = {}) {
     return;
   }
   const dedupedSyncableEntries = dedupeProfileSyncEntries(syncableEntries, currentUser);
-  const syncableRows = dedupedSyncableEntries.map((entry) => entry.row);
+  let syncableRows = dedupedSyncableEntries.map((entry) => entry.row);
+
+  // Admin-managed fields go through UPDATE, not upsert. An upsert fires the
+  // BEFORE INSERT trigger first, and trg_profiles_mcq_eligibility sees a row
+  // with no university/college, judges it ineligible and forces
+  // mcq_access_enabled to false; ON CONFLICT then copies that false into the
+  // existing row. So every admin re-enable of MCQ access was saved as "off".
+  // Only rows that do not exist yet fall through to the upsert below.
+  if (canWriteAdminManagedFields) {
+    const rowsToInsert = [];
+    for (const rowBatch of splitIntoBatches(syncableRows, 5)) {
+      await Promise.all(rowBatch.map(async (row) => {
+        const { id: rowId, ...changes } = row;
+        try {
+          const data = await runRelationalQueryWithTimeout(
+            client.from("profiles").update(changes).eq("id", rowId).select("id"),
+            "Profile sync timed out.",
+          );
+          if (Array.isArray(data) && data.length) {
+            rememberKnownRelationalProfileIds(rowId);
+          } else {
+            rowsToInsert.push(row);
+          }
+        } catch (error) {
+          if (!isProfileUpsertConflictError(error)) {
+            throw error;
+          }
+          console.warn(
+            `Skipped conflicting profile row during sync for ${String(row?.email || rowId || "unknown")}.`,
+            error?.message || error,
+          );
+        }
+      }));
+    }
+    syncableRows = rowsToInsert;
+  }
 
   for (const rowBatch of splitIntoBatches(syncableRows, RELATIONAL_UPSERT_BATCH_SIZE)) {
     try {
