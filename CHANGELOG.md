@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-02 — MCQ access switch stays on
+- Re-enabling MCQ Bank access for a student no longer flips back to off a moment
+  later. Admin profile saves now update the existing row instead of upserting
+  it, which a database trigger turned into "MCQ off". Static cache bust:
+  `2026-10-02.02`.
+
 ### 2026-10-01 — Add user dialog, dialog footers, row menus
 - Add user: Year and Semester only appear for students; "Add user" is in the
   footer next to Cancel.

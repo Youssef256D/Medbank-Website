@@ -189,6 +189,31 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-10-02 — Admin MCQ re-enable no longer saved as "off"
+Frontend only; no schema, RLS or trigger change. Static cache bust: `2026-10-02.02`.
+
+Turning MCQ access back on for an eligible student showed "MCQ Bank access
+enabled", then the switch fell back to off. **Cause:** `syncProfilesToRelational`
+wrote admin fields with `upsert`. Postgres runs BEFORE INSERT triggers on an
+upsert even when it ends as an update, and `trg_profiles_mcq_eligibility`
+(`private.enforce_profile_mcq_eligibility`, from migration `20260928083023`)
+saw a row with no `university_id`/`college` (the sync never sends them), judged
+it ineligible and set `mcq_access_enabled := false`; `ON CONFLICT DO UPDATE`
+then copied that `false` into the real row. The post-toggle re-read showed the
+truth. It hit every admin profile save of an eligible student (approve, edit
+details), not only the switch. Proved on the hosted DB in a rolled-back block:
+upsert → `false`, plain update → `true`.
+
+**Fix:** when admin-managed fields are written, each row is sent as
+`update().eq("id")` (5 in parallel); only rows that update nothing (profile not
+created yet) fall through to the old upsert. **Do not switch this back to a
+plain upsert**, and remember any other client (Flutter) that upserts
+`mcq_access_enabled` has the same problem. A database-side alternative (the
+INSERT branch of the trigger skipping rows that already exist) was not done:
+that trigger gates access and lives in the Flutter repo.
+
+**Files touched:** `main.js`, `index.html`, `CHANGELOG.md`, `AGENTS.md`.
+
 ### 2026-10-01 — Add user dialog by role; dialog footers; row menus open downward
 Frontend only. Static cache bust: `2026-10-02.01`.
 
