@@ -1,13 +1,18 @@
 # Changelog
 
 All notable changes to MedBank are recorded here. This is a human-readable
-companion to `AGENTS.md` (which is the machine-oriented guide for AI coding
+companion to `AGENTS.md` and `docs/refactor-log.md` (which is the machine-oriented guide for AI coding
 tools). Dates are YYYY-MM-DD.
 
 The live site is a static SPA served from the committed files on GitHub Pages;
 hosted Supabase is the source of truth.
 
 ## [Unreleased]
+
+### 2026-10-03 — Refactor log moved to docs/refactor-log.md
+- The AI refactor log moved from `AGENTS.md` to `docs/refactor-log.md`, so it is
+  no longer loaded into every AI session. `AGENTS.md` keeps the hard rules and a
+  short list of load-bearing traps. No site change.
 
 ### 2026-10-02 — MCQ access switch stays on
 - Re-enabling MCQ Bank access for a student no longer flips back to off a moment

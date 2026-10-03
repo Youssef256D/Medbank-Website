@@ -1,7 +1,9 @@
 # CLAUDE.md — MedBank
 
 Guidance for Claude Code in this repo. The shared cross-tool rulebook is
-**@AGENTS.md** (read it — it holds the hard rules and a refactor log). The
+**@AGENTS.md** (read it — it holds the hard rules and the load-bearing traps; the full
+refactor log is in [`docs/refactor-log.md`](docs/refactor-log.md), search it before
+editing an area). The
 architecture map, feature inventory, and risk analysis are in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). This file is the quick index; do
 not duplicate those — point to them.
@@ -15,22 +17,16 @@ browser uses only the anon key; privileged work happens in Edge Functions.
 
 ## Stack
 
-- Vanilla JS SPA — `main.js` (~47k lines, single flat scope, **not** a module or
+- Vanilla JS SPA — `main.js` (single flat scope, **not** a module or
   IIFE): one mutable `state` object, one `render()` router on `state.route`.
 - `bootstrap.js` loads supabase-js + GSAP + Lucide from CDNs, then loads `main.js`.
-- `styles.css` (~15k lines): light/dark/comfort themes.
-- Supabase: 98 migrations in `supabase/migrations/`, 9 Edge Functions in
-  `supabase/functions/` (10 deployed — see the status note below).
-- Optional tooling: esbuild + ESLint (not deployed). `framer-motion` in
-  `package.json` is unused — GSAP (CDN) is the real animation runtime.
+- `styles.css`: light/dark/comfort themes.
+- Supabase: migrations in `supabase/migrations/`, Edge Functions in
+  `supabase/functions/` (not all deployed ones have source here — see status notes).
+- Optional tooling: esbuild + ESLint (not deployed; see `package.json` scripts).
+  GSAP (CDN) is the real animation runtime.
 
 ## Key commands
-
-```bash
-npm run lint          # ESLint (optional; CI runs it)
-npm run build         # esbuild → dist/ (optional; NOT served)
-npm run build:minify  # minified variant
-```
 
 - **No local dev server.** It's a static site — open `index.html`, or use the
   preview tooling. Supabase is hosted, no local DB.
@@ -50,13 +46,13 @@ npm run build:minify  # minified variant
   production (drop `-local` when shipping).
 - **Routing:** add a route = `renderXxx()` + `wireXxx()` reached via `render()`.
 - **Escaping:** wrap every user-controlled string going into `innerHTML` with
-  `escapeHtml()` (~L42284). Choice labels are whitelisted to `A`–`E` via
+  `escapeHtml()` (search `function escapeHtml`). Choice labels are whitelisted to `A`–`E` via
   `normalizeQuestionChoiceLabel`.
 - **Fonts:** headings = Geist (`--font-heading`); body/MCQ reading = Inter
   (`--font-body`). Both loaded from Google Fonts in `index.html` head.
 - **Sync keys:** relational tables are primary; `app_state` is legacy/offline only,
   namespaced `g:<key>` (global) / `u:<uid>:<key>` (user-scoped).
-- **Log a refactor entry** in `AGENTS.md` + `CHANGELOG.md` for changes other tools
+- **Log a refactor entry** at the top of `docs/refactor-log.md` + `CHANGELOG.md` for changes other tools
   should know about.
 
 ## Architecture pointers
