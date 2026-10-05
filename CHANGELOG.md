@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-05 — Clearer "service unavailable" message on Supabase 402
+
+When Supabase restricts the project (HTTP 402, e.g. egress quota exceeded), the
+university picker and profile save now say MedBank is temporarily unavailable
+instead of blaming the user's connection.
+
 ### 2026-10-03 — Refactor log moved to docs/refactor-log.md
 - The AI refactor log moved from `AGENTS.md` to `docs/refactor-log.md`, so it is
   no longer loaded into every AI session. `AGENTS.md` keeps the hard rules and a

@@ -2,6 +2,21 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-05 — Clear message when Supabase restricts the project (HTTP 402)
+Served files: `universities-utils.js`, `index.html` (app-version `2026-10-05.01`).
+
+On 2026-10-04/05 the hosted project was restricted for `exceed_egress_quota`:
+every REST call returned 402 with `{"message":"Service for this project is
+restricted ..."}`, and the university picker said "Check your connection",
+which was wrong. `MedBankUniversities.isServiceRestrictedError()` detects it
+(status 402, or the gateway message text, since supabase-js drops the status
+from the error) and `describeUniversityError()` now returns a neutral
+"temporarily unavailable" line. Billing/quota wording is never shown to students.
+Scope is deliberately narrow: `runRelationalQueryWithTimeout` was **not**
+changed to attach `status` to errors, because `isLikelyTransientSupabaseError`
+and `isProfileUpsertConflictError` read `error.status` and 123 callers would
+change behaviour.
+
 ### 2026-10-03 — Refactor log moved out of AGENTS.md
 Docs only; no served file changed, so no cache bust.
 
