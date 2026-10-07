@@ -2,6 +2,21 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-07 — Mobile browser "get the app" sheet
+`showMobileAppPrompt()` (next to `GOOGLE_PLAY_APP_URL` in `main.js`) shows a
+skippable bottom sheet once boot finishes (`scheduleMobileAppPrompt()` at the end
+of `init()`) when the site is opened in an Android/iOS/iPadOS browser. Links:
+Google Play, plus the two-step TestFlight flow (`TESTFLIGHT_APP_STORE_URL`,
+`TESTFLIGHT_INVITE_URL`); the visitor's own platform is listed first.
+- Never shown inside the native shell (`isNativeMobileAppShell()`), nor on the
+  `session`/`review` routes.
+- Close, backdrop, Esc or "Continue in browser" snooze it for 7 days via
+  localStorage `mcq_mobile_app_prompt_dismissed_at`.
+- Rendered on `document.body`, outside `render()`, so re-renders don't touch it.
+  Styles: `.map-*` block at the end of `styles.css`.
+- If the TestFlight invite link changes or the iOS app goes public, update the two
+  constants (and the "Coming soon" App Store card on the landing page).
+
 ### 2026-10-03 — Refactor log moved out of AGENTS.md
 Docs only; no served file changed, so no cache bust.
 

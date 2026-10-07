@@ -2958,6 +2958,7 @@ async function init() {
   render();
   flushPendingNotificationReadSync().catch(() => { });
   flushPendingNotificationOutbox().catch(() => { });
+  scheduleMobileAppPrompt();
 }
 
 function clearSupabaseBootstrapRetry() {
@@ -23886,6 +23887,135 @@ function landingMcqBankSectionHtml() {
 // Public Google Play listing for the released Android app. The iOS and Huawei
 // builds are not published yet, so their store cards stay non-clickable.
 const GOOGLE_PLAY_APP_URL = "https://play.google.com/store/apps/details?id=medbank.com";
+const TESTFLIGHT_APP_STORE_URL = "https://apps.apple.com/eg/app/testflight/id899247664";
+const TESTFLIGHT_INVITE_URL = "https://testflight.apple.com/join/XzrwmE3k";
+// "Not now" hides the mobile app prompt for this long; it is a suggestion, not a gate.
+const MOBILE_APP_PROMPT_DISMISS_KEY = "mcq_mobile_app_prompt_dismissed_at";
+const MOBILE_APP_PROMPT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+// Never interrupt someone mid-exam or reviewing one.
+const MOBILE_APP_PROMPT_BLOCKED_ROUTES = new Set(["session", "review"]);
+
+function getMobileBrowserPlatform() {
+  try {
+    const ua = String(navigator.userAgent || "");
+    if (/android/i.test(ua)) return "android";
+    if (/iphone|ipad|ipod/i.test(ua)) return "ios";
+    // iPadOS reports a desktop Mac user agent; touch support gives it away.
+    if (/macintosh/i.test(ua) && Number(navigator.maxTouchPoints || 0) > 1) return "ios";
+  } catch (error) {
+    return "";
+  }
+  return "";
+}
+
+function shouldShowMobileAppPrompt() {
+  if (isNativeMobileAppShell()) return false;
+  if (!getMobileBrowserPlatform()) return false;
+  if (MOBILE_APP_PROMPT_BLOCKED_ROUTES.has(state.route)) return false;
+  if (document.getElementById("mobile-app-prompt")) return false;
+  try {
+    const dismissedAt = Number(window.localStorage.getItem(MOBILE_APP_PROMPT_DISMISS_KEY) || 0);
+    if (dismissedAt && Date.now() - dismissedAt < MOBILE_APP_PROMPT_SNOOZE_MS) return false;
+  } catch (error) {
+    // Storage blocked (private mode): still show it; dismissal lasts for this page only.
+  }
+  return true;
+}
+
+function scheduleMobileAppPrompt() {
+  window.setTimeout(() => {
+    if (shouldShowMobileAppPrompt()) showMobileAppPrompt();
+  }, 1200);
+}
+
+function mobileAppPromptAndroidHtml(primary) {
+  return `
+    <a class="map-store-btn${primary ? " is-primary" : ""}" href="${GOOGLE_PLAY_APP_URL}" target="_blank" rel="noopener noreferrer" data-map-store="android">
+      <span class="map-store-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4.5 3.3 19.8 12 4.5 20.7V3.3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="m5 3.8 9.4 10.7M5 20.2l9.4-10.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </span>
+      <span class="map-store-copy"><small>Android · Get it on</small><strong>Google Play</strong></span>
+      <span class="map-store-arrow" aria-hidden="true">&rarr;</span>
+    </a>
+  `;
+}
+
+function mobileAppPromptIosHtml(primary) {
+  return `
+    <div class="map-ios${primary ? " is-primary" : ""}">
+      <div class="map-ios-head">
+        <span class="map-store-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="2.8" width="14" height="18.4" rx="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M10 18h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </span>
+        <span class="map-store-copy"><small>iPhone · iPad · beta via</small><strong>TestFlight</strong></span>
+      </div>
+      <ol class="map-ios-steps">
+        <li>
+          <span class="map-step-num" aria-hidden="true">1</span>
+          <span class="map-step-text">Install TestFlight from the App Store</span>
+          <a class="map-step-btn" href="${TESTFLIGHT_APP_STORE_URL}" target="_blank" rel="noopener noreferrer" data-map-store="testflight">Get</a>
+        </li>
+        <li>
+          <span class="map-step-num" aria-hidden="true">2</span>
+          <span class="map-step-text">Open the invite, then tap Accept &amp; Install</span>
+          <a class="map-step-btn is-strong" href="${TESTFLIGHT_INVITE_URL}" target="_blank" rel="noopener noreferrer" data-map-store="ios">Join</a>
+        </li>
+      </ol>
+    </div>
+  `;
+}
+
+function showMobileAppPrompt() {
+  const platform = getMobileBrowserPlatform();
+  const isIos = platform === "ios";
+  const root = document.createElement("div");
+  root.id = "mobile-app-prompt";
+  root.className = "map-root";
+  root.innerHTML = `
+    <div class="map-backdrop" data-map-dismiss></div>
+    <section class="map-sheet" role="dialog" aria-modal="true" aria-labelledby="map-title" aria-describedby="map-desc">
+      <span class="map-grabber" aria-hidden="true"></span>
+      <button type="button" class="map-close" data-map-dismiss aria-label="Close">&times;</button>
+      <div class="map-hero">
+        <img class="map-app-icon" src="Assets/mobile-app/medbank-app-icon.png" alt="" width="72" height="72" decoding="async" />
+        <div>
+          <p class="map-eyebrow">Better on mobile</p>
+          <h2 id="map-title" class="map-title">MedBank works best in the app</h2>
+        </div>
+      </div>
+      <p id="map-desc" class="map-desc">Faster sessions, a layout made for your phone, and your progress synced with this account. Same login, nothing to lose.</p>
+      <div class="map-stores">
+        ${isIos ? mobileAppPromptIosHtml(true) + mobileAppPromptAndroidHtml(false) : mobileAppPromptAndroidHtml(true) + mobileAppPromptIosHtml(false)}
+      </div>
+      <button type="button" class="map-skip" data-map-dismiss>Continue in browser</button>
+    </section>
+  `;
+
+  const previousFocus = document.activeElement;
+  const close = () => {
+    try {
+      window.localStorage.setItem(MOBILE_APP_PROMPT_DISMISS_KEY, String(Date.now()));
+    } catch (error) {
+      // Ignore: the prompt simply returns on the next visit.
+    }
+    document.removeEventListener("keydown", onKeydown);
+    root.classList.remove("is-open");
+    window.setTimeout(() => root.remove(), 320);
+    if (previousFocus && typeof previousFocus.focus === "function") previousFocus.focus();
+  };
+  const onKeydown = (event) => {
+    if (event.key === "Escape") close();
+  };
+  root.addEventListener("click", (event) => {
+    if (event.target.closest("[data-map-dismiss]")) close();
+  });
+  document.addEventListener("keydown", onKeydown);
+  document.body.appendChild(root);
+  window.requestAnimationFrame(() => {
+    root.classList.add("is-open");
+    root.querySelector(".map-skip")?.focus({ preventScroll: true });
+  });
+}
 
 function landingMobileAppsSectionHtml() {
   return `

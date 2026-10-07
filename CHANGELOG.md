@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-07 — "Get the app" prompt on mobile browsers
+Visitors opening the website on a phone or tablet browser now see a skippable
+sheet linking to Google Play (Android) and the TestFlight beta (iPhone/iPad).
+Skipping hides it for 7 days. It never appears inside the app or during an exam.
+
 ### 2026-10-03 — Refactor log moved to docs/refactor-log.md
 - The AI refactor log moved from `AGENTS.md` to `docs/refactor-log.md`, so it is
   no longer loaded into every AI session. `AGENTS.md` keeps the hard rules and a
