@@ -14,6 +14,12 @@ Visitors opening the website on a phone or tablet browser now see a skippable
 sheet linking to Google Play (Android) and the TestFlight beta (iPhone/iPad).
 Skipping hides it for 7 days. It never appears inside the app or during an exam.
 
+### 2026-10-05 — Clearer "service unavailable" message on Supabase 402
+
+When Supabase restricts the project (HTTP 402, e.g. egress quota exceeded), the
+university picker and profile save now say MedBank is temporarily unavailable
+instead of blaming the user's connection.
+
 ### 2026-10-03 — Refactor log moved to docs/refactor-log.md
 - The AI refactor log moved from `AGENTS.md` to `docs/refactor-log.md`, so it is
   no longer loaded into every AI session. `AGENTS.md` keeps the hard rules and a

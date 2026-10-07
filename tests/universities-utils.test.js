@@ -62,6 +62,11 @@ test('database errors become friendly messages and never leak raw text', () => {
   assert.match(utils.describeUniversityError({ code: '23505', message: 'RAW duplicate' }), /already exists/);
   assert.match(utils.describeUniversityError({ code: '23514', message: 'UNIVERSITY_NOT_AVAILABLE' }), /no longer available/);
   assert.match(utils.describeUniversityError({ code: '42501', message: 'permission denied for table universities' }), /permission/);
+  const restricted = { message: 'Service for this project is restricted due to the following violations: exceed_egress_quota. The project owner must upgrade their plan or remove spend caps to restore service.' };
+  assert.match(utils.describeUniversityError(restricted, 'fallback'), /temporarily unavailable/);
+  assert.doesNotMatch(utils.describeUniversityError(restricted, 'fallback'), /egress|upgrade|plan/i);
+  assert.match(utils.describeUniversityError({ status: 402, message: '' }, 'fallback'), /temporarily unavailable/);
+  assert.equal(utils.isServiceRestrictedError({ code: 'TIMEOUT', message: 'Universities query timed out.' }), false);
   for (const error of [{ code: '23503', message: 'RAW' }, { code: 'XX', message: 'RAW' }, null]) {
     assert.doesNotMatch(utils.describeUniversityError(error), /RAW/);
   }

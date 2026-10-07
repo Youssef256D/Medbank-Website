@@ -126,9 +126,21 @@
 
   // Friendly wording for the Postgres errors the universities/profile writes
   // can raise. Raw database text is never shown.
+  // HTTP 402 from the Supabase gateway: the project is restricted (quota or
+  // billing). supabase-js drops the status from the error, so the gateway's
+  // message text is the reliable signal.
+  function isServiceRestrictedError(error) {
+    const status = text(error?.status || error?.statusCode);
+    return status === "402"
+      || /service for this project is restricted|exceed_\w+_quota/i.test(text(error?.message));
+  }
+
   function describeUniversityError(error, fallback = "Could not save the university. Check your connection and admin session, then retry.") {
     const code = text(error?.code);
     const message = text(error?.message);
+    if (isServiceRestrictedError(error)) {
+      return "MedBank is temporarily unavailable. Your connection is fine; please try again later.";
+    }
     if (code === "23503") {
       return "This university still has students, so it cannot be deleted. Hide it from sign-up instead.";
     }
@@ -259,5 +271,6 @@
     resolveMcqEligibility,
     validateUniversityDraft,
     describeUniversityError,
+    isServiceRestrictedError,
   });
 });
