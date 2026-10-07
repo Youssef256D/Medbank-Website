@@ -14,6 +14,9 @@ Google Play, plus the two-step TestFlight flow (`TESTFLIGHT_APP_STORE_URL`,
   localStorage `mcq_mobile_app_prompt_dismissed_at`.
 - Rendered on `document.body`, outside `render()`, so re-renders don't touch it.
   Styles: `.map-*` block at the end of `styles.css`.
+- English/Arabic switch inside the sheet (`MOBILE_APP_PROMPT_COPY`); defaults to
+  Arabic when `navigator.language` is Arabic, choice kept in localStorage
+  `mcq_mobile_app_prompt_lang`. Arabic renders with `dir="rtl"` on the sheet only.
 - If the TestFlight invite link changes or the iOS app goes public, update the two
   constants (and the "Coming soon" App Store card on the landing page).
 

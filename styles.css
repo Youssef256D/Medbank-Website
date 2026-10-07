@@ -23156,14 +23156,43 @@ body.theme-dark {
   display: block;
   width: 40px;
   height: 5px;
-  margin: 0 auto 14px;
+  margin: 0 auto 10px;
   border-radius: 999px;
   background: var(--line-strong);
 }
+.map-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.map-lang {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+}
+.map-lang button {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.map-lang button[aria-pressed="true"] {
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(9, 25, 39, 0.14);
+}
+.map-sheet[dir="rtl"] .map-eyebrow { letter-spacing: 0; text-transform: none; }
+.map-sheet[lang="ar"] { font-family: var(--font-body), "Geeza Pro", "Noto Sans Arabic", Tahoma, sans-serif; }
 .map-close {
-  position: absolute;
-  top: 12px;
-  right: 12px;
+  flex: none;
   width: 34px;
   height: 34px;
   border: 0;
@@ -23178,7 +23207,6 @@ body.theme-dark {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding-right: 36px;
 }
 .map-app-icon {
   flex: none;
@@ -23248,7 +23276,7 @@ body.theme-dark {
 .map-store-copy { display: flex; flex-direction: column; min-width: 0; }
 .map-store-copy small { font-size: 12px; color: var(--muted); }
 .map-store-copy strong { font-size: 17px; font-weight: 700; }
-.map-store-arrow { margin-left: auto; font-size: 20px; opacity: 0.8; }
+.map-store-arrow { margin-inline-start: auto; font-size: 20px; opacity: 0.8; }
 .map-ios { padding: 12px 14px; }
 .map-ios.is-primary { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
 .map-ios-head { display: flex; align-items: center; gap: 12px; }
@@ -23324,6 +23352,7 @@ body.theme-dark .map-step-btn.is-strong { background: #f5f5f5; color: #111; }
 body.theme-dark .map-store-btn.is-primary .map-store-copy small { color: rgba(0, 0, 0, 0.6); }
 body.theme-dark .map-store-btn.is-primary .map-store-icon { background: rgba(0, 0, 0, 0.08); color: #111; }
 body.theme-dark .map-ios.is-primary { border-color: var(--line-strong); box-shadow: none; }
+body.theme-dark .map-lang button[aria-pressed="true"] { background: #f5f5f5; color: #111; }
 @media (min-width: 640px) {
   .map-root { align-items: center; }
   .map-sheet { border-bottom: 1px solid var(--line); border-radius: 26px; }
