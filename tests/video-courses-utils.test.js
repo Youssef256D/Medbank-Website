@@ -11,6 +11,8 @@ const {
   canAccessModule,
 } = require("../video-courses-utils.js");
 
+const utils = require("../video-courses-utils.js");
+
 const VIDEO_ID = "dQw4w9WgXcQ";
 
 test("normalizes supported YouTube URL formats", () => {
@@ -75,4 +77,46 @@ test("resolves full and partial course access consistently", () => {
   assert.equal(canAccessModule(rows, "course-a", "module-a"), true);
   assert.equal(canAccessModule(rows, "course-a", "module-b"), false);
   assert.equal(canAccessModule(rows, "course-b", "future-module"), true);
+});
+
+test("quiz lesson type is matched case-insensitively", () => {
+  assert.equal(utils.isQuizLessonType("quiz"), true);
+  assert.equal(utils.isQuizLessonType(" Quiz "), true);
+  assert.equal(utils.isQuizLessonType("video"), false);
+  assert.equal(utils.isQuizLessonType(null), false);
+});
+
+test("quiz settings are clamped and default sensibly", () => {
+  assert.deepEqual(utils.normalizeQuizSettings({ pass_percent: "150", max_attempts: "", is_required: "on", show_answers: "on" }), {
+    pass_percent: 100,
+    is_required: true,
+    max_attempts: null,
+    shuffle_questions: false,
+    show_answers: true,
+  });
+  assert.equal(utils.normalizeQuizSettings({ pass_percent: "abc" }).pass_percent, 70);
+  assert.equal(utils.normalizeQuizSettings({ max_attempts: "0" }).max_attempts, 1);
+  assert.equal(utils.normalizeQuizSettings({ max_attempts: "3" }).max_attempts, 3);
+});
+
+test("a quiz question needs a prompt, two options and exactly one correct answer", () => {
+  assert.equal(utils.buildQuizQuestionPayload({ option_1: "a", option_2: "b", correct_option: "1" }).error, "Write the question.");
+  assert.equal(utils.buildQuizQuestionPayload({ prompt: "Q", option_1: "a", correct_option: "1" }).error, "Add at least two options.");
+  assert.match(utils.buildQuizQuestionPayload({ prompt: "Q", option_1: "a", option_2: "b" }).error, /exactly one/);
+  // The mark on a blank option does not count.
+  assert.match(utils.buildQuizQuestionPayload({ prompt: "Q", option_1: "a", option_2: "b", correct_option: "3" }).error, /exactly one/);
+
+  const ok = utils.buildQuizQuestionPayload({ prompt: " Q ", option_1: "a", option_3: "c", correct_option: "3", explanation: "" });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.prompt, "Q");
+  assert.equal(ok.explanation, null);
+  assert.deepEqual(ok.options, [
+    { body: "a", is_correct: false, position: 1 },
+    { body: "c", is_correct: true, position: 2 },
+  ]);
+});
+
+test("quiz server codes map to readable messages", () => {
+  assert.match(utils.quizErrorMessage(new Error("quiz_locked")), /Finish the lessons/);
+  assert.equal(utils.quizErrorMessage(new Error("something else")), "");
 });

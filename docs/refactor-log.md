@@ -2,6 +2,37 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-07 — Sequential courses + in-module quizzes (migration 20261007160000)
+Applied to the hosted project from the Flutter repo (`apply-migration` skill);
+the file is copied here so the ledger and the repo agree.
+- `platform_courses.progression_mode` — `open` (default) or `sequential`. In a
+  sequential course `private.platform_lesson_sequence_open()` gates each lesson
+  on every earlier **blocking** lesson in a module the student **owns**
+  (`private.student_owns_platform_module()` = full enrollment or entitlement).
+  Coupons decide *what* a student owns; the mode only decides the *order*.
+  Free previews and any lesson the student already opened (a progress row
+  exists) stay open. Enforced in `can_access_platform_lesson` and the student
+  SELECT policy on `platform_course_lessons`, so locked rows are withheld.
+- **Do not confuse** `student_owns_platform_module` with the pre-existing
+  `private.owns_platform_module`, which means "the creator owns this module".
+- Quizzes: a lesson with `lesson_type = 'quiz'` + `platform_course_quizzes`
+  (settings), `_quiz_questions`, `_quiz_options` (holds `is_correct`; students
+  have no SELECT at all), `_quiz_attempts`. Students read through
+  `get_platform_quiz` and are graded by `submit_platform_quiz`; a trigger on
+  `platform_lesson_progress` refuses a client write that completes a quiz
+  without a passing attempt (`quiz_not_passed`). A quiz with no questions never
+  blocks the sequence. `get_my_platform_course_progression` returns the
+  outline with locked/available/completed per lesson.
+- Admin tools: `get_platform_quiz_stats` (per-student rows for admins only),
+  `admin_reset_platform_quiz_attempts`, `admin_unlock_platform_lesson`.
+- Website: Course Builder metadata has "Unlock lessons in order"
+  (`renderAdminCourseProgressionField`, only forms with the hidden
+  `progression_mode_field` may change it); lesson type "Quiz"; the lesson
+  editor shows `renderAdminQuizEditor` for quiz lessons. Students see locked
+  lessons as "Continue in the MedBank app" (`loadStudentCourseProgressions`),
+  and quizzes / sequential video lessons have no "Mark complete" on the site —
+  they are finished in the app. Pure helpers are in `video-courses-utils.js`.
+
 ### 2026-10-07 — Mobile browser "get the app" sheet
 `showMobileAppPrompt()` (next to `GOOGLE_PLAY_APP_URL` in `main.js`) shows a
 skippable bottom sheet once boot finishes (`scheduleMobileAppPrompt()` at the end

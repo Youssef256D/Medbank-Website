@@ -107,7 +107,88 @@
     return access.isFullCourse || access.moduleIds.has(String(moduleId || ""));
   }
 
+  // ─── In-module quizzes ────────────────────────────────────────────────
+  // A quiz is a platform_course_lessons row with lesson_type "quiz"; these
+  // helpers turn the admin builder's form fields into rows and validate them
+  // the same way the Flutter app's editor does.
+
+  const QUIZ_LESSON_TYPE = "quiz";
+  const QUIZ_MAX_OPTIONS = 8;
+  const QUIZ_ERROR_MESSAGES = Object.freeze({
+    quiz_locked: "Finish the lessons before this quiz to open it.",
+    no_attempts_left: "All attempts at this quiz have been used.",
+    quiz_empty: "This quiz has no questions yet.",
+    quiz_not_found: "This quiz has not been set up yet.",
+  });
+
+  function isQuizLessonType(type) {
+    return String(type || "").trim().toLowerCase() === QUIZ_LESSON_TYPE;
+  }
+
+  function clampInteger(value, min, max) {
+    const number = Number.parseInt(String(value ?? "").trim(), 10);
+    if (!Number.isFinite(number)) return null;
+    return Math.min(max, Math.max(min, number));
+  }
+
+  /**
+   * Form fields -> platform_course_quizzes row (without lesson_id).
+   * Checkboxes arrive as "on"/true when ticked and absent otherwise.
+   */
+  function normalizeQuizSettings(data = {}) {
+    const pass = clampInteger(data.pass_percent, 0, 100);
+    const attemptsText = String(data.max_attempts ?? "").trim();
+    const attempts = attemptsText ? clampInteger(attemptsText, 1, 100) : null;
+    return {
+      pass_percent: pass === null ? 70 : pass,
+      is_required: Boolean(data.is_required),
+      max_attempts: attempts,
+      shuffle_questions: Boolean(data.shuffle_questions),
+      show_answers: Boolean(data.show_answers),
+    };
+  }
+
+  /**
+   * Form fields (prompt, option_1..option_8, correct_option, explanation) ->
+   * { ok, error, prompt, explanation, options }. Blank options are dropped
+   * and the correct mark follows the option it was on.
+   */
+  function buildQuizQuestionPayload(data = {}) {
+    const prompt = String(data.prompt || "").trim();
+    const explanation = String(data.explanation || "").trim() || null;
+    const correctField = String(data.correct_option || "").trim();
+    const options = [];
+    for (let index = 1; index <= QUIZ_MAX_OPTIONS; index += 1) {
+      const body = String(data[`option_${index}`] || "").trim();
+      if (!body) continue;
+      options.push({
+        body,
+        is_correct: correctField === String(index),
+        position: options.length + 1,
+      });
+    }
+    let error = "";
+    if (!prompt) error = "Write the question.";
+    else if (options.length < 2) error = "Add at least two options.";
+    else if (options.filter((option) => option.is_correct).length !== 1) {
+      error = "Mark exactly one option with text as the correct answer.";
+    }
+    return { ok: !error, error, prompt, explanation, options };
+  }
+
+  function quizErrorMessage(error) {
+    const text = String(error?.message || error || "");
+    const code = Object.keys(QUIZ_ERROR_MESSAGES).find((key) => text.includes(key));
+    return code ? QUIZ_ERROR_MESSAGES[code] : "";
+  }
+
   return Object.freeze({
+    QUIZ_LESSON_TYPE,
+    QUIZ_MAX_OPTIONS,
+    isQuizLessonType,
+    normalizeQuizSettings,
+    buildQuizQuestionPayload,
+    quizErrorMessage,
     YOUTUBE_VIDEO_ID_PATTERN,
     extractYouTubeVideoId,
     buildYouTubeEmbedUrl,

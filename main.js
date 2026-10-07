@@ -50360,7 +50360,7 @@ const COURSE_PLATFORM_TABLES = new Set([
 
 const COURSE_PLATFORM_COURSE_SELECT = "id,course_code,course_name,academic_year,academic_semester,is_active,description,cover_image_url,intro_video_url,instructor_name,instructor_bio,level,estimated_duration,is_published,enrollment_mode,price,updated_at";
 // Admins additionally see the creator review workflow. Students never do.
-const ADMIN_COURSE_PLATFORM_COURSE_SELECT = `${COURSE_PLATFORM_COURSE_SELECT},owner_id,review_status,review_note,submitted_at,reviewed_at`;
+const ADMIN_COURSE_PLATFORM_COURSE_SELECT = `${COURSE_PLATFORM_COURSE_SELECT},owner_id,review_status,review_note,submitted_at,reviewed_at,progression_mode`;
 const COURSE_PLATFORM_LESSON_SELECT = "id,course_id,module_id,is_published,is_free_preview,position,title,description,lesson_type,duration_seconds,video_url,video_provider,youtube_video_id,video_original_url,content_html,created_at,updated_at";
 const LOCAL_DEMO_PLATFORM_IDS = {
   enrolledCourse: "11111111-1111-4111-8111-111111111111",
@@ -50482,6 +50482,7 @@ function resetStudentCoursesPlatformState() {
   state.coursesCatalog = [];
   state.coursesEnrollments = [];
   state.coursesAccess = [];
+  state.coursesProgression = {};
   state.coursesRequests = [];
   state.coursesProgress = [];
   state.coursesDetail = null;
@@ -51289,6 +51290,7 @@ async function loadStudentCoursesWithProgress(options = {}) {
       return true;
     }
     applyStudentCoursesPlatformPayload(nextPayload);
+    loadStudentCourseProgressions(client);
     state.coursesLoading = false;
     clearCoursesPlatformTransientFailure("platform");
     persistStudentCoursesPlatformCache(user);
@@ -52483,6 +52485,12 @@ function renderCourseDetail(courseId) {
             <h3>Course Curriculum</h3>
             <span class="module-count-badge">${modules.length} Module${modules.length === 1 ? "" : "s"}</span>
           </div>
+          ${isStudentCourseSequential(course.id) ? `
+            <div class="course-detail-request-note" style="margin-bottom: 1rem;">
+              <b>Lessons in this course open in order</b>
+              <span>Finish each lesson and pass the required quizzes to unlock the next one. Continue in the MedBank app — your progress is the same on every device.</span>
+            </div>
+          ` : ""}
           ${!modules.length ? `
             <div class="courses-empty-state">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -52519,12 +52527,18 @@ function renderCourseDetail(courseId) {
                         <small>${escapeHtml(formatCourseDurationLabel(lesson.duration_seconds, lesson.is_free_preview ? "Preview" : ""))}</small>
                       </button>
                     `;
-                  }).join("") || `
+                  }).join("")}${getStudentLockedCourseItems(course.id, module.id, moduleLessons).map((item) => `
+                      <button class="course-lesson-row is-sequence-locked" type="button" disabled title="Lessons in this course open in order">
+                        <span class="course-lesson-status"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Locked</span>
+                        <span>${escapeHtml(item.title || "Lesson")}</span>
+                        <small>Continue in the MedBank app</small>
+                      </button>
+                    `).join("") || (moduleLessons.length ? "" : `
                     <div class="course-lessons-empty-state">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                       <span>${moduleUnlocked ? "No lessons added yet in this module." : "Activate access to unlock this module's lessons."}</span>
                     </div>
-                  `}
+                  `)}
                 </div>
               </details>
             `;
@@ -52574,6 +52588,51 @@ function renderCourseDetail(courseId) {
       </div>
     </section>
   `;
+}
+
+// ─── Sequential courses + quizzes (student side) ──────────────────────────
+// A course whose progression_mode is "sequential" opens lessons in order, and
+// the database withholds the rows of lessons that are not open yet. The
+// outline RPC names them so the curriculum can show them locked. Students
+// take quizzes and finish sequential video lessons in the MedBank app; the
+// website points them there rather than offering a button the server would
+// refuse (a quiz) or one that skips "watch to the end" (a YouTube lesson).
+
+function loadStudentCourseProgressions(client) {
+  if (!client) return;
+  const courseIds = [...new Set((state.coursesAccess || [])
+    .map((row) => String(row?.course_id || row?.courseId || "").trim())
+    .filter(isUuidValue))];
+  if (!courseIds.length) return;
+  Promise.all(courseIds.map((courseId) => client
+    .rpc("get_my_platform_course_progression", { p_course_id: courseId })
+    .then(({ data, error }) => [courseId, error ? null : data])
+    .catch(() => [courseId, null])))
+    .then((results) => {
+      const next = {};
+      results.forEach(([courseId, data]) => {
+        if (data && typeof data === "object") next[courseId] = data;
+      });
+      state.coursesProgression = next;
+      if (state.route === "courses") {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+    });
+}
+
+function isStudentCourseSequential(courseId) {
+  return state.coursesProgression?.[String(courseId || "").trim()]?.mode === "sequential";
+}
+
+/** Outline items for one module that the lesson rows do not include: locked. */
+function getStudentLockedCourseItems(courseId, moduleId, moduleLessons) {
+  const outline = state.coursesProgression?.[String(courseId || "").trim()];
+  if (!outline || outline.mode !== "sequential" || !Array.isArray(outline.items)) return [];
+  const known = new Set((moduleLessons || []).map((lesson) => String(lesson?.id || "").trim()));
+  return outline.items.filter((item) => String(item?.module_id || "").trim() === String(moduleId || "").trim()
+    && item?.state === "locked"
+    && !known.has(String(item?.lesson_id || "").trim()));
 }
 
 function getLessonTypeIcon(lessonType, isComplete) {
@@ -52981,6 +53040,11 @@ function renderLessonViewer(lessonId) {
   const isVideoLesson = String(lesson.lesson_type || "").trim().toLowerCase() === "video" || Boolean(rawVideoUrl) || isYouTubeVideo;
   const requiresVideoWatch = isVideoLesson && directVideo && Boolean(rawVideoUrl);
   const canCompleteLesson = isComplete || !requiresVideoWatch || hasWatchedCourseLessonVideo(lesson.id);
+  const isQuizLesson = Boolean(window.MedBankVideoCourses?.isQuizLessonType(lesson.lesson_type));
+  // Quizzes are graded in the app; in a sequential course a video is done
+  // when watched to the end, which only a tracked hosted video can prove here.
+  const completesInApp = !isComplete
+    && (isQuizLesson || (isStudentCourseSequential(lesson.course_id) && isVideoLesson && !requiresVideoWatch));
   const currentModule = (state.coursesModules || []).find((m) => String(m?.id || "").trim() === String(lesson.module_id || "").trim());
   const moduleLessons = lessons.filter((entry) => String(entry?.module_id || "").trim() === String(lesson.module_id || "").trim());
 
@@ -53019,13 +53083,21 @@ function renderLessonViewer(lessonId) {
                 ` : ""}
               </div>
             </div>
-            <button class="btn ${isComplete ? "ghost" : ""}" type="button" data-action="courses-complete-lesson" data-lesson-id="${escapeHtml(lesson.id)}" ${canCompleteLesson ? "" : "disabled"}>
+            ${completesInApp ? "" : `<button class="btn ${isComplete ? "ghost" : ""}" type="button" data-action="courses-complete-lesson" data-lesson-id="${escapeHtml(lesson.id)}" ${canCompleteLesson ? "" : "disabled"}>
               ${isComplete 
                 ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; vertical-align: middle;"><polyline points="20 6 9 17 4 12"/></svg>Completed` 
                 : "Mark complete"
               }
-            </button>
+            </button>`}
           </div>
+          ${completesInApp ? `
+            <div class="course-detail-request-note" style="margin: 0.75rem 0;">
+              <b>${isQuizLesson ? "Take this quiz in the MedBank app" : "Finish this lesson in the MedBank app"}</b>
+              <span>${isQuizLesson
+                ? "Quizzes are answered and graded in the app. Your result counts on every device."
+                : "Lessons in this course open in order: watching this video to the end in the app unlocks the next one."}</span>
+            </div>
+          ` : ""}
           
           ${lesson.description && lesson.description !== currentModule?.title ? `<p class="lesson-description-text">${escapeHtml(lesson.description)}</p>` : ""}
 
@@ -54617,6 +54689,11 @@ function coerceAdminCourseMetadataPayload(data) {
     price: Math.max(0, Number(data.price) || 0),
     is_active: data.is_active !== false,
     updated_at: nowISO(),
+    // Only forms that carry the progression checkbox (marked by the hidden
+    // progression_mode_field) may change it; any other caller leaves it alone.
+    ...(Object.prototype.hasOwnProperty.call(data, "progression_mode_field")
+      ? { progression_mode: data.progression_sequential ? "sequential" : "open" }
+      : {}),
     // Only forms with the instructor picker send owner_id; other callers leave
     // the course owner untouched.
     ...(Object.prototype.hasOwnProperty.call(data, "owner_id")
@@ -55570,6 +55647,13 @@ async function adminCreateLesson(courseId, moduleId, data) {
     }).select("id").single(),
     "Lesson create timed out.",
   );
+  if (created?.id && window.MedBankVideoCourses?.isQuizLessonType(data.lesson_type)) {
+    // Default settings; a quiz with no questions never blocks a student.
+    await runRelationalQueryWithTimeout(
+      client.from("platform_course_quizzes").upsert({ lesson_id: created.id }, { onConflict: "lesson_id" }),
+      "Quiz settings create timed out.",
+    );
+  }
   await loadAdminCoursesPlatform({ force: true });
   return created || true;
 }
@@ -55605,6 +55689,317 @@ async function adminDeleteLesson(lessonId) {
   await runRelationalQueryWithTimeout(client.from("platform_course_lessons").delete().eq("id", lessonId), "Lesson delete timed out.");
   await loadAdminCoursesPlatform({ force: true });
   return true;
+}
+
+// ─── Course progression + in-module quizzes (admin Course Builder) ────────
+// Migration 20261007160000. A quiz is a lesson with lesson_type "quiz" plus a
+// platform_course_quizzes settings row, questions and options. Admin RLS lets
+// these tables be written directly; students only ever see a quiz through the
+// get_platform_quiz / submit_platform_quiz RPCs, which never expose answers.
+// The Flutter app (student runner, Creator Studio, admin) is the other client.
+
+function isAdminQuizLesson(lesson) {
+  return Boolean(window.MedBankVideoCourses?.isQuizLessonType(lesson?.lesson_type));
+}
+
+function renderAdminCourseProgressionField(checkedAttr) {
+  return `
+    <label class="course-builder-check course-builder-wide">
+      <input type="hidden" name="progression_mode_field" value="1" />
+      <input type="checkbox" name="progression_sequential" ${checkedAttr || ""} />
+      Unlock lessons in order
+      <small class="subtle" style="display: block; margin-top: 0.2rem;">Students finish each lesson (watching it to the end) and pass required quizzes before the next one opens. Coupons still decide which modules each student owns; a module they do not own never blocks them.</small>
+    </label>
+  `;
+}
+
+function getAdminQuizEntry(lessonId) {
+  if (!state.adminQuizzes) state.adminQuizzes = {};
+  return state.adminQuizzes[String(lessonId || "")] || null;
+}
+
+function setAdminQuizEntry(lessonId, patch) {
+  if (!state.adminQuizzes) state.adminQuizzes = {};
+  const key = String(lessonId || "");
+  state.adminQuizzes[key] = { ...(state.adminQuizzes[key] || {}), ...patch };
+  return state.adminQuizzes[key];
+}
+
+function rerenderAdminQuizIfVisible() {
+  if (state.route === "admin" && state.adminPage === ADMIN_COURSES_PLATFORM_PAGE) {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+async function loadAdminQuiz(lessonId, { force = false } = {}) {
+  const client = getCoursesPlatformClient();
+  if (!client || !isUuidValue(lessonId)) return false;
+  const current = getAdminQuizEntry(lessonId);
+  if (!force && current?.status === "ready") return true;
+  setAdminQuizEntry(lessonId, { status: "loading", error: "" });
+  try {
+    const [settings, questions, stats] = await Promise.all([
+      runRelationalQueryWithTimeout(
+        client.from("platform_course_quizzes")
+          .select("lesson_id,pass_percent,is_required,max_attempts,shuffle_questions,show_answers")
+          .eq("lesson_id", lessonId)
+          .maybeSingle(),
+        "Quiz settings query timed out.",
+      ),
+      runRelationalQueryWithTimeout(
+        client.from("platform_course_quiz_questions")
+          .select("id,prompt,explanation,position,options:platform_course_quiz_options(id,body,is_correct,position)")
+          .eq("lesson_id", lessonId)
+          .order("position", { ascending: true })
+          .order("created_at", { ascending: true }),
+        "Quiz questions query timed out.",
+      ),
+      client.rpc("get_platform_quiz_stats", { p_lesson_id: lessonId })
+        .then(({ data, error }) => (error ? null : data))
+        .catch(() => null),
+    ]);
+    setAdminQuizEntry(lessonId, {
+      status: "ready",
+      settings: settings || null,
+      questions: (Array.isArray(questions) ? questions : []).map((question) => ({
+        ...question,
+        options: (Array.isArray(question.options) ? question.options : [])
+          .slice()
+          .sort((a, b) => (Number(a.position) || 0) - (Number(b.position) || 0)),
+      })),
+      stats: stats || null,
+    });
+    return true;
+  } catch (error) {
+    setAdminQuizEntry(lessonId, { status: "error", error: getErrorMessage(error, "Quiz could not be loaded.") });
+    return false;
+  }
+}
+
+function queueAdminQuizLoad(lessonId) {
+  const entry = getAdminQuizEntry(lessonId);
+  if (entry?.status === "loading") return;
+  setAdminQuizEntry(lessonId, { status: "loading" });
+  window.setTimeout(() => {
+    loadAdminQuiz(lessonId, { force: true }).then(rerenderAdminQuizIfVisible);
+  }, 0);
+}
+
+async function adminSaveQuizSettings(lessonId, data) {
+  const client = getCoursesPlatformClient();
+  if (!client || !isUuidValue(lessonId)) throw new Error("Quiz settings cannot be saved.");
+  const settings = window.MedBankVideoCourses.normalizeQuizSettings(data);
+  await runRelationalQueryWithTimeout(
+    client.from("platform_course_quizzes").upsert({ lesson_id: lessonId, ...settings }, { onConflict: "lesson_id" }),
+    "Quiz settings save timed out.",
+  );
+  await loadAdminQuiz(lessonId, { force: true });
+  return true;
+}
+
+async function adminSaveQuizQuestion(lessonId, data) {
+  const client = getCoursesPlatformClient();
+  if (!client || !isUuidValue(lessonId)) throw new Error("Question cannot be saved.");
+  const payload = window.MedBankVideoCourses.buildQuizQuestionPayload(data);
+  if (!payload.ok) throw new Error(payload.error);
+  // A quiz created before its settings row (or from another client) gets the
+  // defaults first: questions reference the settings row.
+  await runRelationalQueryWithTimeout(
+    client.from("platform_course_quizzes").upsert({ lesson_id: lessonId }, { onConflict: "lesson_id", ignoreDuplicates: true }),
+    "Quiz settings create timed out.",
+  );
+  let questionId = String(data.question_id || "").trim();
+  if (isUuidValue(questionId)) {
+    await runRelationalQueryWithTimeout(
+      client.from("platform_course_quiz_questions")
+        .update({ prompt: payload.prompt, explanation: payload.explanation })
+        .eq("id", questionId),
+      "Question save timed out.",
+    );
+    // Options are replaced wholesale; attempts keep only the chosen id.
+    await runRelationalQueryWithTimeout(
+      client.from("platform_course_quiz_options").delete().eq("question_id", questionId),
+      "Question save timed out.",
+    );
+  } else {
+    const count = (getAdminQuizEntry(lessonId)?.questions || []).length;
+    const created = await runRelationalQueryWithTimeout(
+      client.from("platform_course_quiz_questions")
+        .insert({ lesson_id: lessonId, prompt: payload.prompt, explanation: payload.explanation, position: count + 1 })
+        .select("id")
+        .single(),
+      "Question create timed out.",
+    );
+    questionId = String(created?.id || "");
+  }
+  await runRelationalQueryWithTimeout(
+    client.from("platform_course_quiz_options").insert(
+      payload.options.map((option) => ({ ...option, question_id: questionId })),
+    ),
+    "Question options save timed out.",
+  );
+  setAdminQuizEntry(lessonId, { editingQuestionId: "", preset: "" });
+  await loadAdminQuiz(lessonId, { force: true });
+  return true;
+}
+
+async function adminDeleteQuizQuestion(lessonId, questionId) {
+  const client = getCoursesPlatformClient();
+  if (!client || !isUuidValue(questionId)) throw new Error("Question cannot be deleted.");
+  await runRelationalQueryWithTimeout(
+    client.from("platform_course_quiz_questions").delete().eq("id", questionId),
+    "Question delete timed out.",
+  );
+  await loadAdminQuiz(lessonId, { force: true });
+  return true;
+}
+
+async function adminMoveQuizQuestion(lessonId, questionId, direction) {
+  const client = getCoursesPlatformClient();
+  const questions = [...(getAdminQuizEntry(lessonId)?.questions || [])];
+  const index = questions.findIndex((question) => String(question.id) === String(questionId));
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (!client || index < 0 || target < 0 || target >= questions.length) return false;
+  questions.splice(target, 0, questions.splice(index, 1)[0]);
+  await Promise.all(questions.map((question, position) => runRelationalQueryWithTimeout(
+    client.from("platform_course_quiz_questions").update({ position: position + 1 }).eq("id", question.id),
+    "Question move timed out.",
+  )));
+  await loadAdminQuiz(lessonId, { force: true });
+  return true;
+}
+
+async function adminResetQuizAttempts(lessonId, userId) {
+  const client = getCoursesPlatformClient();
+  if (!client || !isUuidValue(lessonId) || !isUuidValue(userId)) throw new Error("Attempts cannot be reset.");
+  const { error } = await client.rpc("admin_reset_platform_quiz_attempts", { p_user_id: userId, p_lesson_id: lessonId });
+  if (error) throw error;
+  await loadAdminQuiz(lessonId, { force: true });
+  return true;
+}
+
+function formatAdminQuizPercent(value) {
+  const number = Number(value) || 0;
+  return Number.isInteger(number) ? String(number) : number.toFixed(1);
+}
+
+function renderAdminQuizEditor(lesson) {
+  const lessonId = String(lesson?.id || "");
+  const entry = getAdminQuizEntry(lessonId);
+  if (!entry || (entry.status === "loading" && !entry.questions)) {
+    if (!entry) queueAdminQuizLoad(lessonId);
+    return `<section class="course-builder-form admin-quiz-editor" data-quiz-lesson-id="${escapeHtml(lessonId)}"><p class="subtle">Loading quiz…</p></section>`;
+  }
+  if (entry.status === "error") {
+    return `
+      <section class="course-builder-form admin-quiz-editor" data-quiz-lesson-id="${escapeHtml(lessonId)}">
+        <p class="subtle" style="color: var(--danger);">${escapeHtml(entry.error || "Quiz could not be loaded.")}</p>
+        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-refresh">Try again</button>
+      </section>
+    `;
+  }
+
+  const settings = entry.settings || {};
+  const questions = entry.questions || [];
+  const editing = questions.find((question) => String(question.id) === String(entry.editingQuestionId || "")) || null;
+  const maxOptions = window.MedBankVideoCourses?.QUIZ_MAX_OPTIONS || 8;
+  const presetTrueFalse = !editing && entry.preset === "true-false";
+  const formOptions = editing
+    ? editing.options.map((option) => ({ body: option.body, isCorrect: Boolean(option.is_correct) }))
+    : presetTrueFalse
+      ? [{ body: "True", isCorrect: false }, { body: "False", isCorrect: false }]
+      : [];
+  const optionCount = Math.max(editing ? formOptions.length + 1 : presetTrueFalse ? 2 : 4, 2);
+  const optionRows = Array.from({ length: Math.min(maxOptions, optionCount) }, (_, index) => {
+    const option = formOptions[index] || { body: "", isCorrect: false };
+    return `
+      <div class="admin-quiz-option-row" style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="radio" name="correct_option" value="${index + 1}" ${option.isCorrect ? "checked" : ""} aria-label="Option ${index + 1} is correct" />
+        <input name="option_${index + 1}" value="${escapeHtml(option.body)}" placeholder="Option ${index + 1}" style="flex: 1;" />
+      </div>
+    `;
+  }).join("");
+
+  const stats = entry.stats;
+  const students = Array.isArray(stats?.by_student) ? stats.by_student : [];
+
+  return `
+    <section class="course-builder-form admin-quiz-editor" data-quiz-lesson-id="${escapeHtml(lessonId)}" style="margin-top: 1.25rem;">
+      <div class="course-builder-editor-header" style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;">
+        <h4>Quiz</h4>
+        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-refresh">Refresh</button>
+      </div>
+      <p class="subtle" style="margin-top: -0.35rem;">Students take this quiz in the MedBank app. Answers are graded on the server and never sent to students. Place it between lessons with the outline's move buttons.</p>
+
+      <form data-role="admin-quiz-settings-form" class="course-builder-grid compact" style="margin-top: 0.75rem;">
+        <label>Pass mark (%)<input name="pass_percent" type="number" min="0" max="100" value="${escapeHtml(settings.pass_percent ?? 70)}" /></label>
+        <label>Attempts allowed<input name="max_attempts" type="number" min="1" max="100" placeholder="Unlimited" value="${escapeHtml(settings.max_attempts ?? "")}" /></label>
+        <label class="course-builder-check"><input type="checkbox" name="is_required" ${settings.is_required !== false ? "checked" : ""} /> Required to continue (blocks the next lesson in courses that unlock in order)</label>
+        <label class="course-builder-check"><input type="checkbox" name="shuffle_questions" ${settings.shuffle_questions ? "checked" : ""} /> Shuffle question order</label>
+        <label class="course-builder-check"><input type="checkbox" name="show_answers" ${settings.show_answers !== false ? "checked" : ""} /> Show correct answers after submitting</label>
+        <button class="btn admin-btn-sm" type="submit">Save quiz settings</button>
+      </form>
+
+      <h5 style="margin: 1.25rem 0 0.5rem;">Questions (${questions.length})</h5>
+      ${questions.length ? `
+        <ol class="admin-quiz-question-list" style="display: grid; gap: 0.75rem; padding-left: 1.25rem;">
+          ${questions.map((question, index) => `
+            <li>
+              <b>${escapeHtml(question.prompt)}</b>
+              <ul style="margin: 0.35rem 0; padding-left: 1rem;">
+                ${question.options.map((option) => `<li style="${option.is_correct ? "color: var(--success, #2b9348); font-weight: 600;" : ""}">${option.is_correct ? "✓ " : ""}${escapeHtml(option.body)}</li>`).join("")}
+              </ul>
+              ${question.explanation ? `<small class="subtle">${escapeHtml(question.explanation)}</small>` : ""}
+              <div class="stack" style="margin-top: 0.35rem;">
+                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-edit-question" data-question-id="${escapeHtml(question.id)}">Edit</button>
+                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-move-question" data-question-id="${escapeHtml(question.id)}" data-direction="up" ${index === 0 ? "disabled" : ""}>Move up</button>
+                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-move-question" data-question-id="${escapeHtml(question.id)}" data-direction="down" ${index === questions.length - 1 ? "disabled" : ""}>Move down</button>
+                <button class="btn danger admin-btn-sm" type="button" data-action="admin-quiz-delete-question" data-question-id="${escapeHtml(question.id)}">Delete</button>
+              </div>
+            </li>
+          `).join("")}
+        </ol>
+      ` : `<p class="subtle">No questions yet. Students do not see the quiz until it has at least one, and an empty quiz never blocks anyone.</p>`}
+
+      <form data-role="admin-quiz-question-form" class="course-builder-grid" style="margin-top: 1rem;">
+        <input type="hidden" name="question_id" value="${escapeHtml(editing?.id || "")}" />
+        <label class="course-builder-wide">${editing ? "Edit question" : "New question"}<textarea name="prompt" rows="2" required>${escapeHtml(editing?.prompt || "")}</textarea></label>
+        <div class="course-builder-wide" style="display: grid; gap: 0.4rem;">
+          <small class="subtle">Pick the radio button next to the correct answer. Blank options are ignored.</small>
+          ${optionRows}
+        </div>
+        <label class="course-builder-wide">Explanation (shown after submitting)<textarea name="explanation" rows="2">${escapeHtml(editing?.explanation || "")}</textarea></label>
+        <div class="stack course-builder-wide">
+          <button class="btn admin-btn-sm" type="submit">${editing ? "Save question" : "Add question"}</button>
+          ${editing
+            ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-cancel-edit">Cancel</button>`
+            : `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-preset" data-preset="${presetTrueFalse ? "" : "true-false"}">${presetTrueFalse ? "Multiple choice instead" : "True / false"}</button>`}
+        </div>
+      </form>
+
+      <h5 style="margin: 1.25rem 0 0.5rem;">Results</h5>
+      ${stats ? `
+        <p class="subtle">${escapeHtml(String(stats.attempts || 0))} attempts · ${escapeHtml(String(stats.students || 0))} students · ${escapeHtml(String(stats.students_passed || 0))} passed${stats.average_score != null ? ` · average ${escapeHtml(formatAdminQuizPercent(stats.average_score))}%` : ""}</p>
+        ${students.length ? `
+          <div class="table-wrap"><table>
+            <thead><tr><th>Student</th><th>Attempts</th><th>Best</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              ${students.map((student) => `
+                <tr>
+                  <td>${escapeHtml(student.full_name || "—")}${student.public_user_id ? ` <small class="subtle">#${escapeHtml(String(student.public_user_id))}</small>` : ""}</td>
+                  <td>${escapeHtml(String(student.attempts || 0))}</td>
+                  <td>${escapeHtml(formatAdminQuizPercent(student.best_score))}%</td>
+                  <td>${student.passed ? "Passed" : "Not passed"}</td>
+                  <td><button class="btn ghost admin-btn-sm" type="button" data-action="admin-quiz-reset-attempts" data-user-id="${escapeHtml(student.user_id)}">Reset attempts</button></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table></div>
+        ` : ""}
+      ` : `<p class="subtle">No results yet.</p>`}
+    </section>
+  `;
 }
 
 function getCourseMaterialUploadFile(data) {
@@ -57686,8 +58081,10 @@ function renderSyllabusOutline(selectedCourse, rows) {
         <div class="outline-lesson-item ${isLessonActive ? "is-active" : ""}">
           <div class="outline-lesson-info" data-action="admin-select-builder-active" data-active-type="lesson-edit" data-active-id="${escapeHtml(lesson.id)}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--brand-strong); flex-shrink: 0;">
-              ${lesson.lesson_type === "video" 
-                ? '<polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>' 
+              ${isAdminQuizLesson(lesson)
+                ? '<circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line>'
+                : lesson.lesson_type === "video"
+                ? '<polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>'
                 : '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline>'}
             </svg>
             <span class="outline-lesson-title" title="${escapeHtml(lesson.title)}">${escapeHtml(lesson.title)}</span>
@@ -57885,6 +58282,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           </label>
           <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", selectedCourse.is_published)} /> Published course</label>
           <label class="course-builder-check"><input type="checkbox" name="is_active" ${getAdminCourseBuilderCheckboxState(dk, "is_active", selectedCourse.is_active !== false)} /> Active course</label>
+          ${renderAdminCourseProgressionField(getAdminCourseBuilderCheckboxState(dk, "progression_sequential", selectedCourse.progression_mode === "sequential"))}
         </div>
         <div class="stack" style="margin-top: 0.75rem;">
           <button class="btn admin-btn-sm" type="submit">Save course metadata</button>
@@ -57978,6 +58376,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
                 <option value="video" ${getAdminCourseBuilderOptionSelected(dk, "lesson_type", "video", "video")}>Video</option>
                 <option value="text" ${getAdminCourseBuilderOptionSelected(dk, "lesson_type", "text", "video")}>Text</option>
                 <option value="mixed" ${getAdminCourseBuilderOptionSelected(dk, "lesson_type", "mixed", "video")}>Mixed</option>
+                <option value="quiz" ${getAdminCourseBuilderOptionSelected(dk, "lesson_type", "quiz", "video")}>Quiz (add questions after creating it)</option>
               </select>
             </label>
             <label class="course-builder-wide">YouTube URL
@@ -58019,6 +58418,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
                 <option value="video" ${getAdminCourseBuilderOptionSelected(dkLesson, "lesson_type", "video", lesson.lesson_type)}>Video</option>
                 <option value="text" ${getAdminCourseBuilderOptionSelected(dkLesson, "lesson_type", "text", lesson.lesson_type)}>Text</option>
                 <option value="mixed" ${getAdminCourseBuilderOptionSelected(dkLesson, "lesson_type", "mixed", lesson.lesson_type)}>Mixed</option>
+                <option value="quiz" ${getAdminCourseBuilderOptionSelected(dkLesson, "lesson_type", "quiz", lesson.lesson_type)}>Quiz</option>
               </select>
             </label>
             <label class="course-builder-wide">YouTube URL
@@ -58040,6 +58440,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           </div>
         </form>
 
+        ${isAdminQuizLesson(lesson) ? renderAdminQuizEditor(lesson) : ""}
         ${renderCourseMaterialManagerMarkup(dkResource, lessonResources)}
       </div>
     `;
@@ -58309,6 +58710,7 @@ function adminRenderCourseBuilder(courseId) {
                     <label class="course-builder-check" style="margin: 0;"><input type="checkbox" name="is_published" ${selectedCourse.is_published ? "checked" : ""} /> Published course</label>
                     <label class="course-builder-check" style="margin: 0;"><input type="checkbox" name="is_active" ${selectedCourse.is_active !== false ? "checked" : ""} /> Active course</label>
                   </div>
+                  ${renderAdminCourseProgressionField(selectedCourse.progression_mode === "sequential" ? "checked" : "")}
                 </div>
               </div>
 
@@ -58729,6 +59131,15 @@ function wireAdminCoursesPlatformBuilder() {
       event.preventDefault();
       const lessonId = form.closest("[data-lesson-id]")?.getAttribute("data-lesson-id") || "";
       runAdminCourseAction("Lesson updated.", () => adminUpdateLesson(lessonId, readAdminCourseActionData(form)), form);
+    } else if (role === "admin-quiz-settings-form") {
+      event.preventDefault();
+      const lessonId = form.closest("[data-quiz-lesson-id]")?.getAttribute("data-quiz-lesson-id") || "";
+      runAdminCourseAction("Quiz settings saved.", () => adminSaveQuizSettings(lessonId, readFormDataObject(form)), form);
+    } else if (role === "admin-quiz-question-form") {
+      event.preventDefault();
+      const lessonId = form.closest("[data-quiz-lesson-id]")?.getAttribute("data-quiz-lesson-id") || "";
+      const data = readFormDataObject(form);
+      runAdminCourseAction(data.question_id ? "Question saved." : "Question added.", () => adminSaveQuizQuestion(lessonId, data), form);
     } else if (role === "admin-resource-create-form") {
       event.preventDefault();
       const lessonId = form.closest("[data-lesson-id]")?.getAttribute("data-lesson-id") || "";
@@ -58983,6 +59394,26 @@ function wireAdminCoursesPlatformBuilder() {
           state.adminCourseBuilderActiveParentId = "";
         }
       });
+    } else if (action.startsWith("admin-quiz-")) {
+      const lessonId = button.closest("[data-quiz-lesson-id]")?.getAttribute("data-quiz-lesson-id") || "";
+      const questionId = button.getAttribute("data-question-id") || "";
+      if (action === "admin-quiz-refresh") {
+        runAdminCourseAction("Quiz refreshed.", () => loadAdminQuiz(lessonId, { force: true }));
+      } else if (action === "admin-quiz-edit-question" || action === "admin-quiz-cancel-edit") {
+        setAdminQuizEntry(lessonId, { editingQuestionId: action === "admin-quiz-edit-question" ? questionId : "", preset: "" });
+        rerenderAdminQuizIfVisible();
+      } else if (action === "admin-quiz-preset") {
+        setAdminQuizEntry(lessonId, { preset: button.getAttribute("data-preset") || "" });
+        rerenderAdminQuizIfVisible();
+      } else if (action === "admin-quiz-move-question") {
+        runAdminCourseAction("Question moved.", () => adminMoveQuizQuestion(lessonId, questionId, button.getAttribute("data-direction") || ""));
+      } else if (action === "admin-quiz-delete-question") {
+        if (!window.confirm("Delete this question?")) return;
+        runAdminCourseAction("Question deleted.", () => adminDeleteQuizQuestion(lessonId, questionId));
+      } else if (action === "admin-quiz-reset-attempts") {
+        if (!window.confirm("Clear this student's attempts at this quiz? They start again with a full set of tries.")) return;
+        runAdminCourseAction("Attempts reset.", () => adminResetQuizAttempts(lessonId, button.getAttribute("data-user-id") || ""));
+      }
     } else if (action === "admin-delete-resource") {
       const resourceId = button.getAttribute("data-resource-id") || "";
       if (!window.confirm("Delete this resource?")) return;
