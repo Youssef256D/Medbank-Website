@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-07 — Lessons in order, and quizzes inside modules
+Creators and admins can make a course open its lessons in order: each lesson
+unlocks once the ones before it are finished. Coupons still decide which
+modules a student owns. Courses can now contain quizzes between lessons or at
+the end of a module, written by the creator or an admin, optionally required
+to continue. Admins manage both from the Course Builder; students take quizzes
+in the MedBank app.
+
 ### 2026-10-07 — "Get the app" prompt on mobile browsers
 Visitors opening the website on a phone or tablet browser now see a skippable
 sheet linking to Google Play (Android) and the TestFlight beta (iPhone/iPad).
