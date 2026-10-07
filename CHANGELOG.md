@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-07 — "Get the app" prompt on mobile browsers
+Visitors opening the website on a phone or tablet browser now see a skippable
+sheet linking to Google Play (Android) and the TestFlight beta (iPhone/iPad).
+Skipping hides it for 7 days. It never appears inside the app or during an exam.
+The sheet has an English/العربية switch and opens in Arabic on Arabic-language phones.
+
 ### 2026-10-05 — Clearer "service unavailable" message on Supabase 402
 
 When Supabase restricts the project (HTTP 402, e.g. egress quota exceeded), the
