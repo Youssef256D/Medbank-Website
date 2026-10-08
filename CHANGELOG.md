@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-08 — Less load on the backend when it is struggling
+Students saw spinners on every screen in the app and the site because the
+backend was overloaded, and the site was adding to it. When a student refresh
+failed, every open tab fell back to downloading a stale ~3 MB question backup
+from `app_state`, which kept the backend overloaded. The site no longer
+downloads that backup, waits longer between retries after a failure (30s
+doubling to 5 min), and polls saved tests every 30s (was 6s) and the
+maintenance gate every 60s (was 6s).
+
 ### 2026-10-07 — Lessons in order, and quizzes inside modules
 Creators and admins can make a course open its lessons in order: each lesson
 unlocks once the ones before it are finished. Coupons still decide which

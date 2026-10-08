@@ -2,6 +2,24 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-08 — app_state fallback no longer pulls users/questions; refresh backoff
+- `refreshStudentDataFromSupabaseState` (the fallback when the relational
+  refresh fails) no longer hydrates `STORAGE_KEYS.users` / `STORAGE_KEYS.questions`.
+  `g:mcq_questions` is a stale ~3 MB legacy blob (last written 2026-06-13); edge
+  logs showed ~1,300 fetches/hour of it during an overload, because the
+  fallback only fires when the backend is already failing. **Do not add them
+  back** — relational tables are the source for both.
+- `noteStudentDataRefreshFailure()` / `noteStudentDataRefreshSuccess()` set
+  `studentDataRefreshBackoffUntil` (30s doubling, 5 min cap), checked in
+  `shouldRefreshStudentData`.
+- `STUDENT_SESSION_LIVE_REFRESH_MS` 6s → 30s (realtime-down fallback poll that
+  re-reads the up-to-1.3 MB `mcq_sessions` blob); `SITE_MAINTENANCE_GATE_REFRESH_MS`
+  6s → 60s.
+- Same day, outside this repo: pg_cron jobs 2 (push dispatch) and 3 (student
+  auto-approval sweep) moved from every minute to `*/5 * * * *` via
+  `cron.alter_job` on the live project. No migration yet — re-applying the
+  migration that schedules the push dispatcher will revert it.
+
 ### 2026-10-07 — Sequential courses + in-module quizzes (migration 20261007160000)
 Applied to the hosted project from the Flutter repo (`apply-migration` skill);
 the file is copied here so the ledger and the repo agree.

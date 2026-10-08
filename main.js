@@ -301,7 +301,15 @@ const ADMIN_QUESTION_BACKGROUND_REFRESH_MS = 180000;
 const ADMIN_BACKUP_RESTORE_CHECK_COOLDOWN_MS = 5 * 60 * 1000;
 const STUDENT_DATA_REFRESH_MS = 30000;
 const STUDENT_FULL_DATA_REFRESH_MS = 10 * 60 * 1000;
-const STUDENT_SESSION_LIVE_REFRESH_MS = 6000;
+// Fallback only: this poll runs while the session realtime channel is down,
+// which is exactly when the backend is struggling. Each tick can pull a
+// multi-megabyte `mcq_sessions` blob, so it must not run every few seconds.
+const STUDENT_SESSION_LIVE_REFRESH_MS = 30000;
+// After a failed relational refresh, wait this long before the background
+// poll tries again, doubling per consecutive failure up to the cap. Retrying
+// at full speed against an overloaded backend keeps it overloaded.
+const STUDENT_DATA_REFRESH_BACKOFF_BASE_MS = 30000;
+const STUDENT_DATA_REFRESH_BACKOFF_MAX_MS = 5 * 60 * 1000;
 const STUDENT_FORCE_REFRESH_POLL_MS = 15000;
 const STUDENT_BACKGROUND_SYNC_POLL_MS = 10000;
 const STUDENT_ACCESS_POLL_MS = 6000;
@@ -313,7 +321,7 @@ const STUDENT_REFRESH_BROADCAST_EVENT = "student-refresh-signal";
 const STUDENT_REFRESH_ACK_BROADCAST_EVENT = "student-refresh-ack";
 const STUDENT_REFRESH_ACK_WAIT_MS = 1600;
 const STUDENT_REFRESH_SUBSCRIBE_TIMEOUT_MS = 2200;
-const SITE_MAINTENANCE_GATE_REFRESH_MS = 6000;
+const SITE_MAINTENANCE_GATE_REFRESH_MS = 60000;
 const NOTIFICATION_REALTIME_DEBOUNCE_MS = 220;
 const SESSION_REALTIME_DEBOUNCE_MS = 900;
 const CONTENT_REALTIME_DEBOUNCE_MS = 300;
@@ -1363,6 +1371,8 @@ let studentForceRefreshPollHandle = null;
 let studentForceRefreshInFlight = false;
 let studentBackgroundRefreshPollHandle = null;
 let studentBackgroundRefreshInFlight = false;
+let studentDataRefreshFailureStreak = 0;
+let studentDataRefreshBackoffUntil = 0;
 let studentAccessPollHandle = null;
 let studentAccessPollInFlight = false;
 let siteMaintenanceGateRefreshHandle = null;
@@ -21689,11 +21699,30 @@ function shouldRefreshStudentData(user) {
   if (state.studentDataRefreshing) {
     return false;
   }
+  if (Date.now() < studentDataRefreshBackoffUntil) {
+    return false;
+  }
   if (shouldForceStudentQuestionCatalogRefresh(user)) {
     return true;
   }
   const last = Number(state.studentDataLastSyncAt || 0);
   return !last || (Date.now() - last) > STUDENT_DATA_REFRESH_MS;
+}
+
+// Relational refresh failed: hold the background poll off for 30s, 60s,
+// 120s... up to 5 minutes, so open tabs stop hammering a struggling backend.
+function noteStudentDataRefreshFailure() {
+  const delay = Math.min(
+    STUDENT_DATA_REFRESH_BACKOFF_BASE_MS * (2 ** studentDataRefreshFailureStreak),
+    STUDENT_DATA_REFRESH_BACKOFF_MAX_MS,
+  );
+  studentDataRefreshFailureStreak = Math.min(studentDataRefreshFailureStreak + 1, 10);
+  studentDataRefreshBackoffUntil = Date.now() + delay;
+}
+
+function noteStudentDataRefreshSuccess() {
+  studentDataRefreshFailureStreak = 0;
+  studentDataRefreshBackoffUntil = 0;
 }
 
 function shouldForceStudentQuestionCatalogRefresh(user = null) {
@@ -21772,9 +21801,12 @@ async function refreshStudentDataFromSupabaseState(user) {
     await flushSupabaseWrites().catch(() => { });
   }
 
+  // Not users or questions: both are relational now, and their app_state
+  // copies are stale legacy backups (`g:mcq_questions` is a ~3 MB blob). This
+  // path only runs when the relational read just failed, i.e. when the
+  // backend is overloaded, so every open tab pulling that blob made the
+  // overload self-sustaining.
   const globalRefreshResult = await hydrateSupabaseSyncKeys([
-    STORAGE_KEYS.users,
-    STORAGE_KEYS.questions,
     STORAGE_KEYS.curriculum,
     STORAGE_KEYS.courseTopics,
     STORAGE_KEYS.courseTopicGroups,
@@ -21922,6 +21954,7 @@ async function refreshStudentDataSnapshot(user, options = {}) {
     });
     const ready = await ensureRelationalSyncReady({ force: effectiveForce });
     if (!ready) {
+      noteStudentDataRefreshFailure();
       const fallbackRefreshed = await refreshStudentDataFromSupabaseState(user);
       if (fallbackRefreshed && requireFreshContent) {
         return false;
@@ -22007,8 +22040,10 @@ async function refreshStudentDataSnapshot(user, options = {}) {
     ) {
       shouldRerenderRoute = routeBefore;
     }
+    noteStudentDataRefreshSuccess();
     return true;
   } catch (error) {
+    noteStudentDataRefreshFailure();
     const fallbackRefreshed = await refreshStudentDataFromSupabaseState(user).catch(() => false);
     if (fallbackRefreshed && requireFreshContent) {
       return false;
