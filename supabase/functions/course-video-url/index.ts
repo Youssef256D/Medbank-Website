@@ -84,6 +84,16 @@ Deno.serve(async (request) => {
       authorized = Boolean(full || entitlement);
     }
   }
+  // The service role bypasses RLS, so the organization audience is asked
+  // explicitly: a student removed from an organization loses its courses,
+  // bought ones and free previews included.
+  if (authorized && role !== "admin") {
+    const { data: inAudience, error: audienceError } = await admin.rpc("user_in_video_course_audience", {
+      p_user_id: actorId,
+      p_course_id: lesson.course_id,
+    });
+    authorized = !audienceError && inAudience === true;
+  }
   if (!authorized) return json(403, { ok: false, code: "LESSON_ACCESS_DENIED" }, origin);
 
   const source = parseStorageSource(String(lesson.video_url || ""));

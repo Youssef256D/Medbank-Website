@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
 
   const { data: actorProfile, error: profileError } = await adminClient
     .from("profiles")
-    .select("id,role,approved,academic_year,academic_semester")
+    .select("id,role,approved")
     .eq("id", actorId)
     .maybeSingle();
   if (profileError || !actorProfile) {
@@ -164,6 +164,17 @@ Deno.serve(async (req) => {
         allowed = Boolean(enrollment || entitlement);
       }
     }
+  }
+
+  // The service role bypasses RLS, so the organization audience is asked
+  // explicitly: a student removed from an organization loses its courses,
+  // bought ones and free previews included.
+  if (allowed && role !== "admin") {
+    const { data: inAudience, error: audienceError } = await adminClient.rpc("user_in_video_course_audience", {
+      p_user_id: actorId,
+      p_course_id: lesson.course_id,
+    });
+    allowed = !audienceError && inAudience === true;
   }
 
   if (!allowed) {

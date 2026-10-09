@@ -97,8 +97,8 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
   },
   platform_courses: {
     table: "platform_courses",
-    readFields: ["id", "course_code", "course_name", "academic_year", "academic_semester", "description", "cover_image_url", "intro_video_url", "instructor_name", "instructor_bio", "level", "estimated_duration", "is_active", "is_published", "enrollment_mode", "price", "created_by", "created_at", "updated_at"],
-    writeFields: ["course_code", "course_name", "academic_year", "academic_semester", "description", "cover_image_url", "intro_video_url", "instructor_name", "instructor_bio", "level", "estimated_duration", "is_active", "is_published", "enrollment_mode", "price", "created_by"],
+    readFields: ["id", "course_code", "course_name", "visibility", "description", "cover_image_url", "intro_video_url", "instructor_name", "instructor_bio", "level", "estimated_duration", "is_active", "is_published", "enrollment_mode", "price", "created_by", "created_at", "updated_at"],
+    writeFields: ["course_code", "course_name", "visibility", "description", "cover_image_url", "intro_video_url", "instructor_name", "instructor_bio", "level", "estimated_duration", "is_active", "is_published", "enrollment_mode", "price", "created_by"],
     matchFields: ["id"],
   },
   platform_modules: {
@@ -127,8 +127,8 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
   },
   platform_suggestions: {
     table: "platform_course_suggestions",
-    readFields: ["id", "course_id", "target_academic_year", "target_semester", "title", "reason", "priority", "is_active", "starts_at", "ends_at", "created_by", "created_at", "updated_at"],
-    writeFields: ["course_id", "target_academic_year", "target_semester", "title", "reason", "priority", "is_active", "starts_at", "ends_at", "created_by"],
+    readFields: ["id", "course_id", "target_organization_id", "title", "reason", "priority", "is_active", "starts_at", "ends_at", "created_by", "created_at", "updated_at"],
+    writeFields: ["course_id", "target_organization_id", "title", "reason", "priority", "is_active", "starts_at", "ends_at", "created_by"],
     matchFields: ["id"],
   },
   platform_enrollments: {
