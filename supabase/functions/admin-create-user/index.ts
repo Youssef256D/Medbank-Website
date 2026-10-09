@@ -150,6 +150,7 @@ Deno.serve(async (req) => {
     phone?: string | null;
     academicYear?: number | string | null;
     academicSemester?: number | string | null;
+    organizationIds?: unknown[];
   } = {};
   try {
     body = await req.json();
@@ -165,6 +166,12 @@ Deno.serve(async (req) => {
   const phone = String(body?.phone || "").trim() || null;
   const academicYear = role === "student" ? normalizeOptionalAcademicNumber(body?.academicYear) : null;
   const academicSemester = role === "student" ? normalizeOptionalAcademicNumber(body?.academicSemester) : null;
+  // A creator always belongs to an organization (migration
+  // 20261009233100_creator_needs_organization): the database refuses the
+  // role otherwise, so the memberships go in before the role does.
+  const organizationIds = Array.isArray(body?.organizationIds)
+    ? [...new Set(body.organizationIds.map((id: unknown) => String(id || "").trim()).filter(isUuid))]
+    : [];
 
   if (!email || !email.includes("@")) {
     return jsonResponse(400, { ok: false, error: "email must be a valid email address." }, requestOrigin);
@@ -177,6 +184,13 @@ Deno.serve(async (req) => {
   }
   if (!fullName) {
     return jsonResponse(400, { ok: false, error: "fullName is required." }, requestOrigin);
+  }
+  if (role === "creator" && !organizationIds.length) {
+    return jsonResponse(
+      400,
+      { ok: false, code: "CREATOR_NEEDS_ORGANIZATION", error: "A creator must belong to at least one organization." },
+      requestOrigin,
+    );
   }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
@@ -214,6 +228,18 @@ Deno.serve(async (req) => {
   if (role === "admin" && !adminAccess.isSuper) {
     return jsonResponse(403, { ok: false, error: "Only a super admin can create an admin account." }, requestOrigin);
   }
+  if (role === "creator") {
+    const { data: orgs, error: orgError } = await adminClient
+      .from("organizations")
+      .select("id")
+      .in("id", organizationIds);
+    if (orgError) {
+      return jsonResponse(500, { ok: false, error: "Could not check the organizations." }, requestOrigin);
+    }
+    if ((orgs || []).length !== organizationIds.length) {
+      return jsonResponse(400, { ok: false, error: "One of the organizations no longer exists." }, requestOrigin);
+    }
+  }
 
   const { data: authData, error: createError } = await adminClient.auth.admin.createUser({
     email,
@@ -237,7 +263,9 @@ Deno.serve(async (req) => {
     id: createdUserId,
     full_name: fullName,
     email,
-    role,
+    // A creator is written as a student first, then switched once the
+    // memberships exist.
+    role: role === "creator" ? "student" : role,
     approved,
     phone,
     academic_year: academicYear,
@@ -247,7 +275,7 @@ Deno.serve(async (req) => {
     courses_access_enabled: true,
   };
 
-  const { data: profile, error: upsertError } = await adminClient
+  const { data: createdProfile, error: upsertError } = await adminClient
     .from("profiles")
     .upsert(profileRow, { onConflict: "id", defaultToNull: false })
     .select("id,full_name,email,role,approved,phone,academic_year,academic_semester,mcq_access_enabled,courses_access_enabled,auth_provider,created_at,updated_at")
@@ -255,6 +283,33 @@ Deno.serve(async (req) => {
   if (upsertError) {
     await adminClient.auth.admin.deleteUser(createdUserId).catch(() => {});
     return jsonResponse(500, { ok: false, error: upsertError.message || "Profile could not be created." }, requestOrigin);
+  }
+
+  let profile = createdProfile;
+  if (role === "creator") {
+    const { error: memberError } = await adminClient.from("organization_members").insert(
+      organizationIds.map((organizationId) => ({
+        organization_id: organizationId,
+        user_id: createdUserId,
+        source: "admin",
+        added_by: actorId,
+      })),
+    );
+    if (memberError) {
+      await adminClient.auth.admin.deleteUser(createdUserId).catch(() => {});
+      return jsonResponse(500, { ok: false, error: memberError.message || "Organizations could not be added." }, requestOrigin);
+    }
+    const { data: creatorProfile, error: roleError } = await adminClient
+      .from("profiles")
+      .update({ role: "creator" })
+      .eq("id", createdUserId)
+      .select("id,full_name,email,role,approved,phone,academic_year,academic_semester,mcq_access_enabled,courses_access_enabled,auth_provider,created_at,updated_at")
+      .single();
+    if (roleError) {
+      await adminClient.auth.admin.deleteUser(createdUserId).catch(() => {});
+      return jsonResponse(500, { ok: false, error: roleError.message || "Creator role could not be set." }, requestOrigin);
+    }
+    profile = creatorProfile;
   }
 
   if (!approved) {
