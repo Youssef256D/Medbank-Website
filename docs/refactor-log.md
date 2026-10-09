@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-09 — Video Courses website visibility flag
+- `supabase.config.js` now exposes `videoCoursesVisible`. When it is exactly
+  `false`, `isVideoCoursesHidden()` removes the public/student Video Courses
+  product while preserving every admin course-management page. Set it to
+  `true` (or omit it) to restore the product.
+- The hidden state redirects `courses-platform` and instructor `pricing` to the
+  landing page, sends student/legacy `video-courses` routes to the app launcher,
+  no-ops `courses-*` actions, and skips student course payload, Coming soon, and
+  Video Courses realtime reads. The database-driven Coming soon control remains
+  separate and unchanged for when the product is visible.
+- Public landing, mobile-app, Features, About, Contact, top navigation, student
+  launchers/navigation, notification destinations, and MCQ-access copy now omit
+  Video Courses while hidden. `index.html` mirrors the hidden first paint and
+  uses app version `2026-10-09.01`; only the requested JSON-LD metadata block
+  changed among inline script bodies, and its CSP hash was recomputed.
+- Regression coverage lives in `tests/video-courses-visibility.test.js`.
 ### 2026-10-09 — Admin Organizations page; video courses lose year/semester
 - **Video course reads stopped requesting dropped columns.** Migration
   `20261009230000_drop_video_course_terms` (applied to the hosted DB) dropped

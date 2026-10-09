@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-09 — Hide Video Courses from the website
+Video Courses can now be hidden from all public and student website surfaces
+with one `videoCoursesVisible` config flag. The current shipped value is off:
+public marketing is MCQ/mobile-only, student launchers and navigation omit the
+course portal, old links fall back silently, and student course data/realtime
+loading is skipped. Admins retain the full Video Courses management area so
+content work can continue. Static cache bust: `2026-10-09.01`.
 ### 2026-10-09 — Organizations on the website admin
 - New **Organizations** admin page (People): manage organizations, their join
   codes, their members, and see the video courses each one includes — click a

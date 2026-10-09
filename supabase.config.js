@@ -35,4 +35,6 @@ window.__SUPABASE_CONFIG = {
   // Free fallback: use private Supabase Storage for course videos.
   // Set this to true later when Cloudflare Stream billing is available.
   cloudflareStreamEnabled: false,
+  // Website visibility. false hides Video Courses everywhere for students and the public (admins still manage them). Set true to bring them back.
+  videoCoursesVisible: false,
 };
