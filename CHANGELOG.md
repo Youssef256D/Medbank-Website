@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-09 — Organizations on the website admin
+- New **Organizations** admin page (People): manage organizations, their join
+  codes, their members, and see the video courses each one includes — click a
+  course to open it in the Course Builder.
+- The Course Builder has an **Audience** setting: every student, or only
+  members of chosen organizations.
+- Fixed the admin and student Video Courses pages, which stopped loading after
+  video courses lost their academic year and semester in the database.
+
 ### 2026-10-08 — Less load on the backend when it is struggling
 Students saw spinners on every screen in the app and the site because the
 backend was overloaded, and the site was adding to it. When a student refresh

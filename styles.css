@@ -23361,3 +23361,55 @@ body.theme-dark .map-lang button[aria-pressed="true"] { background: #f5f5f5; col
 @media (prefers-reduced-motion: reduce) {
   .map-backdrop, .map-sheet { transition: none; }
 }
+
+/* Admin → Organizations */
+.admin-org-detail-section {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+.admin-org-detail-section h3 {
+  margin: 0;
+}
+.admin-org-back {
+  justify-self: start;
+  margin-bottom: 0.5rem;
+}
+.admin-org-row {
+  cursor: pointer;
+}
+.admin-org-course-row {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.admin-org-course-row:hover,
+.admin-org-course-row:focus-visible {
+  border-color: var(--primary, currentColor);
+}
+.admin-org-course-row > span:first-child,
+.admin-org-code-row > span:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+.admin-org-open-hint {
+  white-space: nowrap;
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+.admin-org-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+}
+.admin-org-row-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.admin-course-audience-orgs {
+  display: grid;
+  gap: 0.35rem;
+  padding-left: 1.5rem;
+}
