@@ -200,7 +200,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs", "admin-access"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "organizations", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs", "admin-access"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -217,6 +217,7 @@ const ADMIN_NAV_GROUPS = [
     items: [
       { page: "users", label: "Users" },
       { page: "universities", label: "Universities" },
+      { page: "organizations", label: "Organizations" },
     ],
   },
   {
@@ -577,6 +578,25 @@ const state = {
   adminCoursesPlatformEnrollments: [],
   adminCoursesPlatformTopics: [],
   adminCoursesPlatformProfiles: [],
+  adminCoursesPlatformCourseOrganizations: [],
+  adminOrganizations: [],
+  adminOrganizationsLoading: false,
+  adminOrganizationsLoadedAt: 0,
+  adminOrganizationsError: "",
+  adminOrganizationMemberCounts: {},
+  adminOrganizationSelectedId: "",
+  adminOrganizationDetail: null,
+  adminOrganizationDetailLoading: false,
+  adminOrganizationDetailError: "",
+  adminOrganizationMemberSearch: "",
+  adminOrganizationMemberLimit: 50,
+  adminOrganizationDraft: null,
+  adminOrganizationCodeDraft: null,
+  adminOrganizationAddMemberOpen: false,
+  adminOrganizationAddMemberQuery: "",
+  adminOrganizationAddMemberResults: [],
+  adminOrganizationAddMemberSearching: false,
+  adminOrganizationSaving: false,
   adminCourseCoupons: [],
   adminCourseCouponStats: null,
   adminCourseCouponLoading: false,
@@ -33885,6 +33905,814 @@ function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection
     : activeAdminPage === item.page;
 }
 
+// ── Organizations (admin) ────────────────────────────────────────────────
+// Mirrors the MedBank app's admin Organizations screens. An organization's
+// members see its organization-only video courses; join codes are how
+// students (or, with a creator code, lecturers) join. RLS is the real gate:
+// writes to organizations, codes and members need the People area, and
+// course links (platform_course_organizations) need Video Courses.
+const ORGANIZATIONS_SELECT = "id,name,name_ar,is_active,sort_order,created_at,updated_at";
+const ORGANIZATION_CODES_SELECT = "id,organization_id,code,role,label,expires_at,max_uses,use_count,revoked_at,created_at";
+const ORGANIZATION_MEMBERS_SELECT = "organization_id,user_id,role,source,created_at,profile:profiles!organization_members_user_id_fkey(id,public_user_id,full_name,email,role)";
+const ORGANIZATION_COURSES_SELECT = "course_id,created_at,course:platform_courses(id,course_name,course_code,is_published,is_active,visibility,review_status)";
+const ORGANIZATION_MEMBERS_PAGE_SIZE = 50;
+
+function getAdminOrganizationById(organizationId) {
+  const id = String(organizationId || "").trim();
+  return (state.adminOrganizations || []).find((entry) => String(entry?.id || "") === id) || null;
+}
+
+function getAdminCourseOrganizationOptions() {
+  return [...(state.adminOrganizations || [])]
+    .filter((entry) => isUuidValue(String(entry?.id || "")))
+    .sort((left, right) => (Number(left?.sort_order) || 0) - (Number(right?.sort_order) || 0)
+      || String(left?.name || "").localeCompare(String(right?.name || "")));
+}
+
+function getAdminCourseOrganizationIds(courseId) {
+  const id = String(courseId || "").trim();
+  return (state.adminCoursesPlatformCourseOrganizations || [])
+    .filter((row) => String(row?.course_id || "") === id)
+    .map((row) => String(row?.organization_id || ""))
+    .filter(isUuidValue);
+}
+
+function getAdminCourseAudienceLabel(course) {
+  if (String(course?.visibility || "public") !== "organization") return "Everyone";
+  const names = getAdminCourseOrganizationIds(course?.id)
+    .map((id) => getAdminOrganizationById(id)?.name)
+    .filter(Boolean);
+  return names.length ? names.join(", ") : "Organization only (none chosen)";
+}
+
+function getAdminSuggestionAudienceLabel(suggestion) {
+  const organizationId = String(suggestion?.target_organization_id || "").trim();
+  if (!organizationId) return "Every student";
+  return `Members of ${getAdminOrganizationById(organizationId)?.name || "an organization"}`;
+}
+
+// active | revoked | expired | used_up, in that order of precedence.
+function resolveOrganizationCodeStatus(code, now = Date.now()) {
+  if (code?.revoked_at) return "revoked";
+  const expiresAt = code?.expires_at ? new Date(code.expires_at).getTime() : NaN;
+  if (Number.isFinite(expiresAt) && expiresAt <= now) return "expired";
+  const maxUses = Number(code?.max_uses);
+  if (Number.isFinite(maxUses) && maxUses > 0 && (Number(code?.use_count) || 0) >= maxUses) return "used_up";
+  return "active";
+}
+
+function filterOrganizationMembers(members, query) {
+  const needle = String(query || "").trim().toLowerCase();
+  const rows = Array.isArray(members) ? members : [];
+  if (!needle) return rows;
+  return rows.filter((member) => [
+    member?.profile?.full_name,
+    member?.profile?.email,
+    member?.profile?.public_user_id,
+  ].some((value) => String(value || "").toLowerCase().includes(needle)));
+}
+
+function describeOrganizationWriteError(error, fallback) {
+  const code = String(error?.code || "").trim();
+  if (code === "23503") return "This organization still has members or courses. Hide it instead.";
+  if (code === "23505") return "That name or code is already taken.";
+  if (code === "42501") return "Your admin account does not include the area needed for this change.";
+  return getErrorMessage(error, fallback);
+}
+
+function refreshAdminOrganizationsView() {
+  if (state.route === "admin" && state.adminPage === "organizations") {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+async function loadAdminOrganizations(options = {}) {
+  if (state.adminOrganizationsLoading && !options.force) return false;
+  const client = getRelationalClient();
+  if (!client) {
+    state.adminOrganizationsError = "No active Supabase admin session.";
+    return false;
+  }
+  state.adminOrganizationsLoading = true;
+  state.adminOrganizationsError = "";
+  try {
+    const organizations = await runRelationalQueryWithTimeout(
+      client.from("organizations").select(ORGANIZATIONS_SELECT).order("sort_order", { ascending: true }).order("name", { ascending: true }),
+      "Organizations query timed out.",
+    );
+    state.adminOrganizations = Array.isArray(organizations) ? organizations : [];
+    const counts = {};
+    await Promise.all(state.adminOrganizations.map(async (organization) => {
+      const result = await runWithTimeoutResult(
+        client.from("organization_members").select("user_id", { count: "exact", head: true }).eq("organization_id", organization.id),
+        SUPABASE_QUERY_TIMEOUT_MS,
+        "Member count timed out.",
+      ).catch(() => null);
+      counts[organization.id] = Number.isFinite(result?.count) ? result.count : null;
+    }));
+    state.adminOrganizationMemberCounts = counts;
+    state.adminOrganizationsLoadedAt = Date.now();
+    return true;
+  } catch (error) {
+    console.warn("Could not load organizations.", error?.message || error);
+    state.adminOrganizationsError = isMissingRelationError(error)
+      ? "The organizations tables are missing. Apply the organizations migration first."
+      : getErrorMessage(error, "Could not load organizations.");
+    return false;
+  } finally {
+    state.adminOrganizationsLoading = false;
+  }
+}
+
+async function loadAdminOrganizationDetail(organizationId) {
+  const client = getRelationalClient();
+  const id = String(organizationId || "").trim();
+  if (!client || !isUuidValue(id)) return false;
+  state.adminOrganizationDetailLoading = true;
+  state.adminOrganizationDetailError = "";
+  try {
+    const [codes, members, courses] = await Promise.all([
+      runRelationalQueryWithTimeout(
+        client.from("organization_codes").select(ORGANIZATION_CODES_SELECT).eq("organization_id", id).order("created_at", { ascending: false }),
+        "Organization codes query timed out.",
+      ),
+      fetchRowsPagedOrThrow((from, to) => (
+        client.from("organization_members").select(ORGANIZATION_MEMBERS_SELECT).eq("organization_id", id)
+          .order("created_at", { ascending: false }).order("user_id", { ascending: true }).range(from, to)
+      ), { timeoutMessage: "Organization members query timed out." }),
+      runRelationalQueryWithTimeout(
+        client.from("platform_course_organizations").select(ORGANIZATION_COURSES_SELECT).eq("organization_id", id),
+        "Organization courses query timed out.",
+      ),
+    ]);
+    const courseRows = (Array.isArray(courses) ? courses : [])
+      .map((row) => row?.course)
+      .filter((course) => isUuidValue(String(course?.id || "")))
+      .sort((left, right) => getCoursePlatformCourseTitle(left).localeCompare(getCoursePlatformCourseTitle(right)));
+    if (state.adminOrganizationSelectedId === id) {
+      state.adminOrganizationDetail = {
+        organizationId: id,
+        codes: Array.isArray(codes) ? codes : [],
+        members: Array.isArray(members) ? members : [],
+        courses: courseRows,
+        loadedAt: Date.now(),
+      };
+      state.adminOrganizationMemberCounts = {
+        ...state.adminOrganizationMemberCounts,
+        [id]: state.adminOrganizationDetail.members.length,
+      };
+    }
+    return true;
+  } catch (error) {
+    console.warn("Could not load the organization.", error?.message || error);
+    state.adminOrganizationDetailError = getErrorMessage(error, "Could not load this organization.");
+    return false;
+  } finally {
+    state.adminOrganizationDetailLoading = false;
+  }
+}
+
+function openAdminOrganization(organizationId) {
+  state.adminOrganizationSelectedId = String(organizationId || "");
+  state.adminOrganizationDetail = null;
+  state.adminOrganizationDetailError = "";
+  state.adminOrganizationMemberSearch = "";
+  state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+  const loading = loadAdminOrganizationDetail(state.adminOrganizationSelectedId);
+  refreshAdminOrganizationsView();
+  loading.then(refreshAdminOrganizationsView);
+}
+
+function renderAdminOrganizationsSection() {
+  if (!state.adminOrganizationsLoadedAt && !state.adminOrganizationsLoading && !state.adminOrganizationsError) {
+    loadAdminOrganizations().then(refreshAdminOrganizationsView);
+  }
+  const selected = getAdminOrganizationById(state.adminOrganizationSelectedId);
+  if (state.adminOrganizationSelectedId && selected) {
+    return renderAdminOrganizationDetail(selected);
+  }
+  const busy = Boolean(state.adminOrganizationsLoading || state.adminOrganizationSaving);
+  const organizations = getAdminCourseOrganizationOptions();
+  const rows = organizations.map((organization) => {
+    const memberCount = state.adminOrganizationMemberCounts?.[organization.id];
+    return `<tr data-org-open="${escapeHtml(organization.id)}" role="button" tabindex="0" class="admin-org-row">
+      <td><b>${escapeHtml(organization.name)}</b>${organization.name_ar ? `<br><small dir="rtl" lang="ar">${escapeHtml(organization.name_ar)}</small>` : ""}</td>
+      <td>${escapeHtml(String(organization.sort_order ?? 100))}</td>
+      <td><span class="badge ${organization.is_active ? "good" : "neutral"}">${organization.is_active ? "Active" : "Hidden"}</span></td>
+      <td>${escapeHtml(Number.isFinite(memberCount) ? String(memberCount) : "—")}</td>
+      <td class="admin-university-actions-column">${renderAdminRowMenu({
+        id: `organization-${organization.id}`,
+        label: `Actions for ${organization.name}`,
+        disabled: busy,
+        items: [
+          { label: "Open", attrs: `data-org-open-item="${escapeHtml(organization.id)}"` },
+          { label: "Edit", attrs: `data-org-edit="${escapeHtml(organization.id)}"` },
+          { label: organization.is_active ? "Hide" : "Show again", attrs: `data-org-toggle-active="${escapeHtml(organization.id)}"` },
+          { label: "Delete", attrs: `data-org-delete="${escapeHtml(organization.id)}"`, danger: true },
+        ],
+      })}</td>
+    </tr>`;
+  }).join("");
+  const emptyRow = state.adminOrganizationsLoading
+    ? "Loading organizations…"
+    : state.adminOrganizationsError ? "Organizations could not be loaded." : "No organizations yet. Add the first one.";
+  const pageHeader = renderAdminPageHeader({
+    id: "organizations",
+    title: "Organizations",
+    count: organizations.length,
+    actions: `${renderAdminIconButton({
+      icon: "refresh",
+      label: "Reload organizations",
+      attrs: `data-org-refresh${state.adminOrganizationSaving ? " disabled" : ""}`,
+      busy: Boolean(state.adminOrganizationsLoading),
+    })}${renderAdminIconButton({
+      icon: "plus",
+      label: "Add organization",
+      attrs: `data-org-new${busy ? " disabled" : ""}`,
+      variant: "primary",
+    })}`,
+    notes: [
+      "A university, faculty or centre. Its members see its organization-only video courses.",
+      "Students join with a code. Open an organization to manage its codes, courses and members.",
+      "Hiding an organization stops its codes from working but keeps its members. One with members or courses can't be deleted — hide it instead.",
+    ],
+  });
+  return `<section class="card admin-section" id="admin-organizations-section">
+    ${pageHeader}
+    ${state.adminOrganizationsError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.adminOrganizationsError)}</div>` : ""}
+    <div class="table-wrap"><table><thead><tr><th>Organization</th><th>Sort</th><th>Status</th><th>Members</th><th>Actions</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="5">${escapeHtml(emptyRow)}</td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function renderAdminOrganizationCodeRow(code) {
+  const status = resolveOrganizationCodeStatus(code);
+  const statusLabel = { active: "Active", revoked: "Revoked", expired: "Expired", used_up: "Used up" }[status];
+  const uses = Number(code?.max_uses) > 0
+    ? `${Number(code.use_count) || 0} of ${Number(code.max_uses)} uses`
+    : `${Number(code?.use_count) || 0} uses`;
+  const meta = [
+    code?.role === "creator" ? "For creators" : "For students",
+    code?.label || "",
+    uses,
+    code?.expires_at ? `Expires ${formatReportDateTime(code.expires_at)}` : "No expiry",
+  ].filter(Boolean).join(" · ");
+  return `<div class="course-request-row admin-org-code-row">
+    <span>
+      <b class="admin-org-code">${escapeHtml(code?.code || "")}</b>
+      <span class="badge ${status === "active" ? "good" : "neutral"}">${escapeHtml(statusLabel)}</span>
+      <small>${escapeHtml(meta)}</small>
+    </span>
+    <span class="admin-org-row-actions">
+      <button class="btn ghost admin-btn-sm" type="button" data-org-code-copy="${escapeHtml(code?.code || "")}">Copy</button>
+      ${status === "active" ? `<button class="btn danger admin-btn-sm" type="button" data-org-code-revoke="${escapeHtml(code?.id || "")}">Revoke</button>` : ""}
+    </span>
+  </div>`;
+}
+
+function renderAdminOrganizationCourseRow(course) {
+  const status = course?.is_active === false ? "Inactive" : course?.is_published ? "Published" : "Draft";
+  const audience = String(course?.visibility || "public") === "organization"
+    ? "Organization only"
+    : "Public — the organization link is ignored";
+  return `<button type="button" class="course-request-row admin-org-course-row" data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(course?.id || "")}">
+    <span>
+      <b>${escapeHtml(getCoursePlatformCourseTitle(course))}</b>
+      <small>${escapeHtml([course?.course_code, status, audience].filter(Boolean).join(" · "))}</small>
+    </span>
+    <span class="admin-org-open-hint" aria-hidden="true">Open course →</span>
+  </button>`;
+}
+
+function renderAdminOrganizationMemberRow(member) {
+  const profile = member?.profile || {};
+  const name = String(profile.full_name || "").trim() || String(profile.email || "").trim() || "Unknown account";
+  const source = { code: "Joined with a code", admin: "Added by an admin", migration: "Added by migration" }[String(member?.source || "")] || "";
+  const meta = [profile.email && profile.email !== name ? profile.email : "", profile.public_user_id, source, member?.role === "creator" ? "Creator" : ""]
+    .filter(Boolean).join(" · ");
+  return `<div class="course-request-row">
+    <span>
+      <b>${escapeHtml(name)}</b>
+      <small>${escapeHtml(meta)}</small>
+    </span>
+    <button class="btn danger admin-btn-sm" type="button" data-org-member-remove="${escapeHtml(member?.user_id || "")}" data-org-member-name="${escapeHtml(name)}">Remove</button>
+  </div>`;
+}
+
+function renderAdminOrganizationDetail(organization) {
+  const detail = state.adminOrganizationDetail?.organizationId === organization.id ? state.adminOrganizationDetail : null;
+  const loading = !detail && (state.adminOrganizationDetailLoading || !state.adminOrganizationDetailError);
+  const codes = detail?.codes || [];
+  const courses = detail?.courses || [];
+  const members = detail?.members || [];
+  const filteredMembers = filterOrganizationMembers(members, state.adminOrganizationMemberSearch);
+  const visibleMembers = filteredMembers.slice(0, Math.max(ORGANIZATION_MEMBERS_PAGE_SIZE, Number(state.adminOrganizationMemberLimit) || 0));
+  const busy = Boolean(state.adminOrganizationSaving);
+  const loadingNote = `<p class="subtle">Loading…</p>`;
+  const pageHeader = renderAdminPageHeader({
+    id: "organization-detail",
+    title: organization.name,
+    actions: `${renderAdminIconButton({
+      icon: "refresh",
+      label: "Reload organization",
+      attrs: `data-org-detail-refresh${busy ? " disabled" : ""}`,
+      busy: Boolean(state.adminOrganizationDetailLoading),
+    })}`,
+    notes: [
+      organization.is_active ? "Active — its codes let people join." : "Hidden — its codes don't work, but members keep their courses.",
+    ],
+  });
+  return `<section class="card admin-section" id="admin-organizations-section">
+    <button class="btn ghost admin-btn-sm admin-org-back" type="button" data-org-back>← All organizations</button>
+    ${pageHeader}
+    ${state.adminOrganizationDetailError ? `<div class="admin-popup-notice" role="status">${escapeHtml(state.adminOrganizationDetailError)}</div>` : ""}
+
+    <div class="admin-org-detail-section">
+      <div class="flex-between">
+        <h3>Codes${detail ? ` · ${escapeHtml(String(codes.length))}` : ""}</h3>
+        <button class="btn admin-btn-sm" type="button" data-org-code-new ${busy ? "disabled" : ""}>New code</button>
+      </div>
+      <div class="course-builder-list">
+        ${loading ? loadingNote : codes.length ? codes.map(renderAdminOrganizationCodeRow).join("") : `<p class="subtle">No codes yet. Create one to let students join.</p>`}
+      </div>
+    </div>
+
+    <div class="admin-org-detail-section">
+      <h3>Courses${detail ? ` · ${escapeHtml(String(courses.length))}` : ""}</h3>
+      <p class="subtle">Video courses linked to this organization. Choose who sees a course from its Audience setting in the Course Builder.</p>
+      <div class="course-builder-list">
+        ${loading ? loadingNote : courses.length ? courses.map(renderAdminOrganizationCourseRow).join("") : `<p class="subtle">No courses are limited to this organization yet.</p>`}
+      </div>
+    </div>
+
+    <div class="admin-org-detail-section">
+      <div class="flex-between">
+        <h3>Members${detail ? ` · ${escapeHtml(String(members.length))}` : ""}</h3>
+        <button class="btn admin-btn-sm" type="button" data-org-member-add ${busy ? "disabled" : ""}>Add member</button>
+      </div>
+      <label class="admin-users-toolbar-search admin-flat-toolbar-search">
+        <span class="sr-only">Search members</span>
+        <input type="search" id="admin-org-member-search" placeholder="Search by name, email or ID" value="${escapeHtml(state.adminOrganizationMemberSearch || "")}" />
+      </label>
+      <div class="course-builder-list">
+        ${loading ? loadingNote : visibleMembers.length ? visibleMembers.map(renderAdminOrganizationMemberRow).join("") : `<p class="subtle">${members.length ? "No members match your search." : "No members yet."}</p>`}
+      </div>
+      ${filteredMembers.length > visibleMembers.length ? `<p class="subtle">Showing ${escapeHtml(String(visibleMembers.length))} of ${escapeHtml(String(filteredMembers.length))}. <button class="btn ghost admin-btn-sm" type="button" data-org-member-more>Show more</button></p>` : ""}
+    </div>
+  </section>`;
+}
+
+function renderAdminOrganizationDialogShell(kind, title, body) {
+  return `<div class="admin-dialog" data-admin-dialog="${escapeHtml(kind)}">
+    <button type="button" class="admin-dialog-backdrop" data-org-dialog-cancel aria-label="Close" ${state.adminOrganizationSaving ? "disabled" : ""}></button>
+    <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="admin-${escapeHtml(kind)}-title">
+      <div class="admin-dialog-head">
+        <div><h3 id="admin-${escapeHtml(kind)}-title">${escapeHtml(title)}</h3></div>
+        <button type="button" class="admin-dialog-close" data-org-dialog-cancel aria-label="Close" title="Close" ${state.adminOrganizationSaving ? "disabled" : ""}>×</button>
+      </div>
+      ${body}
+    </section>
+  </div>`;
+}
+
+function renderAdminOrganizationDialogs() {
+  const saving = Boolean(state.adminOrganizationSaving);
+  const actions = (label) => `<div class="admin-dialog-actions">
+    <button class="btn" type="submit">${saving ? "Saving…" : escapeHtml(label)}</button>
+    <button class="btn ghost" type="button" data-org-dialog-cancel>Cancel</button>
+  </div>`;
+  const draft = state.adminOrganizationDraft;
+  if (draft) {
+    return renderAdminOrganizationDialogShell("organization", draft.id ? `Edit ${draft.name || "organization"}` : "Add organization", `
+      <form id="admin-organization-form" class="admin-university-editor">
+        <fieldset ${saving ? "disabled" : ""}>
+          <div class="form-row">
+            <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name || "")}" /></label>
+            <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
+          </div>
+          <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
+          <p class="subtle admin-university-sort-hint">Lower numbers appear first.</p>
+          <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Active (its codes let people join)</label>
+          ${actions("Save")}
+        </fieldset>
+      </form>`);
+  }
+  const codeDraft = state.adminOrganizationCodeDraft;
+  if (codeDraft) {
+    return renderAdminOrganizationDialogShell("organization-code", "New code", `
+      <form id="admin-organization-code-form" class="admin-university-editor">
+        <fieldset ${saving ? "disabled" : ""}>
+          <label>For
+            <select name="role">
+              <option value="student">Students</option>
+              <option value="creator">Creators (lecturers)</option>
+            </select>
+          </label>
+          <label>Custom code (optional)<input name="code" maxlength="40" pattern="[A-Za-z0-9-]{6,40}" placeholder="Leave empty to generate one" /></label>
+          <p class="subtle">6 to 40 letters, digits or dashes.</p>
+          <label>Label (optional)<input name="label" maxlength="120" placeholder="e.g. Year 1 cohort" /></label>
+          <div class="form-row">
+            <label>Max uses (optional)<input name="max_uses" type="number" min="1" step="1" /></label>
+            <label>Expires (optional)<input name="expires_at" type="datetime-local" /></label>
+          </div>
+          ${actions("Create code")}
+        </fieldset>
+      </form>`);
+  }
+  if (state.adminOrganizationAddMemberOpen) {
+    const results = state.adminOrganizationAddMemberResults || [];
+    const memberIds = new Set((state.adminOrganizationDetail?.members || []).map((member) => String(member?.user_id || "")));
+    return renderAdminOrganizationDialogShell("organization-member", "Add member", `
+      <form id="admin-organization-member-search-form" class="admin-university-editor">
+        <label>Find a student or creator<input name="query" type="search" minlength="2" placeholder="Name, email or ID" value="${escapeHtml(state.adminOrganizationAddMemberQuery || "")}" /></label>
+        <div class="admin-dialog-actions">
+          <button class="btn" type="submit">${state.adminOrganizationAddMemberSearching ? "Searching…" : "Search"}</button>
+          <button class="btn ghost" type="button" data-org-dialog-cancel>Close</button>
+        </div>
+      </form>
+      <div class="course-builder-list">
+        ${results.map((profile) => {
+          const alreadyMember = memberIds.has(String(profile?.id || ""));
+          return `<div class="course-request-row">
+            <span>
+              <b>${escapeHtml(profile?.full_name || profile?.email || "Account")}</b>
+              <small>${escapeHtml([profile?.email, profile?.public_user_id, profile?.role === "creator" ? "Creator" : "Student"].filter(Boolean).join(" · "))}</small>
+            </span>
+            ${alreadyMember ? `<span class="badge neutral">Member</span>` : `<button class="btn admin-btn-sm" type="button" data-org-member-add-id="${escapeHtml(profile?.id || "")}" ${saving ? "disabled" : ""}>Add</button>`}
+          </div>`;
+        }).join("")}
+        ${state.adminOrganizationAddMemberQuery && !state.adminOrganizationAddMemberSearching && !results.length ? `<p class="subtle">No students or creators match.</p>` : ""}
+      </div>`);
+  }
+  return "";
+}
+
+// Runs one write with the saving flag, then reloads the list and the open
+// organization.
+async function runAdminOrganizationMutation(action, fallbackError) {
+  if (state.adminOrganizationSaving) return false;
+  const client = getRelationalClient();
+  if (!client || getCurrentUser()?.role !== "admin") {
+    toast("An active admin session is required.");
+    return false;
+  }
+  state.adminOrganizationSaving = true;
+  refreshAdminOrganizationsView();
+  let ok = false;
+  try {
+    await action(client);
+    ok = true;
+  } catch (error) {
+    console.warn("Organization change failed.", error?.message || error);
+    toast(describeOrganizationWriteError(error, fallbackError));
+  } finally {
+    await loadAdminOrganizations({ force: true });
+    if (state.adminOrganizationSelectedId) await loadAdminOrganizationDetail(state.adminOrganizationSelectedId);
+    state.adminOrganizationSaving = false;
+    refreshAdminOrganizationsView();
+  }
+  return ok;
+}
+
+function closeAdminOrganizationDialogs() {
+  state.adminOrganizationDraft = null;
+  state.adminOrganizationCodeDraft = null;
+  state.adminOrganizationAddMemberOpen = false;
+  state.adminOrganizationAddMemberQuery = "";
+  state.adminOrganizationAddMemberResults = [];
+}
+
+async function searchAdminOrganizationMemberCandidates(query) {
+  const client = getRelationalClient();
+  const needle = String(query || "").trim().replace(/[%,()]/g, " ").trim();
+  if (!client || needle.length < 2) return [];
+  const pattern = `%${needle}%`;
+  const rows = await runRelationalQueryWithTimeout(
+    client.from("profiles").select("id,full_name,email,public_user_id,role")
+      .in("role", ["student", "creator"])
+      .or(`full_name.ilike.${pattern},email.ilike.${pattern},public_user_id.ilike.${pattern}`)
+      .order("full_name", { ascending: true })
+      .limit(20),
+    "Account search timed out.",
+  );
+  return Array.isArray(rows) ? rows : [];
+}
+
+function wireAdminOrganizations() {
+  const section = appEl.querySelector("#admin-organizations-section");
+  if (!section) return;
+  const organizationId = state.adminOrganizationSelectedId;
+  const organization = getAdminOrganizationById(organizationId);
+  const findOrganization = (id) => getAdminOrganizationById(id);
+  const dialog = appEl.querySelector("[data-admin-dialog^='organization']");
+  if (dialog) {
+    window.setTimeout(() => dialog.querySelector("input:not([type='hidden']), select")?.focus(), 0);
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !state.adminOrganizationSaving) {
+        event.preventDefault();
+        closeAdminOrganizationDialogs();
+        refreshAdminOrganizationsView();
+      }
+    });
+  }
+  appEl.querySelectorAll("[data-org-dialog-cancel]").forEach((button) => button.addEventListener("click", () => {
+    if (state.adminOrganizationSaving) return;
+    closeAdminOrganizationDialogs();
+    refreshAdminOrganizationsView();
+  }));
+
+  // List
+  section.querySelector("[data-org-refresh]")?.addEventListener("click", async () => {
+    const loading = loadAdminOrganizations({ force: true });
+    refreshAdminOrganizationsView();
+    await loading;
+    refreshAdminOrganizationsView();
+  });
+  section.querySelector("[data-org-new]")?.addEventListener("click", () => {
+    closeAdminOrganizationDialogs();
+    state.adminOrganizationDraft = { id: "", name: "", name_ar: "", sort_order: 100, is_active: true };
+    refreshAdminOrganizationsView();
+  });
+  section.querySelectorAll("[data-org-open]").forEach((row) => {
+    const open = (event) => {
+      if (event.target.closest("[data-admin-row-menu]")) return;
+      openAdminOrganization(row.getAttribute("data-org-open"));
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open(event);
+      }
+    });
+  });
+  section.querySelectorAll("[data-org-open-item]").forEach((button) => button.addEventListener("click", () => {
+    openAdminOrganization(button.getAttribute("data-org-open-item"));
+  }));
+  section.querySelectorAll("[data-org-edit]").forEach((button) => button.addEventListener("click", () => {
+    const entry = findOrganization(button.getAttribute("data-org-edit"));
+    if (!entry) return;
+    closeAdminOrganizationDialogs();
+    state.adminOrganizationDraft = { id: entry.id, name: entry.name, name_ar: entry.name_ar || "", sort_order: entry.sort_order, is_active: entry.is_active };
+    refreshAdminOrganizationsView();
+  }));
+  section.querySelectorAll("[data-org-toggle-active]").forEach((button) => button.addEventListener("click", () => {
+    const entry = findOrganization(button.getAttribute("data-org-toggle-active"));
+    if (!entry) return;
+    if (entry.is_active && !window.confirm(`Hide ${entry.name}?\n\nIts codes stop letting people join. Current members keep their courses.`)) return;
+    runAdminOrganizationMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("organizations").update({ is_active: !entry.is_active }).eq("id", entry.id).select("id"),
+        "Organization update timed out.",
+      );
+      if (!rows?.length) throw new Error("Organization was not changed.");
+      toast(entry.is_active ? `${entry.name} is hidden.` : `${entry.name} is active again.`);
+    }, "Could not update the organization.");
+  }));
+  section.querySelectorAll("[data-org-delete]").forEach((button) => button.addEventListener("click", () => {
+    const entry = findOrganization(button.getAttribute("data-org-delete"));
+    if (!entry) return;
+    if (!window.confirm(`Delete ${entry.name}?\n\nThis cannot be undone. An organization with members or courses can't be deleted; hide it instead.`)) return;
+    runAdminOrganizationMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("organizations").delete().eq("id", entry.id).select("id"),
+        "Organization delete timed out.",
+      );
+      if (!rows?.length) throw new Error("Organization was not deleted.");
+      toast(`${entry.name} deleted.`);
+    }, "Could not delete the organization.");
+  }));
+
+  // Organization editor
+  appEl.querySelector("#admin-organization-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const draft = state.adminOrganizationDraft;
+    if (!draft) return;
+    const name = String(form.elements.name.value || "").trim();
+    if (name.length < 2) {
+      toast("An organization name needs at least 2 characters.");
+      return;
+    }
+    const payload = {
+      name,
+      name_ar: String(form.elements.name_ar.value || "").trim() || null,
+      sort_order: Number.parseInt(form.elements.sort_order.value, 10) || 0,
+      is_active: Boolean(form.elements.is_active.checked),
+    };
+    runAdminOrganizationMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        draft.id
+          ? client.from("organizations").update(payload).eq("id", draft.id).select("id")
+          : client.from("organizations").insert(payload).select("id"),
+        "Organization save timed out.",
+      );
+      if (!rows?.length) throw new Error("Organization was not saved.");
+      closeAdminOrganizationDialogs();
+      toast(draft.id ? `${name} saved.` : `${name} added.`);
+    }, "Could not save the organization.");
+  });
+
+  if (!organization) return;
+
+  // Detail
+  section.querySelector("[data-org-back]")?.addEventListener("click", () => {
+    state.adminOrganizationSelectedId = "";
+    state.adminOrganizationDetail = null;
+    closeAdminOrganizationDialogs();
+    refreshAdminOrganizationsView();
+  });
+  section.querySelector("[data-org-detail-refresh]")?.addEventListener("click", async () => {
+    const loading = loadAdminOrganizationDetail(organization.id);
+    refreshAdminOrganizationsView();
+    await loading;
+    refreshAdminOrganizationsView();
+  });
+  section.querySelector("[data-org-code-new]")?.addEventListener("click", () => {
+    closeAdminOrganizationDialogs();
+    state.adminOrganizationCodeDraft = { organizationId: organization.id };
+    refreshAdminOrganizationsView();
+  });
+  section.querySelectorAll("[data-org-code-copy]").forEach((button) => button.addEventListener("click", async () => {
+    const copied = await copyTextToClipboard(button.getAttribute("data-org-code-copy"));
+    toast(copied ? "Code copied." : "Could not copy the code.");
+  }));
+  section.querySelectorAll("[data-org-code-revoke]").forEach((button) => button.addEventListener("click", () => {
+    const codeId = button.getAttribute("data-org-code-revoke");
+    const code = (state.adminOrganizationDetail?.codes || []).find((entry) => entry.id === codeId);
+    if (!code || !window.confirm(`Revoke ${code.code}?\n\nNobody new can join with it. People who already joined stay members.`)) return;
+    runAdminOrganizationMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("organization_codes").update({ revoked_at: nowISO() }).eq("id", code.id).select("id"),
+        "Code revoke timed out.",
+      );
+      if (!rows?.length) throw new Error("Code was not revoked.");
+      toast(`${code.code} revoked.`);
+    }, "Could not revoke the code.");
+  }));
+  appEl.querySelector("#admin-organization-code-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const customCode = String(form.elements.code.value || "").trim().toUpperCase();
+    if (customCode && !/^[A-Z0-9-]{6,40}$/.test(customCode)) {
+      toast("A code is 6 to 40 letters, digits or dashes.");
+      return;
+    }
+    const maxUses = Number.parseInt(form.elements.max_uses.value, 10);
+    const expiresValue = String(form.elements.expires_at.value || "").trim();
+    const expiresAt = expiresValue ? new Date(expiresValue) : null;
+    if (expiresAt && (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
+      toast("Choose an expiry in the future.");
+      return;
+    }
+    runAdminOrganizationMutation(async (client) => {
+      const { data, error } = await runWithTimeoutResult(
+        client.rpc("admin_create_organization_code", {
+          p_organization_id: organization.id,
+          p_role: form.elements.role.value === "creator" ? "creator" : "student",
+          p_label: String(form.elements.label.value || "").trim() || null,
+          p_expires_at: expiresAt ? expiresAt.toISOString() : null,
+          p_max_uses: Number.isFinite(maxUses) && maxUses > 0 ? maxUses : null,
+          p_code: customCode || null,
+        }),
+        SUPABASE_QUERY_TIMEOUT_MS,
+        "Code create timed out.",
+      );
+      if (error) throw error;
+      closeAdminOrganizationDialogs();
+      const created = String(data?.code || "").trim();
+      toast(created ? `Code ${created} created.` : "Code created.");
+    }, "Could not create the code.");
+  });
+  const memberSearch = section.querySelector("#admin-org-member-search");
+  memberSearch?.addEventListener("input", (event) => {
+    state.adminOrganizationMemberSearch = String(event.target?.value || "");
+    state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+    const caret = event.target.selectionStart;
+    refreshAdminOrganizationsView();
+    const next = appEl.querySelector("#admin-org-member-search");
+    next?.focus();
+    if (next && Number.isFinite(caret)) next.setSelectionRange(caret, caret);
+  });
+  section.querySelector("[data-org-member-more]")?.addEventListener("click", () => {
+    state.adminOrganizationMemberLimit = (Number(state.adminOrganizationMemberLimit) || ORGANIZATION_MEMBERS_PAGE_SIZE) + ORGANIZATION_MEMBERS_PAGE_SIZE;
+    refreshAdminOrganizationsView();
+  });
+  section.querySelectorAll("[data-org-member-remove]").forEach((button) => button.addEventListener("click", () => {
+    const userId = button.getAttribute("data-org-member-remove");
+    const name = button.getAttribute("data-org-member-name") || "this member";
+    if (!window.confirm(`Remove ${name} from ${organization.name}?\n\nThey lose every organization-only course of ${organization.name}, and their code for it stops working for them until an admin adds them back.`)) return;
+    runAdminOrganizationMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("organization_members").delete().eq("organization_id", organization.id).eq("user_id", userId).select("user_id"),
+        "Member remove timed out.",
+      );
+      if (!rows?.length) throw new Error("Member was not removed.");
+      toast(`${name} removed from ${organization.name}.`);
+    }, "Could not remove the member.");
+  }));
+  section.querySelector("[data-org-member-add]")?.addEventListener("click", () => {
+    closeAdminOrganizationDialogs();
+    state.adminOrganizationAddMemberOpen = true;
+    refreshAdminOrganizationsView();
+  });
+  appEl.querySelector("#admin-organization-member-search-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const query = String(event.currentTarget.elements.query.value || "").trim();
+    state.adminOrganizationAddMemberQuery = query;
+    if (query.length < 2) {
+      toast("Type at least 2 characters.");
+      return;
+    }
+    state.adminOrganizationAddMemberSearching = true;
+    refreshAdminOrganizationsView();
+    try {
+      state.adminOrganizationAddMemberResults = await searchAdminOrganizationMemberCandidates(query);
+    } catch (error) {
+      state.adminOrganizationAddMemberResults = [];
+      toast(getErrorMessage(error, "Could not search accounts."));
+    } finally {
+      state.adminOrganizationAddMemberSearching = false;
+      refreshAdminOrganizationsView();
+    }
+  });
+  appEl.querySelectorAll("[data-org-member-add-id]").forEach((button) => button.addEventListener("click", () => {
+    const userId = button.getAttribute("data-org-member-add-id");
+    if (!isUuidValue(userId)) return;
+    runAdminOrganizationMutation(async (client) => {
+      await runRelationalQueryWithTimeout(
+        client.from("organization_members").insert({ organization_id: organization.id, user_id: userId, source: "admin" }),
+        "Member add timed out.",
+      );
+      toast(`Added to ${organization.name}.`);
+    }, "Could not add the member.");
+  }));
+}
+
+// Course Builder → Audience. Saved on its own, like the app's audience card.
+// Organizations are written before the visibility so a published course
+// never passes through "organization-only, shown to nobody" — the database
+// refuses that (trg_platform_courses_guard_audience). Making a course public
+// keeps its links; they are ignored until it is organization-only again.
+function renderAdminCourseAudienceForm(course) {
+  const courseId = String(course?.id || "").trim();
+  const visibility = String(course?.visibility || "public") === "organization" ? "organization" : "public";
+  const selectedIds = new Set(getAdminCourseOrganizationIds(courseId));
+  const organizations = getAdminCourseOrganizationOptions();
+  return `<form id="admin-course-audience-form" class="course-builder-form" data-course-id="${escapeHtml(courseId)}">
+    <h4>Audience</h4>
+    <p class="subtle">Who can see this course.</p>
+    <label class="course-builder-check"><input type="radio" name="audience_visibility" value="public" ${visibility === "public" ? "checked" : ""} /> Every student</label>
+    <label class="course-builder-check"><input type="radio" name="audience_visibility" value="organization" ${visibility === "organization" ? "checked" : ""} ${organizations.length || visibility === "organization" ? "" : "disabled"} /> Only members of these organizations</label>
+    <div class="admin-course-audience-orgs">
+      ${organizations.length ? organizations.map((organization) => `
+        <label class="course-builder-check"><input type="checkbox" data-audience-organization value="${escapeHtml(organization.id)}" ${selectedIds.has(organization.id) ? "checked" : ""} /> ${escapeHtml(organization.name)}${organization.is_active ? "" : " (hidden)"}</label>
+      `).join("") : `<p class="subtle">No organizations yet. Add one on the Organizations page.</p>`}
+    </div>
+    <div class="stack"><button class="btn admin-btn-sm" type="submit">Save audience</button></div>
+  </form>`;
+}
+
+async function adminSaveCourseAudience(courseId, visibility, organizationIds) {
+  const client = getCoursesPlatformClient();
+  if (!client || !isUuidValue(courseId)) throw new Error("Audience cannot be saved.");
+  const nextVisibility = visibility === "organization" ? "organization" : "public";
+  const wantedIds = [...new Set((organizationIds || []).filter(isUuidValue))];
+  if (nextVisibility === "organization" && !wantedIds.length) {
+    throw new Error("Choose at least one organization.");
+  }
+  const currentRows = await runRelationalQueryWithTimeout(
+    client.from("platform_course_organizations").select("organization_id").eq("course_id", courseId),
+    "Course organizations query timed out.",
+  );
+  const current = new Set((Array.isArray(currentRows) ? currentRows : []).map((row) => String(row?.organization_id || "")));
+  const wanted = nextVisibility === "organization" ? new Set(wantedIds) : current;
+  const added = [...wanted].filter((id) => !current.has(id));
+  const removed = [...current].filter((id) => !wanted.has(id));
+  if (added.length) {
+    await runRelationalQueryWithTimeout(
+      client.from("platform_course_organizations").insert(added.map((organizationId) => ({ course_id: courseId, organization_id: organizationId }))),
+      "Course organizations save timed out.",
+      COURSE_PLATFORM_WRITE_TIMEOUT_MS,
+    );
+  }
+  await runRelationalQueryWithTimeout(
+    client.from("platform_courses").update({ visibility: nextVisibility }).eq("id", courseId),
+    "Course audience save timed out.",
+    COURSE_PLATFORM_WRITE_TIMEOUT_MS,
+  );
+  if (removed.length) {
+    await runRelationalQueryWithTimeout(
+      client.from("platform_course_organizations").delete().eq("course_id", courseId).in("organization_id", removed),
+      "Course organizations save timed out.",
+      COURSE_PLATFORM_WRITE_TIMEOUT_MS,
+    );
+  }
+  await loadAdminCoursesPlatform({ force: true });
+  return true;
+}
+
 // Admin layers: area helpers. Pure; tests/admin-access.test.js loads this
 // block on its own, up to the closing end-of-helpers marker below.
 // The database is the real gate (migrations 20260930030000 and
@@ -33903,6 +34731,7 @@ const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "ai-agents", "admin-acces
 const ADMIN_PAGE_AREAS = {
   users: "people",
   universities: "people",
+  organizations: "people",
   "mcq-subjects": "mcq",
   questions: "mcq",
   "bulk-import": "mcq",
@@ -35963,8 +36792,7 @@ function renderAdmin() {
               ${notificationVideoCourses.map((course) => {
                 const courseId = String(course?.id || "").trim();
                 const courseTitle = getCoursePlatformCourseTitle(course);
-                const term = `Year ${Number(course?.academic_year) || "-"}, Semester ${Number(course?.academic_semester) || "-"}`;
-                return `<option value="${escapeHtml(courseId)}" ${targetVideoCourseId === courseId ? "selected" : ""}>${escapeHtml(`${courseTitle} — ${term}`)}</option>`;
+                return `<option value="${escapeHtml(courseId)}" ${targetVideoCourseId === courseId ? "selected" : ""}>${escapeHtml(courseTitle)}</option>`;
               }).join("")}
             </select>
             <small class="subtle">${escapeHtml(state.adminNotificationVideoCoursesLoading
@@ -36196,6 +37024,11 @@ function renderAdmin() {
     // Rendered outside the admin shell/card: a hovered card gets a
     // transform, which would trap a position: fixed dialog inside it.
     adminGlobalOverlay = renderAdminUniversityDialog();
+  }
+
+  if (activeAdminPage === "organizations") {
+    pageContent = renderAdminOrganizationsSection();
+    adminGlobalOverlay = renderAdminOrganizationDialogs();
   }
 
   if (activeAdminPage === "ai-agents") {
@@ -36738,6 +37571,7 @@ function wireAdmin() {
   document.body.classList.toggle("is-admin-dialog-open", Boolean(appEl.querySelector(".admin-dialog")));
   wireAdminPopups();
   wireAdminUniversities();
+  wireAdminOrganizations();
   wireAdminAccess();
 
   // In the phone/tablet rail, bring the current page into view. scrollLeft,
@@ -50393,9 +51227,9 @@ const COURSE_PLATFORM_TABLES = new Set([
   "platform_course_suggestions",
 ]);
 
-const COURSE_PLATFORM_COURSE_SELECT = "id,course_code,course_name,academic_year,academic_semester,is_active,description,cover_image_url,intro_video_url,instructor_name,instructor_bio,level,estimated_duration,is_published,enrollment_mode,price,updated_at";
+const COURSE_PLATFORM_COURSE_SELECT = "id,course_code,course_name,is_active,description,cover_image_url,intro_video_url,instructor_name,instructor_bio,level,estimated_duration,is_published,enrollment_mode,price,updated_at";
 // Admins additionally see the creator review workflow. Students never do.
-const ADMIN_COURSE_PLATFORM_COURSE_SELECT = `${COURSE_PLATFORM_COURSE_SELECT},owner_id,review_status,review_note,submitted_at,reviewed_at,progression_mode`;
+const ADMIN_COURSE_PLATFORM_COURSE_SELECT = `${COURSE_PLATFORM_COURSE_SELECT},owner_id,review_status,review_note,submitted_at,reviewed_at,progression_mode,visibility`;
 const COURSE_PLATFORM_LESSON_SELECT = "id,course_id,module_id,is_published,is_free_preview,position,title,description,lesson_type,duration_seconds,video_url,video_provider,youtube_video_id,video_original_url,content_html,created_at,updated_at";
 const LOCAL_DEMO_PLATFORM_IDS = {
   enrolledCourse: "11111111-1111-4111-8111-111111111111",
@@ -50853,9 +51687,7 @@ async function loadAdminNotificationVideoCourseOptions(options = {}) {
     const courses = await runRelationalQueryWithTimeout(
       client
         .from("platform_courses")
-        .select("id,course_name,academic_year,academic_semester,is_active,is_published")
-        .order("academic_year", { ascending: true })
-        .order("academic_semester", { ascending: true })
+        .select("id,course_name,is_active,is_published")
         .order("course_name", { ascending: true }),
       "Video Course options query timed out.",
     );
@@ -51233,8 +52065,6 @@ async function loadStudentCoursesWithProgress(options = {}) {
           .from("platform_courses")
           .select(COURSE_PLATFORM_COURSE_SELECT)
           .eq("is_active", true)
-          .order("academic_year", { ascending: true })
-          .order("academic_semester", { ascending: true })
           .order("course_name", { ascending: true }),
         "Video Courses query timed out.",
       ),
@@ -51292,7 +52122,7 @@ async function loadStudentCoursesWithProgress(options = {}) {
         throw error;
       }),
       runRelationalQueryWithTimeout(
-        client.from("platform_course_suggestions").select("id,course_id,target_academic_year,target_semester,title,reason,priority,is_active,starts_at,ends_at,created_at,updated_at").order("priority", { ascending: false }).order("created_at", { ascending: false }),
+        client.from("platform_course_suggestions").select("id,course_id,target_organization_id,title,reason,priority,is_active,starts_at,ends_at,created_at,updated_at").order("priority", { ascending: false }).order("created_at", { ascending: false }),
         "Course suggestions query timed out.",
       ).catch((error) => {
         if (isMissingRelationError(error)) return [];
@@ -51825,13 +52655,9 @@ function getCoursePlatformSuggestionRows(decorated) {
 }
 
 function filterCoursePlatformRows(rows, tab, query, filter) {
-  const year = normalizeAcademicYearOrNull(state.coursesYearFilter);
-  const semester = normalizeAcademicSemesterOrNull(state.coursesSemesterFilter);
   const status = String(state.coursesStatusFilter || "all").trim();
   return rows.filter((row) => {
     if (!matchesCoursePlatformQuery(row, query)) return false;
-    if (year !== null && normalizeAcademicYearOrNull(row.course?.academic_year) !== year) return false;
-    if (semester !== null && normalizeAcademicSemesterOrNull(row.course?.academic_semester) !== semester) return false;
     if (tab === "enrolled") {
       if (!row.enrollment.isEnrolled) return false;
       if (status !== "all") return row.status === status;
@@ -51893,7 +52719,6 @@ function renderCoursePlatformCard(row, options = {}) {
       <button class="course-card-cover" type="button" data-action="courses-open-course" data-course-id="${escapeHtml(course.id)}">
         ${renderCourseCoverHtml(course)}
         
-        <span class="course-card-badge-overlay overlay-year">Y${escapeHtml(course.academic_year || "")} S${escapeHtml(course.academic_semester || "")}</span>
         ${courseCode ? `<span class="course-card-badge-overlay overlay-code">${escapeHtml(courseCode)}</span>` : ""}
         ${enrollment.isEnrolled 
           ? `<span class="course-card-badge-overlay overlay-status status-${status}">${escapeHtml(statusText)}</span>` 
@@ -51977,9 +52802,7 @@ function renderCoursePlatformListRow(row, options = {}) {
       <div class="course-list-main">
         <h3>${escapeHtml(title)}</h3>
         <p class="course-list-meta subtle">
-          Y${escapeHtml(course.academic_year || "")} S${escapeHtml(course.academic_semester || "")}
-          ${courseCode ? ` • ${escapeHtml(courseCode)}` : ""}
-          • ${moduleCount || 0} module${moduleCount === 1 ? "" : "s"}
+          ${courseCode ? `${escapeHtml(courseCode)} • ` : ""}${moduleCount || 0} module${moduleCount === 1 ? "" : "s"}
           • ${completedLessons || 0}/${lessonCount || 0} lessons
         </p>
         <div class="course-list-status-row">
@@ -52041,19 +52864,6 @@ function renderCoursePlatformToolbar(activeTab, filter) {
           <div class="courses-search-row-view">${renderCoursesLayoutToggle()}</div>
         </div>
       ` : ""}
-      <label>Year
-        <select id="courses-year-filter">
-          <option value="" ${state.coursesYearFilter ? "" : "selected"}>All years</option>
-          ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${String(state.coursesYearFilter) === String(year) ? "selected" : ""}>Year ${year}</option>`).join("")}
-        </select>
-      </label>
-      <label>Semester
-        <select id="courses-semester-filter">
-          <option value="" ${state.coursesSemesterFilter ? "" : "selected"}>All semesters</option>
-          <option value="1" ${String(state.coursesSemesterFilter) === "1" ? "selected" : ""}>Semester 1</option>
-          <option value="2" ${String(state.coursesSemesterFilter) === "2" ? "selected" : ""}>Semester 2</option>
-        </select>
-      </label>
       <label>${isEnrolled ? "Status" : "Enrollment"}
         <select id="courses-filter">
           ${isEnrolled ? `
@@ -52068,7 +52878,7 @@ function renderCoursePlatformToolbar(activeTab, filter) {
           `}
         </select>
       </label>
-      ${String(state.coursesSearch || "").trim() || String(state.coursesYearFilter || "").trim() || String(state.coursesSemesterFilter || "").trim() || (isEnrolled ? state.coursesStatusFilter : suggestionFilter) !== "all" ? `<button class="btn ghost admin-btn-sm" type="button" data-action="courses-clear-filters">Clear filters</button>` : ""}
+      ${String(state.coursesSearch || "").trim() || (isEnrolled ? state.coursesStatusFilter : suggestionFilter) !== "all" ? `<button class="btn ghost admin-btn-sm" type="button" data-action="courses-clear-filters">Clear filters</button>` : ""}
     </div>
   `;
 }
@@ -52466,7 +53276,7 @@ function renderCourseDetail(courseId) {
       <div class="course-detail-hero">
         ${renderCourseCoverHtml(course)}
         <div class="course-detail-copy">
-          <p class="kicker">Year ${escapeHtml(course.academic_year || "")} • Semester ${escapeHtml(course.academic_semester || "")}</p>
+          ${course.course_code ? `<p class="kicker">${escapeHtml(course.course_code)}</p>` : ""}
           <h2 class="title">${escapeHtml(getCoursePlatformCourseTitle(course))}</h2>
           <p class="subtle">${escapeHtml(course.description || "Course materials, lessons, announcements, and learning resources.")}</p>
           
@@ -54235,13 +55045,11 @@ async function loadAdminCoursesPlatform(options = {}) {
   state.adminCoursesPlatformLoading = true;
   state.adminCoursesPlatformError = "";
   try {
-    const [courses, modules, lessons, resources, announcements, suggestions, requests, enrollments, topics] = await Promise.all([
+    const [courses, modules, lessons, resources, announcements, suggestions, requests, enrollments, topics, organizations, courseOrganizations] = await Promise.all([
       runRelationalQueryWithTimeout(
         client
           .from("platform_courses")
           .select(ADMIN_COURSE_PLATFORM_COURSE_SELECT)
-          .order("academic_year", { ascending: true })
-          .order("academic_semester", { ascending: true })
           .order("course_name", { ascending: true }),
         "Admin courses query timed out.",
       ),
@@ -54282,6 +55090,19 @@ async function loadAdminCoursesPlatform(options = {}) {
           .range(from, to)
       ), { timeoutMessage: "Admin enrollment query timed out." }).catch(() => []),
       Promise.resolve([]),
+      runRelationalQueryWithTimeout(
+        client.from("organizations").select(ORGANIZATIONS_SELECT).order("sort_order", { ascending: true }).order("name", { ascending: true }),
+        "Organizations query timed out.",
+      ).catch((error) => {
+        if (isMissingRelationError(error)) return [];
+        throw error;
+      }),
+      fetchRowsPagedOrThrow((from, to) => (
+        client.from("platform_course_organizations").select("course_id,organization_id").range(from, to)
+      ), { timeoutMessage: "Course organizations query timed out." }).catch((error) => {
+        if (isMissingRelationError(error)) return [];
+        throw error;
+      }),
     ]);
 
     const referencedUserIds = [...new Set([
@@ -54321,6 +55142,9 @@ async function loadAdminCoursesPlatform(options = {}) {
     state.adminCoursesPlatformRequests = Array.isArray(requests) ? requests : [];
     state.adminCoursesPlatformEnrollments = Array.isArray(enrollments) ? enrollments : [];
     state.adminCoursesPlatformTopics = Array.isArray(topics) ? topics : [];
+    state.adminOrganizations = Array.isArray(organizations) ? organizations : [];
+    state.adminOrganizationsLoadedAt = Date.now();
+    state.adminCoursesPlatformCourseOrganizations = Array.isArray(courseOrganizations) ? courseOrganizations : [];
     state.adminCoursesPlatformProfiles = mergeAdminCoursePlatformProfiles(
       profiles,
       buildAdminCoursePlatformProfileRowsFromLocalUsers(),
@@ -54436,7 +55260,7 @@ function getAdminCourseBuilderCourseLabel(courseId) {
   if (!course) {
     return "Unknown course";
   }
-  return `${getCoursePlatformCourseTitle(course)} • Y${course.academic_year || ""} S${course.academic_semester || ""}`;
+  return [getCoursePlatformCourseTitle(course), String(course.course_code || "").trim()].filter(Boolean).join(" • ");
 }
 
 function getAdminCourseRequestQueue(selectedCourseId = "") {
@@ -54519,34 +55343,6 @@ function renderAdminCourseVideoUploadField(draftKey, labelText = "Upload video")
       </div>
     </div>
   `;
-}
-
-// Video Course codes are generated, never typed: VC-Y{year}S{semester}-{NN},
-// the lowest number not already used in that term. platform_courses has a
-// unique index on upper(course_code), so a code taken by a course created
-// elsewhere in the meantime is caught by the insert and retried (see
-// adminCreatePlatformCourse). `skip` returns the next free code after that many.
-const ADMIN_COURSE_CODE_PREFIX = "VC";
-function buildNextAdminCourseCode(year, semester, courses = state.adminCoursesPlatformCourses, skip = 0) {
-  const prefix = `${ADMIN_COURSE_CODE_PREFIX}-Y${sanitizeAcademicYear(year)}S${sanitizeAcademicSemester(semester)}-`;
-  const taken = new Set(
-    (Array.isArray(courses) ? courses : [])
-      .map((course) => String(course?.course_code || "").trim().toUpperCase())
-      .filter(Boolean),
-  );
-  let skipped = 0;
-  for (let number = 1; number < 10000; number += 1) {
-    const code = `${prefix}${String(number).padStart(2, "0")}`;
-    if (taken.has(code)) continue;
-    if (skipped >= skip) return code;
-    skipped += 1;
-  }
-  return `${prefix}${Date.now()}`;
-}
-
-function isCourseCodeConflictError(error) {
-  return String(error?.code || "").trim() === "23505"
-    && /course_code/i.test(`${error?.message || ""} ${error?.details || ""}`);
 }
 
 // Creator accounts an admin can pick as a course instructor. Merges the admin
@@ -54710,8 +55506,6 @@ function coerceAdminCourseMetadataPayload(data) {
   return {
     course_code: String(data.course_code || "").trim() || null,
     course_name: String(data.course_name || "").trim(),
-    academic_year: sanitizeAcademicYear(data.academic_year),
-    academic_semester: sanitizeAcademicSemester(data.academic_semester),
     description: String(data.description || "").trim() || null,
     cover_image_url: String(data.cover_image_url || "").trim() || null,
     intro_video_url: String(data.intro_video_url || "").trim() || null,
@@ -54810,8 +55604,6 @@ async function upsertDefaultPlatformCourseSuggestion(courseId, coursePayload, da
   const preserveExistingDetails = Boolean(data.preserveDetails);
   const suggestionPayload = {
     course_id: targetCourseId,
-    target_academic_year: normalizeAcademicYearOrNull(coursePayload?.academic_year),
-    target_semester: normalizeAcademicSemesterOrNull(coursePayload?.academic_semester),
     updated_at: nowISO(),
   };
   if (!preserveExistingDetails) {
@@ -54877,20 +55669,13 @@ async function adminCreatePlatformCourse(data) {
     is_published: data.is_published !== false,
     enrollment_mode: data.enrollment_mode || "request",
   });
-  let createdCourse = null;
-  for (let attempt = 0; ; attempt += 1) {
-    payload.course_code = buildNextAdminCourseCode(payload.academic_year, payload.academic_semester, state.adminCoursesPlatformCourses, attempt);
-    try {
-      createdCourse = await runRelationalQueryWithTimeout(
-        client.from("platform_courses").insert(payload).select("id").single(),
-        "Course create timed out.",
-        COURSE_PLATFORM_WRITE_TIMEOUT_MS,
-      );
-      break;
-    } catch (error) {
-      if (!isCourseCodeConflictError(error) || attempt >= 4) throw error;
-    }
-  }
+  // The platform_courses_set_code trigger assigns the code.
+  payload.course_code = null;
+  const createdCourse = await runRelationalQueryWithTimeout(
+    client.from("platform_courses").insert(payload).select("id").single(),
+    "Course create timed out.",
+    COURSE_PLATFORM_WRITE_TIMEOUT_MS,
+  );
   const courseId = String(createdCourse?.id || "").trim();
   if (isUuidValue(courseId)) {
     const coverImageUrl = await resolveAdminCourseCoverUrl(courseId, data);
@@ -56182,16 +56967,14 @@ function adminLoadCourseSuggestions(courseId) {
 
 function coerceCourseSuggestionPayload(courseId, data) {
   const featuredForAll = Boolean(data.featured_for_all);
-  const targetYear = featuredForAll ? null : normalizeAcademicYearOrNull(data.target_academic_year);
-  const targetSemester = featuredForAll ? null : normalizeAcademicSemesterOrNull(data.target_semester);
+  const targetOrganizationId = featuredForAll ? "" : String(data.target_organization_id || "").trim();
   const startsAt = String(data.starts_at || "").trim();
   const endsAt = String(data.ends_at || "").trim();
   const showAsSuggested = Boolean(data.show_as_suggested) || featuredForAll;
   const priority = Math.max(Number(data.priority) || 0, featuredForAll ? 1000 : 0);
   return {
     course_id: courseId,
-    target_academic_year: targetYear,
-    target_semester: targetSemester,
+    target_organization_id: isUuidValue(targetOrganizationId) ? targetOrganizationId : null,
     title: String(data.title || "").trim() || null,
     reason: String(data.reason || "").trim() || null,
     priority,
@@ -56576,8 +57359,7 @@ function adminRenderSuggestionSettings(courseId) {
   const suggestions = adminLoadCourseSuggestions(courseId);
   const activeSuggestion = suggestions[0] || null;
   const activeSuggestionFeatured = Boolean(activeSuggestion?.is_active)
-    && !normalizeAcademicYearOrNull(activeSuggestion?.target_academic_year)
-    && !normalizeAcademicSemesterOrNull(activeSuggestion?.target_semester)
+    && !activeSuggestion?.target_organization_id
     && Number(activeSuggestion?.priority || 0) >= 1000;
   return `
     <form id="admin-course-suggestion-form" class="course-builder-form">
@@ -56586,17 +57368,10 @@ function adminRenderSuggestionSettings(courseId) {
       <label class="course-builder-check"><input type="checkbox" name="show_as_suggested" ${activeSuggestion ? "checked" : ""} /> Show as suggested course</label>
       <label class="course-builder-check"><input type="checkbox" name="featured_for_all" ${activeSuggestionFeatured ? "checked" : ""} /> Featured for all students</label>
       <div class="course-builder-grid">
-        <label>Target academic year
-          <select name="target_academic_year">
-            <option value="" ${activeSuggestion?.target_academic_year ? "" : "selected"}>All years</option>
-            ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${Number(activeSuggestion?.target_academic_year) === year ? "selected" : ""}>Year ${year}</option>`).join("")}
-          </select>
-        </label>
-        <label>Target semester
-          <select name="target_semester">
-            <option value="" ${activeSuggestion?.target_semester ? "" : "selected"}>All semesters</option>
-            <option value="1" ${Number(activeSuggestion?.target_semester) === 1 ? "selected" : ""}>Semester 1</option>
-            <option value="2" ${Number(activeSuggestion?.target_semester) === 2 ? "selected" : ""}>Semester 2</option>
+        <label>Show to
+          <select name="target_organization_id">
+            <option value="" ${activeSuggestion?.target_organization_id ? "" : "selected"}>Every student</option>
+            ${getAdminCourseOrganizationOptions().map((organization) => `<option value="${escapeHtml(organization.id)}" ${String(activeSuggestion?.target_organization_id || "") === organization.id ? "selected" : ""}>Members of ${escapeHtml(organization.name)}</option>`).join("")}
           </select>
         </label>
         <label>Suggested title<input name="title" value="${escapeHtml(activeSuggestion?.title || "")}" /></label>
@@ -56616,7 +57391,7 @@ function adminRenderSuggestionSettings(courseId) {
           <div class="course-request-row">
             <span>
               <b>${escapeHtml(suggestion.title || "Suggested course")}</b>
-              <small>${escapeHtml(suggestion.is_active ? "Active" : "Inactive")} • ${Number(suggestion.priority || 0) >= 1000 && !suggestion.target_academic_year && !suggestion.target_semester ? "Featured for all students" : `${suggestion.target_academic_year ? `Year ${escapeHtml(suggestion.target_academic_year)}` : "All years"} • ${suggestion.target_semester ? `Semester ${escapeHtml(suggestion.target_semester)}` : "All semesters"}`} • Priority ${escapeHtml(suggestion.priority || 0)}</small>
+              <small>${escapeHtml(suggestion.is_active ? "Active" : "Inactive")} • ${Number(suggestion.priority || 0) >= 1000 && !suggestion.target_organization_id ? "Featured for all students" : escapeHtml(getAdminSuggestionAudienceLabel(suggestion))} • Priority ${escapeHtml(suggestion.priority || 0)}</small>
             </span>
             <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-course-suggestion" data-suggestion-id="${escapeHtml(suggestion.id)}">Delete</button>
           </div>
@@ -56654,12 +57429,8 @@ function getAdminCourseTableRowStats(courseId) {
 
 function filterAdminCoursesForTable(courses) {
   const search = String(state.adminCourseTableSearch || "").trim().toLowerCase();
-  const yearFilter = String(state.adminCourseTableFilterYear || "").trim();
-  const semesterFilter = String(state.adminCourseTableFilterSemester || "").trim();
   const statusFilter = String(state.adminCourseTableFilterStatus || "all").trim().toLowerCase();
   return (courses || []).filter((course) => {
-    if (yearFilter && Number(course.academic_year) !== Number(yearFilter)) return false;
-    if (semesterFilter && Number(course.academic_semester) !== Number(semesterFilter)) return false;
     if (statusFilter === "published" && !course.is_published) return false;
     if (statusFilter === "draft" && course.is_published) return false;
     if (!search) return true;
@@ -56729,8 +57500,7 @@ function renderAdminCourseApprovalsSection(courses) {
           <div>
             <b>${escapeHtml(getCoursePlatformCourseTitle(course))}</b>
             <p class="subtle" style="margin: 0.15rem 0 0; font-size: 0.82rem;">
-              Year ${escapeHtml(course.academic_year || "")} · Semester ${escapeHtml(course.academic_semester || "")}
-              ${course.instructor_name ? ` · ${escapeHtml(course.instructor_name)}` : ""}
+              ${escapeHtml([course.course_code, course.instructor_name].filter(Boolean).join(" · "))}
             </p>
           </div>
           <div style="display: flex; align-items: center; gap: 0.4rem;">
@@ -56784,8 +57554,6 @@ async function adminReviewPlatformCourse(courseId, approved, note) {
 }
 
 function renderAdminCourseTableToolbar() {
-  const yearFilter = String(state.adminCourseTableFilterYear || "");
-  const semesterFilter = String(state.adminCourseTableFilterSemester || "");
   const statusFilter = String(state.adminCourseTableFilterStatus || "all");
   return `
     <div class="admin-course-table-toolbar admin-flat-toolbar">
@@ -56794,15 +57562,6 @@ function renderAdminCourseTableToolbar() {
         <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
         <input class="admin-course-search-input" type="search" id="admin-course-table-search" placeholder="Search courses, codes, instructors" value="${escapeHtml(state.adminCourseTableSearch || "")}" />
       </label>
-      <select id="admin-course-table-filter-year" data-action="admin-course-table-filter" aria-label="Year">
-        <option value="" ${!yearFilter ? "selected" : ""}>All years</option>
-        ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${yearFilter === String(year) ? "selected" : ""}>Year ${year}</option>`).join("")}
-      </select>
-      <select id="admin-course-table-filter-semester" data-action="admin-course-table-filter" aria-label="Semester">
-        <option value="" ${!semesterFilter ? "selected" : ""}>All semesters</option>
-        <option value="1" ${semesterFilter === "1" ? "selected" : ""}>Semester 1</option>
-        <option value="2" ${semesterFilter === "2" ? "selected" : ""}>Semester 2</option>
-      </select>
       <select id="admin-course-table-filter-status" data-action="admin-course-table-filter" aria-label="Status">
         <option value="all" ${statusFilter === "all" ? "selected" : ""}>All statuses</option>
         <option value="published" ${statusFilter === "published" ? "selected" : ""}>Published</option>
@@ -56826,7 +57585,7 @@ function renderAdminCourseTable(courses, selectedCourseId, options = {}) {
           <thead>
             <tr>
               <th>Course</th>
-              <th>Year / Sem</th>
+              <th>Audience</th>
               <th>Status</th>
               <th>Enrollment</th>
               <th>Modules</th>
@@ -56846,7 +57605,7 @@ function renderAdminCourseTable(courses, selectedCourseId, options = {}) {
                     <b>${escapeHtml(getCoursePlatformCourseTitle(course))}</b>
                     ${course.course_code ? `<small>${escapeHtml(course.course_code)}</small>` : ""}
                   </td>
-                  <td>Y${escapeHtml(course.academic_year || "")} S${escapeHtml(course.academic_semester || "")}</td>
+                  <td>${escapeHtml(getAdminCourseAudienceLabel(course))}</td>
                   <td><span class="${course.is_published ? "admin-badge-published" : "admin-badge-draft"}">${course.is_published ? "Published" : "Draft"}</span></td>
                   <td>${escapeHtml(normalizeCoursePlatformMode(course.enrollment_mode) === "assigned" ? "Assigned" : "Request")}</td>
                   <td>${stats.modules}</td>
@@ -56866,33 +57625,15 @@ function renderAdminCourseTable(courses, selectedCourseId, options = {}) {
 
 function renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingRequestCount) {
   const profileCount = rows.enrollments.length;
-  const groupedCourses = new Map();
-  [...courses]
-    .sort((left, right) => {
-      const yearDifference = (Number(left?.academic_year) || 0) - (Number(right?.academic_year) || 0);
-      if (yearDifference) return yearDifference;
-      const semesterDifference = (Number(left?.academic_semester) || 0) - (Number(right?.academic_semester) || 0);
-      if (semesterDifference) return semesterDifference;
-      return getCoursePlatformCourseTitle(left).localeCompare(getCoursePlatformCourseTitle(right));
-    })
-    .forEach((course) => {
-      const year = Number(course?.academic_year) || 0;
-      const semester = Number(course?.academic_semester) || 0;
-      const groupKey = `${year}:${semester}`;
-      if (!groupedCourses.has(groupKey)) {
-        groupedCourses.set(groupKey, { year, semester, courses: [] });
-      }
-      groupedCourses.get(groupKey).courses.push(course);
-    });
+  const sortedCourses = [...courses]
+    .sort((left, right) => getCoursePlatformCourseTitle(left).localeCompare(getCoursePlatformCourseTitle(right)));
 
   return `
     <div class="admin-course-context-bar">
       <label class="admin-course-context-select">
         <span>Course</span>
         <select id="admin-course-builder-course-select">
-          ${[...groupedCourses.values()].map((group) => `
-            <optgroup label="${escapeHtml(`Year ${group.year} · Semester ${group.semester}`)}">
-              ${group.courses.map((course) => {
+              ${sortedCourses.map((course) => {
                 const courseId = String(course?.id || "").trim();
                 const optionParts = [getCoursePlatformCourseTitle(course)];
                 const courseCode = String(course?.course_code || "").trim();
@@ -56900,8 +57641,6 @@ function renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingReq
                 if (!course?.is_published) optionParts.push("Draft");
                 return `<option value="${escapeHtml(courseId)}" ${courseId === selectedCourseId ? "selected" : ""}>${escapeHtml(optionParts.join(" · "))}</option>`;
               }).join("")}
-            </optgroup>
-          `).join("")}
         </select>
       </label>
       <p class="admin-course-context-meta">${escapeHtml([
@@ -56928,7 +57667,7 @@ function renderAdminGlobalSuggestions() {
         ${suggestions.length ? suggestions.map((suggestion) => {
           const course = courses.find((entry) => String(entry?.id || "") === String(suggestion?.course_id || ""));
           const statusLabel = suggestion.is_active ? "Active" : "Inactive";
-          const featured = Number(suggestion.priority || 0) >= 1000 && !suggestion.target_academic_year && !suggestion.target_semester;
+          const featured = Number(suggestion.priority || 0) >= 1000 && !suggestion.target_organization_id;
           return `
             <div class="course-request-row">
               <span>
@@ -58261,9 +59000,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
         <p class="subtle" style="margin-top: -0.35rem; margin-bottom: 1.25rem;">This creates a Courses platform course only. It does not create or edit MCQ bank courses.</p>
         <div class="course-builder-grid compact">
           <label>Course name<input name="course_name" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_name", ""))}" required /></label>
-          <label>Course code<input data-course-code-preview value="${escapeHtml(buildNextAdminCourseCode(getAdminCourseBuilderFieldValue(dk, "academic_year", 1), getAdminCourseBuilderFieldValue(dk, "academic_semester", 1)))}" readonly aria-readonly="true" tabindex="-1" /><small class="admin-course-code-hint">Assigned automatically</small></label>
-          <label>Suggestion year<select name="academic_year">${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${getAdminCourseBuilderOptionSelected(dk, "academic_year", year, 1)}>Year ${year}</option>`).join("")}</select></label>
-          <label>Suggestion semester<select name="academic_semester"><option value="1" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 1, 1)}>Semester 1</option><option value="2" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 2, 1)}>Semester 2</option></select></label>
+          <label>Course code<input value="Assigned when you create the course" readonly aria-readonly="true" tabindex="-1" /><small class="admin-course-code-hint">Assigned automatically</small></label>
           <label>Enrollment mode
             <select name="enrollment_mode">
               <option value="request" ${getAdminCourseBuilderOptionSelected(dk, "enrollment_mode", "request", "request")}>Request only</option>
@@ -58299,8 +59036,6 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
         <div class="course-builder-grid">
           <label>Course name<input name="course_name" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_name", selectedCourse.course_name || ""))}" required /></label>
           <label>Course code<input name="course_code" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_code", selectedCourse.course_code || ""))}" readonly aria-readonly="true" /></label>
-          <label>Suggestion year<select name="academic_year">${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${getAdminCourseBuilderOptionSelected(dk, "academic_year", year, selectedCourse.academic_year)}>Year ${year}</option>`).join("")}</select></label>
-          <label>Suggestion semester<select name="academic_semester"><option value="1" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 1, selectedCourse.academic_semester)}>Semester 1</option><option value="2" ${getAdminCourseBuilderOptionSelected(dk, "academic_semester", 2, selectedCourse.academic_semester)}>Semester 2</option></select></label>
           <label>Description<textarea name="description" rows="4">${escapeHtml(getAdminCourseBuilderFieldValue(dk, "description", selectedCourse.description || ""))}</textarea></label>
           ${renderAdminCourseCoverUploadField(dk, selectedCourse.cover_image_url || "")}
           <label>Intro video URL<input name="intro_video_url" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "intro_video_url", selectedCourse.intro_video_url || ""))}" /></label>
@@ -58324,6 +59059,8 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
         </div>
       </form>
+
+      ${renderAdminCourseAudienceForm(selectedCourse)}
 
       <div data-course-resource-scope="${escapeHtml(selectedCourseId)}">
         <p class="subtle" style="margin: 1.25rem 0 0;">Course-wide materials shown to every enrolled student, regardless of module.</p>
@@ -58733,8 +59470,6 @@ function adminRenderCourseBuilder(courseId) {
                   Academic Settings & Status
                 </div>
                 <div class="course-metadata-card-body grid-2col">
-                  <label>Suggestion year<select name="academic_year">${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${Number(selectedCourse.academic_year) === year ? "selected" : ""}>Year ${year}</option>`).join("")}</select></label>
-                  <label>Suggestion semester<select name="academic_semester"><option value="1" ${Number(selectedCourse.academic_semester) === 1 ? "selected" : ""}>Semester 1</option><option value="2" ${Number(selectedCourse.academic_semester) === 2 ? "selected" : ""}>Semester 2</option></select></label>
                   <label>Enrollment mode
                     <select name="enrollment_mode">
                       <option value="assigned" ${normalizeCoursePlatformMode(selectedCourse.enrollment_mode) === "assigned" ? "selected" : ""}>Assigned</option>
@@ -58802,6 +59537,7 @@ function adminRenderCourseBuilder(courseId) {
               <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
             </div>
             </form>
+            ${renderAdminCourseAudienceForm(selectedCourse)}
           ` : renderAdminCoursesEmptyState()}
         ` : ""}
 
@@ -59006,20 +59742,6 @@ function wireAdminCoursesPlatformBuilder() {
   root.addEventListener("input", handleFormDraftInput);
   root.addEventListener("change", handleFormDraftInput);
   root.querySelectorAll("[data-instructor-picker]").forEach(wireAdminInstructorPicker);
-  // The create form shows the code it will get; keep it in step with the term.
-  const createForm = root.querySelector("#admin-course-create-form");
-  const codePreview = createForm?.querySelector("[data-course-code-preview]");
-  if (createForm && codePreview) {
-    const syncCodePreview = () => {
-      codePreview.value = buildNextAdminCourseCode(
-        createForm.querySelector("[name='academic_year']")?.value,
-        createForm.querySelector("[name='academic_semester']")?.value,
-      );
-    };
-    createForm.querySelectorAll("[name='academic_year'], [name='academic_semester']").forEach((select) => {
-      select.addEventListener("change", syncCodePreview);
-    });
-  }
   if (!state.adminCoursesPlatformLoadedAt && !state.adminCoursesPlatformLoading) {
     loadAdminCoursesPlatform().then((ok) => {
       if (ok && state.route === "admin" && state.adminPage === ADMIN_COURSES_PLATFORM_PAGE) {
@@ -59126,6 +59848,12 @@ function wireAdminCoursesPlatformBuilder() {
           state.adminCourseBuilderActiveParentId = "";
         }
       }, form);
+    } else if (id === "admin-course-audience-form") {
+      event.preventDefault();
+      const courseId = String(form.getAttribute("data-course-id") || state.adminCourseBuilderCourseId || "");
+      const visibility = form.querySelector("[name='audience_visibility']:checked")?.value || "public";
+      const organizationIds = [...form.querySelectorAll("[data-audience-organization]:checked")].map((input) => input.value);
+      runAdminCourseAction("Audience saved.", () => adminSaveCourseAudience(courseId, visibility, organizationIds), form);
     } else if (id === "admin-course-metadata-form") {
       event.preventDefault();
       runAdminCourseAction("Course metadata saved.", () => adminSaveCourseMetadata(state.adminCourseBuilderCourseId, readFormDataObject(form)), form);

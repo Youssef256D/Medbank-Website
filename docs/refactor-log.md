@@ -2,6 +2,37 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-09 — Admin Organizations page; video courses lose year/semester
+- **Video course reads stopped requesting dropped columns.** Migration
+  `20261009230000_drop_video_course_terms` (applied to the hosted DB) dropped
+  `platform_courses.academic_year/academic_semester` and
+  `platform_course_suggestions.target_academic_year/target_semester`, but the
+  website still selected and ordered by them, so every admin and student
+  Video Courses query failed. Removed from `COURSE_PLATFORM_COURSE_SELECT`,
+  the admin/notification queries, course payloads, course-builder forms,
+  filters, labels and the context-bar grouping. Course codes are now assigned
+  by the `platform_courses_set_code` trigger (create sends `course_code: null`;
+  `buildNextAdminCourseCode` is gone). Suggestions target an organization
+  (`target_organization_id`) instead of a term. **MCQ `courses` and
+  `profiles` keep their year/semester — do not touch those.**
+- **New admin page `organizations`** (People area; `ADMIN_DATA_PAGES`,
+  `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS`). Mirrors the app's admin
+  Organizations screens: list (create/edit/hide/delete, member counts), detail
+  with Codes (`admin_create_organization_code` RPC, copy, revoke), Courses
+  (rows from `platform_course_organizations`; a click opens the course in the
+  Course Builder via `data-action="admin-course-platform-section"`), and
+  Members (search, 50 per page, add with `source: 'admin'`, remove). Dialogs
+  render in `adminGlobalOverlay`.
+- **Course Builder → Audience** (`renderAdminCourseAudienceForm`,
+  `adminSaveCourseAudience`): public vs. organization-only plus organizations.
+  Same order as the app: insert new links, then set `visibility`, then delete
+  removed links — `trg_platform_courses_guard_audience` refuses a published
+  organization-only course with no links. Making a course public keeps its
+  links (they are ignored).
+- Member search selects `id,full_name,email,public_user_id,role` on purpose:
+  `tests/auto-mcq-access.test.js` requires every `select("id,public_user_id,…")`
+  (the admin user lists) to include `mcq_access_held_at`.
+
 ### 2026-10-08 — app_state fallback no longer pulls users/questions; refresh backoff
 - `refreshStudentDataFromSupabaseState` (the fallback when the relational
   refresh fails) no longer hydrates `STORAGE_KEYS.users` / `STORAGE_KEYS.questions`.
