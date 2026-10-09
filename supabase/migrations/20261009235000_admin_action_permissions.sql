@@ -33,7 +33,7 @@
 --   messaging.notifications, messaging.popups                 (area messaging)
 --   system.view                                               (area system)
 --
--- Rollback: supabase/rollbacks/20261009235000_admin_action_permissions_rollback.sql
+-- Rollback: supabase/rollbacks/20261009235000_admin_action_permissions.sql
 
 alter table public.admin_permissions
   add column if not exists permissions text[];
