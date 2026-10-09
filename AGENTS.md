@@ -215,9 +215,11 @@ route, or file you are touching; add your own entry at the top when you finish.
   tables deliberately coerce to student/admin (2026-08-05).
 - **Admin dialogs render in `adminGlobalOverlay`**, never inside the blurred shell;
   only one `admin-help-toggle` listener (2026-09-30).
-- **Every new admin page goes in `ADMIN_NAV_GROUPS` and `ADMIN_PAGE_AREAS` /
-  `ADMIN_SUPER_ONLY_PAGES`; every new admin-written table needs an
-  `_area_guard_` policy** (2026-09-29, 2026-09-30).
+- **Every new admin page goes in `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS` and
+  `ADMIN_PAGE_PERMISSIONS` (or `ADMIN_SUPER_ONLY_PAGES`); every new
+  admin-written table needs an `_area_guard_` policy and, if it belongs to a
+  single action, a `guard_admin_action` trigger** (2026-09-29, 2026-09-30,
+  2026-10-09). `admin_permissions.permissions` null = all actions in the areas.
 - **Tests slice `main.js` by function name** (`renderAdminSidebarNav`,
   `matchesAdminUserFilters`) — renaming or moving those silently breaks tests.
 - **Never deploy `send-push-notification` from this repo** (deployed copy is newer,
