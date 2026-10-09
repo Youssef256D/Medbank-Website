@@ -1071,6 +1071,11 @@ const SUPABASE_CONFIG = {
   cloudflareStreamEnabled: window.__SUPABASE_CONFIG?.cloudflareStreamEnabled === true,
 };
 
+function isVideoCoursesHidden(user = getCurrentUser()) {
+  if (window.__SUPABASE_CONFIG?.videoCoursesVisible !== false) return false;
+  return user?.role !== "admin";
+}
+
 const QUESTION_IMAGE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
 const QUESTION_IMAGE_DATA_URL_FALLBACK_MAX_BYTES = 900 * 1024;
 const QUESTION_IMAGE_SIGNED_URL_EXPIRY_OPTIONS = [
@@ -2558,7 +2563,8 @@ async function processPendingStudentRefreshTrigger(user = null, options = {}) {
   const onExamRoute = isStudentExamRefreshRoute();
   const payload = pending.payload || null;
   const needsMcqRefresh = studentRefreshPayloadTouchesMcqBank(payload);
-  const needsCoursePlatformRefresh = studentRefreshPayloadTouchesCoursePlatform(payload) || state.route === "video-courses";
+  const needsCoursePlatformRefresh = !isVideoCoursesHidden(current)
+    && (studentRefreshPayloadTouchesCoursePlatform(payload) || state.route === "video-courses");
   const refreshed = needsMcqRefresh
     ? await refreshStudentDataSnapshot(current, {
       force: true,
@@ -5135,7 +5141,9 @@ function getMcqAccessBlockedMessage(user = getCurrentUser()) {
   if (user?.role === "student" && resolveUserMcqEligibility(user) === false) {
     return getMcqIneligibleNote();
   }
-  return "MCQ Bank access is disabled for this account. Video Courses remain available if you are enrolled.";
+  return isVideoCoursesHidden(user)
+    ? "MCQ Bank access is disabled for this account."
+    : "MCQ Bank access is disabled for this account. Video Courses remain available if you are enrolled.";
 }
 
 function getCoursesAccessBlockedMessage() {
@@ -5168,6 +5176,7 @@ const UNIVERSITY_COLLEGE_FALLBACK_OPTIONS = [
 ];
 const UNIVERSITIES_SELECT = "id,name,name_ar,mcq_bank_available,is_active,sort_order,created_at,updated_at";
 const MCQ_INELIGIBLE_NOTE_FALLBACK = "The MCQ Bank is available for Medicine students at October 6 University. You'll have full access to Video Courses.";
+const MCQ_INELIGIBLE_NOTE_HIDDEN_FALLBACK = "The MCQ Bank is available for Medicine students at October 6 University.";
 
 function getCollegeOptions() {
   return getUniversitiesUtils()?.COLLEGE_OPTIONS || UNIVERSITY_COLLEGE_FALLBACK_OPTIONS;
@@ -5231,6 +5240,9 @@ function isUserMcqAccessHeld(account) {
 }
 
 function getMcqIneligibleNote() {
+  if (isVideoCoursesHidden()) {
+    return MCQ_INELIGIBLE_NOTE_HIDDEN_FALLBACK;
+  }
   return getUniversitiesUtils()?.MCQ_INELIGIBLE_NOTE || MCQ_INELIGIBLE_NOTE_FALLBACK;
 }
 
@@ -18424,6 +18436,9 @@ function bindGlobalEvents() {
     const clickedInsideNotificationMenu = Boolean(event.target.closest(".notification-menu"));
     const actionTarget = event.target.closest("[data-action]");
     const action = actionTarget?.getAttribute("data-action") || "";
+    if (isVideoCoursesHidden() && String(action).startsWith("courses-")) {
+      return;
+    }
     if (action && !["toggle-user-menu", "toggle-notification-menu"].includes(action)) {
       appendSystemLog("ui.action", `Action: ${action}`, {
         route: String(state.route || "").trim(),
@@ -20508,7 +20523,7 @@ async function runVideoCourseRealtimeHydration() {
     return;
   }
   const user = getCurrentUser();
-  if (!user || user.role !== "student" || state.route !== "video-courses") {
+  if (!user || user.role !== "student" || isVideoCoursesHidden(user) || state.route !== "video-courses") {
     return;
   }
   videoCourseRealtimeHydrateInFlight = true;
@@ -20547,6 +20562,7 @@ function ensureVideoCourseRealtimeSubscription(user = null) {
     !client
     || isBrowserOffline()
     || currentUser?.role !== "student"
+    || isVideoCoursesHidden(currentUser)
     || !isUuidValue(profileId)
     || state.route !== "video-courses"
     || isStudentOnboardingRoute(state.route, currentUser)
@@ -22604,6 +22620,14 @@ function render() {
     state.route = user ? (user.role === "admin" ? "admin" : "app-launcher") : "login";
   }
 
+  if (["courses-platform", "pricing"].includes(state.route) && isVideoCoursesHidden(user)) {
+    state.route = "landing";
+  }
+
+  if (state.route === "video-courses" && isVideoCoursesHidden(user)) {
+    state.route = user ? "app-launcher" : "login";
+  }
+
   if (shouldShowAppLauncherBeforeMcqBank(user)) {
     state.route = "app-launcher";
   }
@@ -23073,6 +23097,23 @@ function renderTopbarNotificationMenu(user, unreadNotificationCount, unreadNotif
 }
 
 
+function syncPublicVideoCoursesNav(user = getCurrentUser()) {
+  if (!publicNavEl) return;
+  const hidden = isVideoCoursesHidden(user);
+  let button = publicNavEl.querySelector('[data-nav="courses-platform"]');
+  if (!button && !hidden) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("data-nav", "courses-platform");
+    button.textContent = "Video Courses";
+    const contactButton = publicNavEl.querySelector('[data-nav="contact"]');
+    publicNavEl.insertBefore(button, contactButton || null);
+  }
+  if (button) {
+    button.hidden = hidden;
+  }
+}
+
 function syncTopbar() {
   const nativeApp = syncNativeAppBodyClass();
   const user = getCurrentUser();
@@ -23173,6 +23214,7 @@ function syncTopbar() {
   authActionsEl.classList.toggle("hidden", false);
 
   publicNavEl.classList.toggle("hidden", Boolean(user) || maintenanceRestricted);
+  syncPublicVideoCoursesNav(user);
   if (!user && !maintenanceRestricted) {
     publicNavEl.querySelectorAll("[data-nav]").forEach((button) => {
       button.classList.toggle("is-active", button.getAttribute("data-nav") === state.route);
@@ -23192,7 +23234,7 @@ function syncTopbar() {
       privateNavEl.innerHTML = `
         <button data-nav="app-launcher" class="${isAppLauncher ? "is-active" : ""}">Apps</button>
         ${canOpenMcqBank ? '<button data-action="open-mcq-bank">MCQ Bank</button>' : ""}
-        <button data-action="courses-home-tab" data-tab="dashboard">Video Courses</button>
+        ${isVideoCoursesHidden(user) ? "" : '<button data-action="courses-home-tab" data-tab="dashboard">Video Courses</button>'}
       `;
       privateNavEl.classList.remove("hidden");
     } else if (isMcqRoute) {
@@ -23308,7 +23350,9 @@ function syncMobileTabBar() {
   if (!shouldShow) { el.innerHTML = ""; return; }
 
   const canOpenMcqBank = isUserMcqAccessEnabled(user);
-  const canOpenCourses = isUserCoursesAccessEnabled(user) && !shouldBlockStudentCoursesPortal(user);
+  const canOpenCourses = !isVideoCoursesHidden(user)
+    && isUserCoursesAccessEnabled(user)
+    && !shouldBlockStudentCoursesPortal(user);
   const route = state.route;
   const mcqActive = ["dashboard", "create-test", "analytics", "qbank"].includes(route);
   const icon = {
@@ -24147,6 +24191,7 @@ function showMobileAppPrompt() {
 }
 
 function landingMobileAppsSectionHtml() {
+  const coursesHidden = isVideoCoursesHidden();
   return `
     <div class="lp-app-release">
       <div class="lp-mobile-copy">
@@ -24157,12 +24202,12 @@ function landingMobileAppsSectionHtml() {
           </div>
         </div>
         <h2 class="lp-mobile-title">Your complete medical study loop, now built for mobile.</h2>
-        <p class="lp-mobile-lede">Use the same approved MedBank account to practise assigned MCQs, review explanations, continue video courses, and keep progress synced across phone, tablet, and web.</p>
+        <p class="lp-mobile-lede">${coursesHidden ? "Use the same approved MedBank account to practise assigned MCQs, review explanations, and keep progress synced across phone, tablet, and web." : "Use the same approved MedBank account to practise assigned MCQs, review explanations, continue video courses, and keep progress synced across phone, tablet, and web."}</p>
 
         <ul class="lp-app-feature-list" aria-label="MedBank mobile app features">
           <li><strong>Focused tests</strong><span>Choose subjects and topics, then study in tutor or timed mode.</span></li>
           <li><strong>Detailed review</strong><span>See explanations, revisit mistakes, and keep private question notes.</span></li>
-          <li><strong>Video learning</strong><span>Open enrolled courses, modules, materials, and lesson progress.</span></li>
+          ${coursesHidden ? "" : "<li><strong>Video learning</strong><span>Open enrolled courses, modules, materials, and lesson progress.</span></li>"}
           <li><strong>Made for every screen</strong><span>English and Arabic, light and dark themes, phone and tablet layouts.</span></li>
         </ul>
 
@@ -24199,9 +24244,9 @@ function landingMobileAppsSectionHtml() {
           <strong>Real screens. One connected workspace.</strong>
           <span aria-hidden="true">Swipe to explore →</span>
         </div>
-        <div class="lp-screen-reel" tabindex="0" aria-label="MedBank mobile app screenshots. Scroll horizontally to explore all six screens.">
+        <div class="lp-screen-reel" tabindex="0" aria-label="MedBank mobile app screenshots. Scroll horizontally to explore all ${coursesHidden ? "five" : "six"} screens.">
           <figure class="lp-app-screen">
-            <img src="Assets/mobile-app/screen-01-learning-overview.png" alt="MedBank mobile learning overview with question, subject, course, and lesson progress cards" width="660" height="1434" loading="lazy" decoding="async" />
+            <img src="Assets/mobile-app/screen-01-learning-overview.png" alt="${coursesHidden ? "MedBank mobile learning overview with question and subject progress cards" : "MedBank mobile learning overview with question, subject, course, and lesson progress cards"}" width="660" height="1434" loading="lazy" decoding="async" />
             <figcaption>Learning overview</figcaption>
           </figure>
           <figure class="lp-app-screen">
@@ -24216,10 +24261,10 @@ function landingMobileAppsSectionHtml() {
             <img src="Assets/mobile-app/screen-04-test-results.png" alt="MedBank test results with score, correct and incorrect counts, and answer review" width="660" height="1434" loading="lazy" decoding="async" />
             <figcaption>Results &amp; review</figcaption>
           </figure>
-          <figure class="lp-app-screen">
+          ${coursesHidden ? "" : `<figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-05-video-courses.png" alt="MedBank Video Courses screen with enrolled course progress" width="660" height="1434" loading="lazy" decoding="async" />
             <figcaption>Video Courses</figcaption>
-          </figure>
+          </figure>`}
           <figure class="lp-app-screen">
             <img src="Assets/mobile-app/screen-06-profile-settings.png" alt="MedBank profile showing assigned subjects, appearance, language, and help settings" width="660" height="1434" loading="lazy" decoding="async" />
             <figcaption>Profile &amp; settings</figcaption>
@@ -24259,10 +24304,11 @@ function landingCoursesSectionHtml() {
 }
 
 function landingContactBodyHtml() {
+  const coursesHidden = isVideoCoursesHidden();
   return `
     <div class="lp-product-head">
       <h2 class="lp-product-title">Get in touch.</h2>
-      <p class="lp-product-lede">To bring your courses to MedBank, or for access and pricing details, reach the platform owner directly.</p>
+      <p class="lp-product-lede">${coursesHidden ? "For account access, support, or general questions, reach the MedBank owner directly." : "To bring your courses to MedBank, or for access and pricing details, reach the platform owner directly."}</p>
     </div>
     <div class="lp-contact-card">
       <p class="lp-contact-name">Youssef Ayoub <span>· MedBank owner</span></p>
@@ -24276,7 +24322,7 @@ function landingContactBodyHtml() {
           <span>Code.Youssefaayoub@gmail.com</span>
         </a>
       </div>
-      <p class="lp-contact-hint">Message or call for contact and pricing details.</p>
+      <p class="lp-contact-hint">${coursesHidden ? "Message or call for support and account details." : "Message or call for contact and pricing details."}</p>
     </div>
   `;
 }
@@ -24309,6 +24355,7 @@ function landingContactSectionHtml() {
 
 function renderLanding() {
   const user = getCurrentUser();
+  const coursesHidden = isVideoCoursesHidden(user);
   const heroActionsHtml = user
     ? `
             <button class="btn" data-nav="${user.role === "admin" || user.role === "creator" ? "admin" : "app-launcher"}">Open MedBank</button>
@@ -24321,15 +24368,15 @@ function renderLanding() {
 
   const heroNoteHtml = user
     ? `<p class="lp-hero-note">Signed in as <strong>${escapeHtml(user.name || user.email || "MedBank student")}</strong>.</p>`
-    : `<p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>`;
+    : `<p class="lp-hero-note">New students sign up and get in once ${coursesHidden ? "an admin" : "a course admin"} approves them.</p>`;
 
   return `
     <div class="panel marketing-page landing-page landing-page-scroll landing-simple">
 
       <section id="landing-home" class="landing-scroll-section lp-home">
         <div class="lp-hero">
-          <h1 class="lp-hero-title">Protected courses <span class="lp-plus" aria-hidden="true">+</span> a medical MCQ bank.</h1>
-          <p class="lp-hero-lede">Stream lectures securely and practise course-aligned MCQs with instant explanations. One simple platform.</p>
+          <h1 class="lp-hero-title">${coursesHidden ? 'A medical MCQ bank <span class="lp-plus" aria-hidden="true">+</span> mobile app.' : 'Protected courses <span class="lp-plus" aria-hidden="true">+</span> a medical MCQ bank.'}</h1>
+          <p class="lp-hero-lede">${coursesHidden ? "Practise course-aligned MCQs with instant explanations, timed exams and progress analytics — on web and mobile." : "Stream lectures securely and practise course-aligned MCQs with instant explanations. One simple platform."}</p>
           <div class="lp-hero-actions">
             ${heroActionsHtml}
           </div>
@@ -24338,8 +24385,8 @@ function renderLanding() {
             <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mobile-app">Mobile App</button>
             <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
             <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mcqs">MCQ Bank</button>
-            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
-            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-courses-platform">Video Courses</button>
+            ${coursesHidden ? "" : `<span class="lp-hero-explore-sep" aria-hidden="true">·</span>
+            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-courses-platform">Video Courses</button>`}
             <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
             <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-contact">Contact</button>
           </div>
@@ -24355,9 +24402,9 @@ function renderLanding() {
         ${landingMcqBankSectionHtml()}
       </section>
 
-      <section id="landing-courses-platform" class="landing-scroll-section lp-section">
+      ${coursesHidden ? "" : `<section id="landing-courses-platform" class="landing-scroll-section lp-section">
         ${landingCoursesSectionHtml()}
-      </section>
+      </section>`}
 
       <section id="landing-contact" class="landing-scroll-section lp-section">
         ${landingContactSectionHtml()}
@@ -24392,15 +24439,16 @@ function renderCoursesPlatformPage() {
 }
 
 function renderFeatures() {
+  const coursesHidden = isVideoCoursesHidden();
   return `
     <section class="panel marketing-page features-page">
       <div class="marketing-page-hero">
         <p class="kicker marketing-page-kicker">Features</p>
-        <h2 class="marketing-page-title">A complete medical learning platform — protected courses and the MCQ bank built in.</h2>
-        <p class="marketing-page-lede">MedBank brings secure course streaming, cross-device study, exam-style practice, and clean admin workflows together in one place. The integrated MCQ bank is what no other course platform offers.</p>
+        <h2 class="marketing-page-title">${coursesHidden ? "A focused medical MCQ bank for practice, review, and measurable progress." : "A complete medical learning platform — protected courses and the MCQ bank built in."}</h2>
+        <p class="marketing-page-lede">${coursesHidden ? "MedBank brings course-aligned questions, exam-style practice, instant explanations, and progress analytics together on web and mobile." : "MedBank brings secure course streaming, cross-device study, exam-style practice, and clean admin workflows together in one place. The integrated MCQ bank is what no other course platform offers."}</p>
         <div class="marketing-page-stats" aria-label="MedBank feature highlights">
-          <span class="marketing-page-stat"><b>Protected</b> course video</span>
-          <span class="marketing-page-stat"><b>Integrated</b> MCQ bank</span>
+          <span class="marketing-page-stat"><b>${coursesHidden ? "Course-aligned" : "Protected"}</b> ${coursesHidden ? "practice" : "course video"}</span>
+          <span class="marketing-page-stat"><b>${coursesHidden ? "Instant" : "Integrated"}</b> ${coursesHidden ? "explanations" : "MCQ bank"}</span>
           <span class="marketing-page-stat"><b>Clear</b> progress analytics</span>
         </div>
       </div>
@@ -24408,15 +24456,15 @@ function renderFeatures() {
       <div class="feature-showcase-grid">
         <article class="feature-showcase-card is-emphasis">
           <span class="feature-card-icon" aria-hidden="true">01</span>
-          <h3>The integrated MCQ bank — only on MedBank</h3>
-          <p>Practice course-aligned MCQs with instant explanations right alongside your lectures. No other medical course platform builds the question bank into the courses themselves.</p>
+          <h3>${coursesHidden ? "Course-aligned practice that stays focused" : "The integrated MCQ bank — only on MedBank"}</h3>
+          <p>${coursesHidden ? "Practise the exact subjects and topics you are studying, with an explanation ready after every answer." : "Practice course-aligned MCQs with instant explanations right alongside your lectures. No other medical course platform builds the question bank into the courses themselves."}</p>
           <div class="feature-pill-row">
             <span class="feature-pill">Course-aligned</span>
             <span class="feature-pill">Instant explanations</span>
             <span class="feature-pill">Unique to MedBank</span>
           </div>
         </article>
-        <article class="feature-showcase-card is-emphasis">
+        ${coursesHidden ? "" : `<article class="feature-showcase-card is-emphasis">
           <span class="feature-card-icon" aria-hidden="true">02</span>
           <h3>Stream course videos securely</h3>
           <p>Lectures play through a token-protected streaming pipeline so content stays inside the platform. Access is tied to each enrolled student and controlled by the course admin.</p>
@@ -24425,26 +24473,26 @@ function renderFeatures() {
             <span class="feature-pill">Access-controlled</span>
             <span class="feature-pill">Cross-device</span>
           </div>
-        </article>
+        </article>`}
         <article class="feature-showcase-card">
-          <span class="feature-card-icon" aria-hidden="true">03</span>
+          <span class="feature-card-icon" aria-hidden="true">${coursesHidden ? "02" : "03"}</span>
           <h3>Build the exact practice block you need</h3>
           <p>Choose course, topic, source, mode, and question count so every session matches the chapter, lecture, or weak area you are trying to fix — in tutor or timed exam mode.</p>
         </article>
         <article class="feature-showcase-card">
-          <span class="feature-card-icon" aria-hidden="true">04</span>
+          <span class="feature-card-icon" aria-hidden="true">${coursesHidden ? "03" : "04"}</span>
           <h3>Review while the memory is fresh</h3>
           <p>Each answer opens the explanation, references, and feedback context immediately, helping students understand the reasoning instead of memorizing a letter.</p>
         </article>
         <article class="feature-showcase-card">
-          <span class="feature-card-icon" aria-hidden="true">05</span>
+          <span class="feature-card-icon" aria-hidden="true">${coursesHidden ? "04" : "05"}</span>
           <h3>Study on any device</h3>
-          <p>Pick up courses and question blocks on desktop or mobile with autosaved progress, so learning continues wherever the student is — under the access their admin approved.</p>
+          <p>${coursesHidden ? "Pick up question blocks on desktop or mobile with autosaved progress, so practice continues wherever the student is." : "Pick up courses and question blocks on desktop or mobile with autosaved progress, so learning continues wherever the student is — under the access their admin approved."}</p>
         </article>
         <article class="feature-showcase-card">
-          <span class="feature-card-icon" aria-hidden="true">06</span>
+          <span class="feature-card-icon" aria-hidden="true">${coursesHidden ? "05" : "06"}</span>
           <h3>Analytics and admin control</h3>
-          <p>Track accuracy, timing, and topic trends, while editors manage users, courses, questions, enrollment, and access without scattering the work across spreadsheets.</p>
+          <p>${coursesHidden ? "Track accuracy, timing, and topic trends while admins manage users, MCQ subjects, questions, enrollment, and access in one place." : "Track accuracy, timing, and topic trends, while editors manage users, courses, questions, enrollment, and access without scattering the work across spreadsheets."}</p>
         </article>
       </div>
     </section>
@@ -24504,11 +24552,12 @@ function renderPricing() {
 }
 
 function renderAbout() {
+  const coursesHidden = isVideoCoursesHidden();
   return `
     <section class="panel marketing-page about-page">
       <div class="marketing-page-hero about-hero">
         <p class="kicker marketing-page-kicker">About MedBank</p>
-        <h2 class="marketing-page-title">MCQ practice and course study, in one focused place.</h2>
+        <h2 class="marketing-page-title">${coursesHidden ? "MCQ practice and review, in one focused place." : "MCQ practice and course study, in one focused place."}</h2>
         <p class="marketing-page-lede">MedBank is built for students who want to practice course-aligned MCQs, review every explanation, and track which topics still need work — without a cluttered dashboard getting in the way.</p>
         <div class="marketing-page-stats" aria-label="MedBank product principles">
           <span class="marketing-page-stat"><b>Course-aligned</b> MCQ banks</span>
@@ -43805,6 +43854,9 @@ const MCQ_NOTIFICATION_DESTINATION_ROUTES = new Set(["dashboard", "create-test",
 
 function getVisibleNotificationDestinationRoute(notification, user = getCurrentUser()) {
   const route = normalizeNotificationDestinationRoute(notification?.targetRoute);
+  if (route === "video-courses" && isVideoCoursesHidden(user)) {
+    return "";
+  }
   if (route && MCQ_NOTIFICATION_DESTINATION_ROUTES.has(route) && user?.role === "student" && !isUserMcqAccessEnabled(user)) {
     return "";
   }
@@ -43813,6 +43865,10 @@ function getVisibleNotificationDestinationRoute(notification, user = getCurrentU
 
 async function openNotificationDestination(notification, user = getCurrentUser()) {
   const rawTargetRoute = normalizeNotificationDestinationRoute(notification?.targetRoute);
+  if (rawTargetRoute === "video-courses" && isVideoCoursesHidden(user)) {
+    navigate("app-launcher");
+    return;
+  }
   if (rawTargetRoute && !getVisibleNotificationDestinationRoute(notification, user)) {
     navigate("notifications");
     return;
@@ -51425,6 +51481,9 @@ function applyCoursesComingSoonFlag(enabled) {
 }
 
 async function loadCoursesComingSoonFlag(options = {}) {
+  if (isVideoCoursesHidden()) {
+    return true;
+  }
   const force = Boolean(options?.force);
   if (state.coursesComingSoonLoading && !force) {
     return !state.coursesComingSoonError;
@@ -52016,6 +52075,10 @@ async function loadLocalDemoCoursesWithProgress(user = getCurrentUser()) {
 
 async function loadStudentCoursesWithProgress(options = {}) {
   const user = getCurrentUser();
+  if (isVideoCoursesHidden(user)) {
+    state.coursesLoading = false;
+    return true;
+  }
   const force = Boolean(options.force);
   if (state.coursesLoading && !force) {
     return Boolean(state.coursesLoadedAt);
@@ -54801,6 +54864,7 @@ function wireYouTubeLessonVideoPlayerControls() {
 }
 
 function wireCourses() {
+  if (isVideoCoursesHidden()) return;
   const couponInput = document.getElementById("course-coupon-code");
   couponInput?.addEventListener("input", (event) => {
     state.courseCouponCode = window.MedBankVideoCourses?.normalizeCouponCode(event.target?.value) || String(event.target?.value || "").toUpperCase();
@@ -54884,6 +54948,7 @@ function wireCourses() {
   appEl.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", async () => {
       const action = button.getAttribute("data-action");
+      if (isVideoCoursesHidden() && String(action || "").startsWith("courses-")) return;
       const courseId = String(button.getAttribute("data-course-id") || state.coursesActiveCourseId || "").trim();
       const lessonId = String(button.getAttribute("data-lesson-id") || "").trim();
       const topicId = String(button.getAttribute("data-topic-id") || "").trim();
@@ -60391,7 +60456,10 @@ function renderNativeStudentHome(user) {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const canOpenMcqBank = isUserMcqAccessEnabled(user);
-  const canOpenCourses = isUserCoursesAccessEnabled(user) && !shouldBlockStudentCoursesPortal(user);
+  const coursesHidden = isVideoCoursesHidden(user);
+  const canOpenCourses = !coursesHidden
+    && isUserCoursesAccessEnabled(user)
+    && !shouldBlockStudentCoursesPortal(user);
   const analytics = canOpenMcqBank ? getStudentAnalyticsSnapshot(user.id) : null;
   const stats = analytics?.stats || { accuracy: 0, totalAnswered: 0, streak: 0 };
   const incorrectCount = canOpenMcqBank ? getStudentIncorrectQueueCount(user.id) : 0;
@@ -60412,6 +60480,13 @@ function renderNativeStudentHome(user) {
         <p>Choose a course, topic, and mode that fits today’s study goal.</p>
       </div>
       <button class="btn" type="button" data-nav="create-test">Start a test</button>
+    </article>` : coursesHidden ? `
+    <article class="native-home-continue is-empty">
+      <div class="native-home-continue-copy">
+        <span class="native-home-overline">Access required</span>
+        <h3>MCQ Bank unavailable</h3>
+        <p>Contact an admin if you need MCQ Bank access.</p>
+      </div>
     </article>` : `
     <article class="native-home-continue is-empty">
       <div class="native-home-continue-copy">
@@ -60485,9 +60560,9 @@ function renderNativeStudentHome(user) {
           <button type="button" data-action="dash-review-incorrect" ${incorrectCount ? "" : "disabled"}>
             <span class="is-danger">${studentSvgIcon("review")}</span><b>Review Incorrect</b><small>${incorrectCount ? `${incorrectCount} ready to retry` : "No saved questions"}</small>
           </button>` : ""}
-          <button type="button" data-action="courses-home-tab" data-tab="dashboard" ${canOpenCourses ? "" : "disabled"}>
+          ${coursesHidden ? "" : `<button type="button" data-action="courses-home-tab" data-tab="dashboard" ${canOpenCourses ? "" : "disabled"}>
             <span class="is-course">${studentSvgIcon("bank")}</span><b>Browse Courses</b><small>Continue your lessons</small>
-          </button>
+          </button>`}
         </div>
       </section>
     </section>`;
@@ -60495,7 +60570,8 @@ function renderNativeStudentHome(user) {
 
 function renderAppLauncher() {
   const user = getCurrentUser();
-  if (user?.role === "student" && !state.coursesComingSoonLoadedAt && !state.coursesComingSoonLoading) {
+  const coursesHidden = isVideoCoursesHidden(user);
+  if (!coursesHidden && user?.role === "student" && !state.coursesComingSoonLoadedAt && !state.coursesComingSoonLoading) {
     loadCoursesComingSoonFlag().then((ok) => {
       if (ok && state.route === "app-launcher") {
         state.skipNextRouteAnimation = true;
@@ -60522,7 +60598,7 @@ function renderAppLauncher() {
           <p class="subtle">Select a portal to begin your learning session</p>
         </div>
         
-        <div class="app-launcher-grid ${canOpenMcqBank ? "" : "is-single"}">
+        <div class="app-launcher-grid ${!canOpenMcqBank || coursesHidden ? "is-single" : ""}">
           ${canOpenMcqBank ? `<button class="card app-launcher-card" type="button" data-action="open-mcq-bank">
             <div class="app-launcher-icon-wrapper is-mcq">
               <div class="icon-pulse-ring"></div>
@@ -60534,9 +60610,12 @@ function renderAppLauncher() {
             <h3>MCQ Bank</h3>
             <p>Practice questions, customize mock tests, and track your performance trends.</p>
             <span class="app-launcher-badge">Practice Portal <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>
-          </button>` : ""}
+          </button>` : coursesHidden ? `<div class="card app-launcher-card is-disabled" aria-disabled="true">
+            <h3>MCQ Bank unavailable</h3>
+            <p>MCQ Bank access is not enabled for this account yet. Contact the admin if you need access.</p>
+          </div>` : ""}
           
-          <button class="card app-launcher-card ${coursesBlocked ? "is-disabled" : ""}" ${coursesBlocked ? 'data-action="courses-coming-soon-notice" aria-disabled="true"' : 'data-action="courses-home-tab" data-tab="dashboard"'} type="button">
+          ${coursesHidden ? "" : `<button class="card app-launcher-card ${coursesBlocked ? "is-disabled" : ""}" ${coursesBlocked ? 'data-action="courses-coming-soon-notice" aria-disabled="true"' : 'data-action="courses-home-tab" data-tab="dashboard"'} type="button">
             <div class="app-launcher-icon-wrapper is-courses">
               <div class="icon-pulse-ring"></div>
               <svg class="launcher-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -60547,7 +60626,7 @@ function renderAppLauncher() {
             <h3>Video Courses</h3>
             <p>${coursesBlocked ? (coursesBlockedByAccess ? "Video Courses access is disabled for this account. Contact the admin if you need this portal enabled." : `The Video Courses portal is being prepared.${canOpenMcqBank ? " MCQ Bank remains available." : ""}`) : "Browse interactive syllabus modules, access lessons, and view learning resources."}</p>
             <span class="app-launcher-badge">${coursesBlocked ? (coursesBlockedByAccess ? "No Video Courses access" : "Coming soon") : "Learning Portal"} ${coursesBlocked ? "" : '<svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>'}</span>
-          </button>
+          </button>`}
         </div>
       </section>
     </div>

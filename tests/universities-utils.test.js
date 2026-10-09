@@ -114,6 +114,7 @@ function harness(overrides = {}) {
     hydrateRelationalProfiles: async () => { context.hydrated = (context.hydrated || 0) + 1; },
     getErrorMessage: (error, fallback) => error?.message || fallback,
     isStudentProfileDataComplete: () => true,
+    isVideoCoursesHidden: () => false,
     window: { confirm: overrides.confirm || (() => true) },
     ...overrides.globals,
   });

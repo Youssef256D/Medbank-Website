@@ -16,7 +16,7 @@
     default-src 'self';
     base-uri 'self';
     object-src 'none';
-    script-src 'strict-dynamic' 'sha256-pl46CMm/wxCBYEek38R074U/HYIr+XxseX52QCiS6n4=' 'sha256-7o/gGNdeHUs0c+deEGnktwWdA+TYzFR6YmXsfP4JRfc=' 'sha256-1S+8EQulXPWc991JVLmfT997fTdj2EFjgB0KF1IRTo4=' 'sha256-q8VYAUvV/EfqOXxdiZl1PY3W8Ki7BFJ4INnlmUtXzFw=' 'sha256-FPD7QAdFxGDXHyrsfXpNPWKJb6s+uB9Skt7nkPJAqdk=' https://cdn.jsdelivr.net https://unpkg.com 'self' 'unsafe-inline';
+    script-src 'strict-dynamic' 'sha256-biGu1JfHi/BOw1JwApPdHOGVPKg+EkgQyqWhswEGi0U=' 'sha256-7o/gGNdeHUs0c+deEGnktwWdA+TYzFR6YmXsfP4JRfc=' 'sha256-1S+8EQulXPWc991JVLmfT997fTdj2EFjgB0KF1IRTo4=' 'sha256-q8VYAUvV/EfqOXxdiZl1PY3W8Ki7BFJ4INnlmUtXzFw=' 'sha256-FPD7QAdFxGDXHyrsfXpNPWKJb6s+uB9Skt7nkPJAqdk=' https://cdn.jsdelivr.net https://unpkg.com 'self' 'unsafe-inline';
     style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
     font-src 'self' https://fonts.gstatic.com data:;
     img-src 'self' data: blob: https:;
@@ -29,19 +29,19 @@
   " />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description"
-    content="MedBank is a medical learning platform with protected video courses, course-aligned MCQ practice, timed exams, instant explanations, and progress analytics." />
+    content="MedBank is a medical MCQ bank with course-aligned practice, timed exams, instant explanations, and progress analytics on web and mobile." />
   <meta name="robots" content="index, follow, max-image-preview:large" />
   <meta name="googlebot" content="index, follow, max-image-preview:large" />
   <meta name="application-name" content="MedBank" />
-  <meta name="app-version" content="2026-10-09.02" />
-  <title>MedBank | Medical MCQ Bank &amp; Video Courses</title>
+  <meta name="app-version" content="2026-10-09.03" />
+  <title>MedBank | Medical MCQ Bank &amp; Mobile App</title>
   <link rel="canonical" href="https://youssef256d.github.io/Medbank-Website/" />
   <link rel="sitemap" type="application/xml" href="https://youssef256d.github.io/Medbank-Website/sitemap.xml" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="MedBank" />
-  <meta property="og:title" content="MedBank | Medical MCQ Bank &amp; Video Courses" />
+  <meta property="og:title" content="MedBank | Medical MCQ Bank &amp; Mobile App" />
   <meta property="og:description"
-    content="Protected video courses and course-aligned medical MCQ practice with timed exams, instant explanations, and progress analytics." />
+    content="MedBank is a medical MCQ bank with course-aligned practice, timed exams, instant explanations, and progress analytics on web and mobile." />
   <meta property="og:url" content="https://youssef256d.github.io/Medbank-Website/" />
   <meta property="og:image" content="https://youssef256d.github.io/Medbank-Website/Assets/branding/og-image.png" />
   <meta property="og:image:width" content="1200" />
@@ -49,9 +49,9 @@
   <meta property="og:image:type" content="image/png" />
   <meta property="og:image:alt" content="MedBank medical learning platform logo" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="MedBank | Medical MCQ Bank &amp; Video Courses" />
+  <meta name="twitter:title" content="MedBank | Medical MCQ Bank &amp; Mobile App" />
   <meta name="twitter:description"
-    content="Protected video courses and course-aligned medical MCQ practice with timed exams, instant explanations, and progress analytics." />
+    content="MedBank is a medical MCQ bank with course-aligned practice, timed exams, instant explanations, and progress analytics on web and mobile." />
   <meta name="twitter:image" content="https://youssef256d.github.io/Medbank-Website/Assets/branding/og-image.png" />
   <meta name="twitter:image:alt" content="MedBank medical learning platform logo" />
   <meta name="google-site-verification" content="hv033079gwABq906LsyGqfAvTRgpvuk2cruZBRNuAz4" />
@@ -101,7 +101,7 @@
           "@id": "https://youssef256d.github.io/Medbank-Website/#application",
           "name": "MedBank",
           "url": "https://youssef256d.github.io/Medbank-Website/",
-          "description": "A medical learning platform with protected video courses, course-aligned MCQ practice, timed exams, instant explanations, and progress analytics.",
+          "description": "MedBank is a medical MCQ bank with course-aligned practice, timed exams, instant explanations, and progress analytics on web and mobile.",
           "applicationCategory": "EducationalApplication",
           "operatingSystem": "Web, iOS, iPadOS, Android",
           "publisher": {
@@ -188,7 +188,6 @@
       <button class="is-active" data-nav="landing">Home</button>
       <button data-nav="mobile-app">MedBank App</button>
       <button data-nav="mcqs">MCQ Bank</button>
-      <button data-nav="courses-platform">Video Courses</button>
       <button data-nav="contact">Contact</button>
     </nav>
     <nav id="private-nav" class="top-nav hidden">
@@ -210,8 +209,8 @@
     <div class="panel marketing-page landing-page landing-page-scroll landing-simple">
       <section id="landing-home" class="landing-scroll-section lp-home">
         <div class="lp-hero">
-          <h1 class="lp-hero-title">Protected courses <span class="lp-plus" aria-hidden="true">+</span> a medical MCQ bank.</h1>
-          <p class="lp-hero-lede">Stream lectures securely and practise course-aligned MCQs with instant explanations. One simple platform.</p>
+          <h1 class="lp-hero-title">A medical MCQ bank <span class="lp-plus" aria-hidden="true">+</span> mobile app.</h1>
+          <p class="lp-hero-lede">Practise course-aligned MCQs with instant explanations, timed exams and progress analytics — on web and mobile.</p>
           <div class="lp-hero-actions">
             <button class="btn" data-nav="login">Log in</button>
             <button class="btn ghost" data-nav="signup">Sign up</button>
@@ -222,11 +221,9 @@
             <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
             <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-mcqs">MCQ Bank</button>
             <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
-            <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-courses-platform">Video Courses</button>
-            <span class="lp-hero-explore-sep" aria-hidden="true">·</span>
             <button type="button" class="lp-hero-explore-btn" data-scroll-to="landing-contact">Contact</button>
           </div>
-          <p class="lp-hero-note">New students sign up and get in once a course admin approves them.</p>
+          <p class="lp-hero-note">New students sign up and get in once an admin approves them.</p>
         </div>
       </section>
       <section id="landing-mobile-app" class="landing-scroll-section lp-section lp-mobile-launch" aria-label="MedBank mobile apps">
@@ -239,11 +236,10 @@
               </div>
             </div>
             <h2 class="lp-mobile-title">Your complete medical study loop, now built for mobile.</h2>
-            <p class="lp-mobile-lede">Use the same approved MedBank account to practise assigned MCQs, review explanations, continue video courses, and keep progress synced across phone, tablet, and web.</p>
+            <p class="lp-mobile-lede">Use the same approved MedBank account to practise assigned MCQs, review explanations, and keep progress synced across phone, tablet, and web.</p>
             <ul class="lp-app-feature-list" aria-label="MedBank mobile app features">
               <li><strong>Focused tests</strong><span>Choose subjects and topics, then study in tutor or timed mode.</span></li>
               <li><strong>Detailed review</strong><span>See explanations, revisit mistakes, and keep private question notes.</span></li>
-              <li><strong>Video learning</strong><span>Open enrolled courses, modules, materials, and lesson progress.</span></li>
               <li><strong>Made for every screen</strong><span>English and Arabic, light and dark themes, phone and tablet layouts.</span></li>
             </ul>
             <div class="lp-store-list" role="group" aria-label="MedBank mobile app release platforms">
@@ -267,12 +263,11 @@
           </div>
           <div class="lp-app-showcase">
             <div class="lp-screen-intro"><strong>Real screens. One connected workspace.</strong><span aria-hidden="true">Swipe to explore →</span></div>
-            <div class="lp-screen-reel" tabindex="0" aria-label="MedBank mobile app screenshots. Scroll horizontally to explore all six screens.">
-              <figure class="lp-app-screen"><img src="Assets/mobile-app/screen-01-learning-overview.png" alt="MedBank mobile learning overview with question, subject, course, and lesson progress cards" width="660" height="1434" loading="lazy" decoding="async" /><figcaption>Learning overview</figcaption></figure>
+            <div class="lp-screen-reel" tabindex="0" aria-label="MedBank mobile app screenshots. Scroll horizontally to explore all five screens.">
+              <figure class="lp-app-screen"><img src="Assets/mobile-app/screen-01-learning-overview.png" alt="MedBank mobile learning overview with question and subject progress cards" width="660" height="1434" loading="lazy" decoding="async" /><figcaption>Learning overview</figcaption></figure>
               <figure class="lp-app-screen"><img src="Assets/mobile-app/screen-02-mcq-bank.png" alt="MedBank MCQ Bank showing test statistics, assigned subjects, notebook, and unfinished tests" width="660" height="1434" loading="lazy" decoding="async" /><figcaption>MCQ Bank</figcaption></figure>
               <figure class="lp-app-screen"><img src="Assets/mobile-app/screen-03-tutor-question.png" alt="MedBank tutor-mode medical question with the correct answer and explanation revealed" width="660" height="1434" loading="lazy" decoding="async" /><figcaption>Tutor explanations</figcaption></figure>
               <figure class="lp-app-screen"><img src="Assets/mobile-app/screen-04-test-results.png" alt="MedBank test results with score, correct and incorrect counts, and answer review" width="660" height="1434" loading="lazy" decoding="async" /><figcaption>Results &amp; review</figcaption></figure>
-              <figure class="lp-app-screen"><img src="Assets/mobile-app/screen-05-video-courses.png" alt="MedBank Video Courses screen with enrolled course progress" width="660" height="1434" loading="lazy" decoding="async" /><figcaption>Video Courses</figcaption></figure>
               <figure class="lp-app-screen"><img src="Assets/mobile-app/screen-06-profile-settings.png" alt="MedBank profile showing assigned subjects, appearance, language, and help settings" width="660" height="1434" loading="lazy" decoding="async" /><figcaption>Profile &amp; settings</figcaption></figure>
             </div>
           </div>
@@ -303,36 +298,11 @@
           </div>
         </div>
       </section>
-      <section id="landing-courses-platform" class="landing-scroll-section lp-section">
-        <div class="lp-product">
-          <div class="lp-product-head">
-            <h2 class="lp-product-title">Secure course video, on any device.</h2>
-            <p class="lp-product-lede">Watch lectures through a protected streaming pipeline, with access controlled by your course admin.</p>
-          </div>
-          <ul class="lp-points">
-            <li>
-              <h3>Protected streaming</h3>
-              <p>Lectures play inside the platform through a token-protected pipeline, tied to each enrolled student.</p>
-            </li>
-            <li>
-              <h3>Study anywhere</h3>
-              <p>Pick up courses on desktop or mobile with your progress saved automatically.</p>
-            </li>
-            <li>
-              <h3>Admin-approved access</h3>
-              <p>New students join once a course admin approves them — no open sign-ups.</p>
-            </li>
-          </ul>
-          <div class="lp-product-actions">
-            <button class="btn" data-nav="contact">Contact us about courses</button>
-          </div>
-        </div>
-      </section>
       <section id="landing-contact" class="landing-scroll-section lp-section">
         <div class="lp-contact">
           <div class="lp-product-head">
             <h2 class="lp-product-title">Get in touch.</h2>
-            <p class="lp-product-lede">To bring your courses to MedBank, or for access and pricing details, reach the platform owner directly.</p>
+            <p class="lp-product-lede">For account access, support, or general questions, reach the MedBank owner directly.</p>
           </div>
           <div class="lp-contact-card">
             <p class="lp-contact-name">Youssef Ayoub <span>· MedBank owner</span></p>
@@ -346,7 +316,7 @@
                 <span>Code.Youssefaayoub@gmail.com</span>
               </a>
             </div>
-            <p class="lp-contact-hint">Message or call for contact and pricing details.</p>
+            <p class="lp-contact-hint">Message or call for support and account details.</p>
           </div>
         </div>
       </section>
