@@ -3,9 +3,43 @@
   "configurations": [
     {
       "name": "MCQs Website",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--port", "5173"],
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5173",
+        "--bind",
+        "127.0.0.1"
+      ],
       "port": 5173
+    },
+    {
+      "name": "Hide Courses Branch",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5174",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "/Users/youssefayoub/Documents/Apps/medbank-hide-courses"
+      ],
+      "port": 5174
+    },
+    {
+      "name": "Admin Orgs Branch",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5175",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "/Users/youssefayoub/Documents/Apps/medbank-admin-orgs"
+      ],
+      "port": 5175
     }
   ]
 }
