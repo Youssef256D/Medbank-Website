@@ -6633,8 +6633,8 @@ function canRunStudentAutoApprovalSweep() {
   if (getCurrentUser()?.role !== "admin") {
     return false;
   }
-  // The sweep writes profiles, which is the People area.
-  if (!adminAccessHasArea(getCurrentAdminAccess(), "people")) {
+  // The sweep approves students: the "Approve, suspend & change access" action.
+  if (!adminAccessCan(getCurrentAdminAccess(), "users.access")) {
     return false;
   }
   if (studentAutoApprovalSweepInFlight) {
@@ -34775,6 +34775,27 @@ const ADMIN_AREAS = [
   { id: "system", label: "System", description: "Activity and logs" },
 ];
 const ADMIN_AREA_IDS = ADMIN_AREAS.map((area) => area.id);
+// Single actions inside each area, ticked one by one on the Admin access page
+// (migration 20261009235000_admin_action_permissions enforces them). Keep in
+// step with the admin_permissions_permissions_ck constraint.
+const ADMIN_PERMISSIONS = [
+  { id: "users.create", area: "people", label: "Add new users" },
+  { id: "users.edit", area: "people", label: "Edit user details", description: "Name, term, university, device and role" },
+  { id: "users.access", area: "people", label: "Approve, suspend & change access", description: "Approval and the MCQ / Video Courses switches" },
+  { id: "users.password", area: "people", label: "Set user passwords" },
+  { id: "users.delete", area: "people", label: "Remove users" },
+  { id: "users.organizations", area: "people", label: "Universities & organizations" },
+  { id: "mcq.subjects", area: "mcq", label: "Manage subjects & topics" },
+  { id: "mcq.questions_create", area: "mcq", label: "Add questions" },
+  { id: "mcq.questions_edit", area: "mcq", label: "Edit questions" },
+  { id: "mcq.questions_delete", area: "mcq", label: "Delete questions" },
+  { id: "mcq.bulk_import", area: "mcq", label: "Bulk import questions" },
+  { id: "video_courses.manage", area: "video_courses", label: "Manage video courses" },
+  { id: "messaging.notifications", area: "messaging", label: "Send notifications" },
+  { id: "messaging.popups", area: "messaging", label: "Manage pop-ups" },
+  { id: "system.view", area: "system", label: "View activity & logs" },
+];
+const ADMIN_PERMISSION_IDS = ADMIN_PERMISSIONS.map((permission) => permission.id);
 // Super admins only, whatever areas an admin has.
 const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "ai-agents", "admin-access"]);
 const ADMIN_PAGE_AREAS = {
@@ -34790,21 +34811,60 @@ const ADMIN_PAGE_AREAS = {
   activity: "system",
   logs: "system",
 };
+// A page shows when the admin holds any one of these actions.
+const ADMIN_PAGE_PERMISSIONS = {
+  users: ["users.create", "users.edit", "users.access", "users.password", "users.delete"],
+  universities: ["users.organizations"],
+  organizations: ["users.organizations"],
+  "mcq-subjects": ["mcq.subjects"],
+  questions: ["mcq.questions_create", "mcq.questions_edit", "mcq.questions_delete"],
+  "bulk-import": ["mcq.bulk_import"],
+  "video-courses": ["video_courses.manage"],
+  notifications: ["messaging.notifications"],
+  popups: ["messaging.popups"],
+  activity: ["system.view"],
+  logs: ["system.view"],
+};
+
+function getAdminAreaPermissionIds(areas) {
+  const list = Array.isArray(areas) ? areas : [];
+  return ADMIN_PERMISSIONS.filter((permission) => list.includes(permission.area)).map((permission) => permission.id);
+}
 
 // `row` is an admin_permissions row (or null when the admin has none).
 // `tableMissing` = the migration is not applied yet: every admin keeps full
-// access, exactly as before admin layers existed.
+// access, exactly as before admin layers existed. A row whose `permissions`
+// is null (or missing) holds every action in its areas.
 function normalizeAdminAccess(row, options = {}) {
   if (options.tableMissing) {
-    return { isSuper: true, areas: [...ADMIN_AREA_IDS], legacy: true };
+    return { isSuper: true, areas: [...ADMIN_AREA_IDS], permissions: [...ADMIN_PERMISSION_IDS], legacy: true };
   }
   const isSuper = row?.is_super === true;
-  const areas = [...new Set(
-    (Array.isArray(row?.areas) ? row.areas : [])
-      .map((area) => String(area || "").trim())
-      .filter((area) => ADMIN_AREA_IDS.includes(area)),
-  )];
-  return { isSuper, areas: isSuper ? [...ADMIN_AREA_IDS] : areas, legacy: false };
+  if (isSuper) {
+    return { isSuper, areas: [...ADMIN_AREA_IDS], permissions: [...ADMIN_PERMISSION_IDS], legacy: false };
+  }
+  const areas = ADMIN_AREA_IDS.filter((area) => (
+    (Array.isArray(row?.areas) ? row.areas : []).some((entry) => String(entry || "").trim() === area)
+  ));
+  const granted = Array.isArray(row?.permissions)
+    ? row.permissions.map((entry) => String(entry || "").trim())
+    : getAdminAreaPermissionIds(areas);
+  const permissions = ADMIN_PERMISSIONS
+    .filter((permission) => areas.includes(permission.area) && granted.includes(permission.id))
+    .map((permission) => permission.id);
+  return { isSuper, areas, permissions, legacy: false };
+}
+
+// What gets saved: areas are exactly the areas with at least one ticked action.
+function buildAdminAccessRow(access) {
+  if (access?.isSuper) {
+    return { is_super: true, areas: [...ADMIN_AREA_IDS], permissions: null };
+  }
+  const permissions = ADMIN_PERMISSION_IDS.filter((id) => (access?.permissions || []).includes(id));
+  const areas = ADMIN_AREA_IDS.filter((area) => ADMIN_PERMISSIONS.some((permission) => (
+    permission.area === area && permissions.includes(permission.id)
+  )));
+  return { is_super: false, areas, permissions };
 }
 
 function adminAccessHasArea(access, area) {
@@ -34812,6 +34872,20 @@ function adminAccessHasArea(access, area) {
     return true;
   }
   return access.isSuper === true || (Array.isArray(access.areas) && access.areas.includes(area));
+}
+
+function adminAccessCan(access, permission) {
+  if (!access) {
+    return true;
+  }
+  if (access.isSuper === true) {
+    return true;
+  }
+  const area = ADMIN_PERMISSIONS.find((entry) => entry.id === permission)?.area;
+  return Boolean(area)
+    && adminAccessHasArea(access, area)
+    && Array.isArray(access.permissions)
+    && access.permissions.includes(permission);
 }
 
 function canAdminAccessPage(access, page) {
@@ -34825,8 +34899,10 @@ function canAdminAccessPage(access, page) {
   if (ADMIN_SUPER_ONLY_PAGES.has(pageId)) {
     return access.isSuper === true;
   }
-  const area = ADMIN_PAGE_AREAS[pageId];
-  return area ? adminAccessHasArea(access, area) : access.isSuper === true;
+  const permissions = ADMIN_PAGE_PERMISSIONS[pageId];
+  return permissions
+    ? permissions.some((permission) => adminAccessCan(access, permission))
+    : access.isSuper === true;
 }
 
 function describeAdminAccess(access) {
@@ -34836,7 +34912,11 @@ function describeAdminAccess(access) {
   if (access.isSuper) {
     return "Super admin";
   }
-  const labels = ADMIN_AREAS.filter((area) => access.areas.includes(area.id)).map((area) => area.label);
+  const labels = ADMIN_AREAS.filter((area) => access.areas.includes(area.id)).map((area) => {
+    const inArea = getAdminAreaPermissionIds([area.id]);
+    const held = inArea.filter((id) => access.permissions.includes(id)).length;
+    return held && held < inArea.length ? `${area.label} (${held}/${inArea.length})` : area.label;
+  });
   return labels.length ? labels.join(", ") : "No areas yet";
 }
 // End admin layers helpers.
@@ -34873,7 +34953,7 @@ async function loadCurrentAdminAccess() {
   state.adminAccessLoading = true;
   try {
     const { data, error } = await runWithTimeoutResult(
-      client.from("admin_permissions").select("user_id,is_super,areas").eq("user_id", profileId).maybeSingle(),
+      client.from("admin_permissions").select("*").eq("user_id", profileId).maybeSingle(),
       SUPABASE_QUERY_TIMEOUT_MS,
       "Admin permissions query timed out.",
     );
@@ -34886,7 +34966,8 @@ async function loadCurrentAdminAccess() {
     state.adminAccessLoadedAt = Date.now();
     return !previous
       || previous.isSuper !== next.isSuper
-      || previous.areas.join(",") !== next.areas.join(",");
+      || previous.areas.join(",") !== next.areas.join(",")
+      || previous.permissions.join(",") !== next.permissions.join(",");
   } catch (error) {
     console.warn("Could not load admin permissions.", error?.message || error);
     state.adminAccessLoadedAt = Date.now();
@@ -34912,7 +34993,7 @@ async function loadAdminAccessRows(options = {}) {
   state.adminAccessRowsError = "";
   try {
     const { data, error } = await runWithTimeoutResult(
-      client.from("admin_permissions").select("user_id,is_super,areas,updated_at,updated_by"),
+      client.from("admin_permissions").select("*"),
       SUPABASE_QUERY_TIMEOUT_MS,
       "Admin permissions query timed out.",
     );
@@ -34952,7 +35033,7 @@ function isAdminAccessDraftDirty(profileId) {
   }
   const row = (state.adminAccessRows || []).find((entry) => String(entry?.user_id || "") === profileId) || null;
   const saved = normalizeAdminAccess(row);
-  return saved.isSuper !== draft.isSuper || saved.areas.join(",") !== draft.areas.join(",");
+  return JSON.stringify(buildAdminAccessRow(saved)) !== JSON.stringify(buildAdminAccessRow(draft));
 }
 
 function renderAdminAccessSection() {
@@ -34983,7 +35064,7 @@ function renderAdminAccessSection() {
     }),
     notes: [
       "A <b>super admin</b> can do everything, including this page, Site Access and Hermes.",
-      "Every other admin can change only the areas ticked here. They can still open the Dashboard, and read what other pages show, but the database refuses their changes outside their areas.",
+      "Every other admin can do only what is ticked here. Tick a whole area, or open it up and tick single actions (for example <b>Add new users</b> without <b>Remove users</b>). They always see the Dashboard; pages where they hold nothing are hidden, and the database refuses anything not ticked.",
       "Admin accounts themselves (making someone an admin, editing, suspending or deleting an admin) are for super admins only. At least one super admin must always remain.",
       "To add an admin, give the user the Admin role on the Users page, then choose their areas here. A new admin has no areas until you do.",
     ],
@@ -35003,12 +35084,49 @@ function renderAdminAccessSection() {
     const dirty = isAdminAccessDraftDirty(profileId);
     const saving = state.adminAccessSavingId === profileId;
     const isSelf = profileId === currentProfileId;
-    const areaBoxes = ADMIN_AREAS.map((area) => `
-      <label class="admin-access-area" title="${escapeHtml(area.description)}">
-        <input type="checkbox" data-admin-access-area="${escapeHtml(area.id)}" ${draft.isSuper || draft.areas.includes(area.id) ? "checked" : ""} ${draft.isSuper || saving ? "disabled" : ""} />
-        <span>${escapeHtml(area.label)}</span>
-      </label>
-    `).join("");
+    const lockBoxes = draft.isSuper || saving;
+    const areaBoxes = ADMIN_AREAS.map((area) => {
+      const areaPermissions = ADMIN_PERMISSIONS.filter((permission) => permission.area === area.id);
+      const heldCount = areaPermissions.filter((permission) => draft.permissions.includes(permission.id)).length;
+      const allHeld = draft.isSuper || heldCount === areaPermissions.length;
+      const someHeld = !draft.isSuper && heldCount > 0 && !allHeld;
+      const areaLabel = `
+          <label class="admin-access-area" title="${escapeHtml(area.description)}">
+            <input type="checkbox" data-admin-access-area="${escapeHtml(area.id)}" ${allHeld ? "checked" : ""} ${someHeld ? "data-indeterminate" : ""} ${lockBoxes ? "disabled" : ""} />
+            <span>${escapeHtml(areaPermissions.length > 1 ? area.label : areaPermissions[0]?.label || area.label)}</span>
+            ${areaPermissions.length > 1 ? `<small class="admin-access-count">${draft.isSuper ? areaPermissions.length : heldCount}/${areaPermissions.length}</small>` : ""}
+          </label>
+      `;
+      if (areaPermissions.length <= 1) {
+        return `<div class="admin-access-group">${areaLabel}</div>`;
+      }
+      const groupKey = `${profileId}:${area.id}`;
+      const groupOpen = Boolean(state.adminAccessOpenGroups?.[groupKey]);
+      const permissionBoxes = `
+        <div class="admin-access-permissions">
+          ${areaPermissions.map((permission) => `
+            <label class="admin-access-permission"${permission.description ? ` title="${escapeHtml(permission.description)}"` : ""}>
+              <input type="checkbox" data-admin-access-permission="${escapeHtml(permission.id)}" ${draft.isSuper || draft.permissions.includes(permission.id) ? "checked" : ""} ${lockBoxes ? "disabled" : ""} />
+              <span>${escapeHtml(permission.label)}</span>
+            </label>
+          `).join("")}
+        </div>
+      `;
+      // Collapsed by default; which groups are open survives re-renders.
+      return `
+        <details class="admin-access-group" data-admin-access-group="${escapeHtml(groupKey)}" ${groupOpen ? "open" : ""}>
+          <summary class="admin-access-group-summary">
+            <span class="admin-access-area">
+              <input type="checkbox" data-admin-access-area="${escapeHtml(area.id)}" aria-label="Everything in ${escapeHtml(area.label)}" ${allHeld ? "checked" : ""} ${someHeld ? "data-indeterminate" : ""} ${lockBoxes ? "disabled" : ""} />
+              <span title="${escapeHtml(area.description)}">${escapeHtml(area.label)}</span>
+              <small class="admin-access-count">${draft.isSuper ? areaPermissions.length : heldCount}/${areaPermissions.length}</small>
+            </span>
+            <span class="admin-access-chevron" aria-hidden="true"></span>
+          </summary>
+          ${permissionBoxes}
+        </details>
+      `;
+    }).join("");
     return `
       <tr data-admin-access-id="${escapeHtml(profileId)}">
         <td>
@@ -35021,7 +35139,9 @@ function renderAdminAccessSection() {
             <span>Super admin</span>
           </label>
         </td>
-        <td><div class="admin-access-areas">${areaBoxes}</div></td>
+        <td>${draft.isSuper
+        ? `<p class="admin-access-everything">Can do everything. Untick <b>Super admin</b> to choose single actions.</p>`
+        : `<div class="admin-access-areas">${areaBoxes}</div>`}</td>
         <td class="admin-access-actions">
           <button class="btn admin-btn-sm ${saving ? "is-loading" : ""}" type="button" data-action="admin-access-save" ${dirty && !saving ? "" : "disabled"}>${saving ? "Saving..." : "Save"}</button>
         </td>
@@ -35036,7 +35156,7 @@ function renderAdminAccessSection() {
       <div class="table-wrap" style="margin-top: 0.9rem;">
         <table class="admin-access-table">
           <thead>
-            <tr><th>Admin</th><th>Role</th><th>Areas</th><th><span class="sr-only">Save</span></th></tr>
+            <tr><th>Admin</th><th>Role</th><th>What they can do</th><th><span class="sr-only">Save</span></th></tr>
           </thead>
           <tbody>
             ${rowsHtml || `<tr><td colspan="4" class="subtle">No admin accounts loaded yet.</td></tr>`}
@@ -35060,8 +35180,7 @@ async function saveAdminAccessRow(profileId) {
     const { error } = await runWithTimeoutResult(
       client.from("admin_permissions").upsert({
         user_id: profileId,
-        is_super: draft.isSuper === true,
-        areas: draft.isSuper ? [...ADMIN_AREA_IDS] : draft.areas.filter((area) => ADMIN_AREA_IDS.includes(area)),
+        ...buildAdminAccessRow(draft),
       }, { onConflict: "user_id" }),
       SUPABASE_QUERY_TIMEOUT_MS,
       "Saving admin permissions timed out.",
@@ -35075,7 +35194,9 @@ async function saveAdminAccessRow(profileId) {
     const message = getErrorMessage(error, "Could not save admin access.");
     toast(/super admin must remain/i.test(message)
       ? "At least one super admin must remain. Make another admin super first."
-      : message);
+      : /permissions/i.test(message) && /column|schema cache/i.test(message)
+        ? "Single-action ticks need migration 20261009235000_admin_action_permissions in the database first."
+        : message);
   } finally {
     state.adminAccessSavingId = "";
     await loadAdminAccessRows({ force: true });
@@ -35094,6 +35215,18 @@ function wireAdminAccess() {
   if (!section) {
     return;
   }
+  section.querySelectorAll("input[data-indeterminate]").forEach((input) => {
+    input.indeterminate = true;
+  });
+  // "toggle" does not bubble, so listen in the capture phase.
+  section.addEventListener("toggle", (event) => {
+    const group = event.target;
+    if (!(group instanceof HTMLDetailsElement) || !group.hasAttribute("data-admin-access-group")) {
+      return;
+    }
+    const key = String(group.getAttribute("data-admin-access-group") || "");
+    state.adminAccessOpenGroups = { ...(state.adminAccessOpenGroups || {}), [key]: group.open };
+  }, true);
   section.addEventListener("change", (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) {
@@ -35105,18 +35238,25 @@ function wireAdminAccess() {
       return;
     }
     const current = getAdminAccessDraft(profileId);
-    const next = { isSuper: current.isSuper, areas: [...current.areas], legacy: false };
+    let permissions = [...current.permissions];
+    let isSuper = current.isSuper;
     if (input.hasAttribute("data-admin-access-super")) {
-      next.isSuper = input.checked;
-      // Unticking super keeps whatever areas were ticked underneath it.
-      next.areas = input.checked ? [...ADMIN_AREA_IDS] : next.areas;
+      isSuper = input.checked;
+      // Unticking super keeps everything ticked underneath it.
+      permissions = input.checked ? [...ADMIN_PERMISSION_IDS] : permissions;
+    } else if (input.hasAttribute("data-admin-access-area")) {
+      const areaPermissionIds = getAdminAreaPermissionIds([String(input.getAttribute("data-admin-access-area") || "")]);
+      permissions = input.checked
+        ? [...permissions, ...areaPermissionIds]
+        : permissions.filter((entry) => !areaPermissionIds.includes(entry));
     } else {
-      const area = String(input.getAttribute("data-admin-access-area") || "");
-      next.areas = input.checked
-        ? [...new Set([...next.areas, area])]
-        : next.areas.filter((entry) => entry !== area);
+      const permission = String(input.getAttribute("data-admin-access-permission") || "");
+      permissions = input.checked
+        ? [...permissions, permission]
+        : permissions.filter((entry) => entry !== permission);
     }
-    next.areas = ADMIN_AREA_IDS.filter((area) => next.areas.includes(area));
+    const nextRow = buildAdminAccessRow({ isSuper, permissions });
+    const next = normalizeAdminAccess(nextRow);
     state.adminAccessDrafts = { ...(state.adminAccessDrafts || {}), [profileId]: next };
     state.skipNextRouteAnimation = true;
     render();
@@ -35538,6 +35678,16 @@ function renderAdmin() {
       && !userFilterRole
       && !userFilterMcqHeld;
     const addUserDraft = normalizeAdminAddUserDraft(state.adminAddUserDraft);
+    // Single actions ticked on the Admin access page; the database and the
+    // admin Edge Functions refuse the rest, these only hide the buttons.
+    const usersAccess = getCurrentAdminAccess();
+    const usersCan = {
+      create: adminAccessCan(usersAccess, "users.create"),
+      edit: adminAccessCan(usersAccess, "users.edit"),
+      access: adminAccessCan(usersAccess, "users.access"),
+      password: adminAccessCan(usersAccess, "users.password"),
+      remove: adminAccessCan(usersAccess, "users.delete"),
+    };
     const pendingCount = users.filter((entry) => entry.role === "student" && !isUserAccessApproved(entry)).length;
     const approvalFilterCounts = users.reduce((acc, entry) => {
       if (matchesAdminUserApprovalFilter(entry, "approved")) {
@@ -35584,15 +35734,18 @@ function renderAdmin() {
           ? '<span class="admin-auth-provider-icon" data-provider="google" title="Google account" aria-label="Google account" role="img"><svg viewBox="0 0 18 18" aria-hidden="true" focusable="false"><path fill="#4285F4" d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2086 1.125-.8427 2.0782-1.7963 2.7155v2.2573h2.9082c1.7018-1.5664 2.6845-3.8741 2.6845-6.6137z"></path><path fill="#34A853" d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1818l-2.9082-2.2573c-.8063.54-1.8377.8591-3.0482.8591-2.3441 0-4.3282-1.5832-5.0355-3.71H.9573v2.3305C2.4382 15.9832 5.4818 18 9 18z"></path><path fill="#FBBC05" d="M3.9645 10.71c-.18-.54-.2823-1.1168-.2823-1.71s.1023-1.17.2823-1.71V4.9595H.9573C.3477 6.1732 0 7.5477 0 9s.3477 2.8268.9573 4.0405L3.9645 10.71z"></path><path fill="#EA4335" d="M9 3.5795c1.3214 0 2.5077.4541 3.4405 1.3459l2.5814-2.5814C13.4636.8918 11.43 0 9 0 5.4818 0 2.4382 2.0168.9573 4.9595L3.9645 7.29C4.6718 5.1632 6.6559 3.5795 9 3.5795z"></path></svg></span>'
           : "";
         const accountLabel = String(account.name || account.email || "this user");
-        const menuItems = [
-          { label: "Edit details", attrs: `data-action="admin-user-edit-open" data-user-id="${escapeHtml(accountId)}"` },
-        ];
-        if (!isGoogleAuthUser) {
+        const menuItems = [];
+        if (usersCan.edit) {
+          menuItems.push({ label: "Edit details", attrs: `data-action="admin-user-edit-open" data-user-id="${escapeHtml(accountId)}"` });
+        }
+        if (!isGoogleAuthUser && usersCan.password) {
           menuItems.push({ label: "Set password", attrs: 'data-action="reset-user-password"' });
         }
-        if (account.role === "student") {
+        if (account.role === "student" && usersCan.edit) {
           menuItems.push({ label: "Device", attrs: 'data-action="view-user-device"' });
           menuItems.push({ label: "University", attrs: 'data-action="edit-user-university"' });
+        }
+        if (account.role === "student" && usersCan.access) {
           menuItems.push({
             label: mcqAccessEnabled ? "Turn MCQ access off" : "Turn MCQ access on",
             attrs: `data-action="toggle-user-mcq-access" data-admin-access-item="mcq"${isAdminUserMcqIneligible(account) ? ' title="Not MCQ-eligible: set a Medicine college at a university that offers the MCQ Bank first."' : ""}`,
@@ -35603,12 +35756,14 @@ function renderAdmin() {
             attrs: 'data-action="toggle-user-courses-access" data-admin-access-item="courses"',
           });
         }
-        if (account.role !== "admin") {
+        if (account.role !== "admin" && usersCan.access) {
           menuItems.push({ label: isApproved ? "Suspend" : "Approve", attrs: 'data-action="toggle-user-approval" data-admin-approval-item' });
         }
-        menuItems.push({ label: "Remove user", attrs: 'data-action="remove-user"', danger: true, disabled: isSelf });
+        if (usersCan.remove) {
+          menuItems.push({ label: "Remove user", attrs: 'data-action="remove-user"', danger: true, disabled: isSelf });
+        }
         // Admin accounts are managed by super admins only (database-enforced).
-        const hideAdminRowMenu = account.role === "admin" && !isSelf && !isCurrentAdminSuper();
+        const hideAdminRowMenu = (account.role === "admin" && !isSelf && !isCurrentAdminSuper()) || !menuItems.length;
         const termLabel = account.role === "student"
           ? (year !== null && semester !== null ? `Y${year} · S${semester}` : "No term")
           : "—";
@@ -35648,7 +35803,7 @@ function renderAdmin() {
             </td>
             <td>
               <span class="admin-user-status ${isApproved ? "is-approved" : "is-pending"}" data-user-status-badge>${isApproved ? "Approved" : "Pending"}</span>
-              ${account.role === "student" && !isApproved
+              ${account.role === "student" && !isApproved && usersCan.access
             ? `<button class="admin-user-inline-approve" type="button" data-action="toggle-user-approval" data-admin-inline-approve>Approve</button>`
             : ""}
             </td>
@@ -35725,17 +35880,17 @@ function renderAdmin() {
         ${activeUserFilterCount ? `<span class="admin-icon-btn-badge">${activeUserFilterCount}</span>` : ""}
       </span>
     `;
-    const usersToolbarAddButtonHtml = renderAdminIconButton({
+    const usersToolbarAddButtonHtml = usersCan.create ? renderAdminIconButton({
       icon: "plus",
       label: "Add user",
       attrs: `data-action="admin-users-open-add-user"`,
       variant: "is-primary",
-    });
-    const usersToolbarSettingsButtonHtml = renderAdminIconButton({
+    }) : "";
+    const usersToolbarSettingsButtonHtml = usersCan.access ? renderAdminIconButton({
       icon: "settings",
       label: "Approval settings",
       attrs: `data-action="admin-users-open-settings"`,
-    });
+    }) : "";
     const usersToolbarActionsHtml = `
       ${usersToolbarSearchHtml}
       ${usersToolbarPendingChipHtml}
@@ -36023,15 +36178,15 @@ function renderAdmin() {
         ${selectedUserCount
         ? `<div class="admin-users-bulk-bar" role="region" aria-label="Bulk actions">
             <span class="admin-users-bulk-count"><b>${selectedUserCount}</b> selected</span>
-            <button class="btn admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-approve-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+            ${usersCan.access ? `<button class="btn admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? "is-loading" : ""}" type="button" data-action="admin-bulk-approve-users" ${bulkDeactivateRunning ? "disabled" : ""}>
               ${bulkDeactivateRunning && state.adminBulkActionType === "approve" ? `<span class="inline-loader" aria-hidden="true"></span><span>Approving...</span>` : "Approve"}
             </button>
             <button class="btn ghost admin-btn-sm admin-users-bulk-suspend ${bulkDeactivateRunning && state.adminBulkActionType === "suspend" ? "is-loading" : ""}" type="button" data-action="admin-bulk-deactivate-users" ${bulkDeactivateRunning ? "disabled" : ""}>
               ${bulkDeactivateRunning && state.adminBulkActionType === "suspend" ? `<span class="inline-loader" aria-hidden="true"></span><span>Suspending...</span>` : "Suspend"}
-            </button>
-            <button class="btn danger admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "delete" ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete-users" ${bulkDeactivateRunning ? "disabled" : ""}>
+            </button>` : ""}
+            ${usersCan.remove ? `<button class="btn danger admin-btn-sm ${bulkDeactivateRunning && state.adminBulkActionType === "delete" ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete-users" ${bulkDeactivateRunning ? "disabled" : ""}>
               ${bulkDeactivateRunning && state.adminBulkActionType === "delete" ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete"}
-            </button>
+            </button>` : ""}
             <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning ? "disabled" : ""}>Clear</button>
           </div>`
         : ""}
@@ -36199,7 +36354,7 @@ function renderAdmin() {
                       <b>${focusedQuestionCount}</b> question${focusedQuestionCount === 1 ? "" : "s"} in this course
                     </p>
                     <div class="admin-course-qbank-actions">
-                      <button class="btn danger admin-btn-sm" type="button" data-action="course-question-clear" ${focusedQuestionCount ? "" : "disabled"}>Delete all questions</button>
+                      ${adminAccessCan(getCurrentAdminAccess(), "mcq.questions_delete") ? `<button class="btn danger admin-btn-sm" type="button" data-action="course-question-clear" ${focusedQuestionCount ? "" : "disabled"}>Delete all questions</button>` : ""}
                       <button class="btn danger admin-btn-sm" type="button" data-action="course-topic-clear">Delete all topics</button>
                     </div>
                   </div>
@@ -36333,6 +36488,13 @@ function renderAdmin() {
       state.adminFilters.topic = selectedTopic;
     }
     const questionOpsLocked = questionSaveRunning || Boolean(questionDeleteQid) || bulkActionRunning;
+    // Single actions ticked on the Admin access page (the database enforces them).
+    const questionsAccess = getCurrentAdminAccess();
+    const questionsCan = {
+      create: adminAccessCan(questionsAccess, "mcq.questions_create"),
+      edit: adminAccessCan(questionsAccess, "mcq.questions_edit"),
+      remove: adminAccessCan(questionsAccess, "mcq.questions_delete"),
+    };
     const courseQuestions = questionView.filteredQuestions;
     const questionsFilterKey = `${selectedCourse}::${selectedTopic}`;
     if (state.adminQuestionsFilterKey !== questionsFilterKey) {
@@ -36382,7 +36544,7 @@ function renderAdmin() {
           <tr
             class="${rowClassNames.join(" ")}"
             data-qid="${escapeHtml(questionId)}"
-            draggable="${questionOpsLocked || !questionId ? "false" : "true"}"
+            draggable="${questionOpsLocked || !questionId || !questionsCan.edit ? "false" : "true"}"
           >
             <td class="admin-question-select-cell">
               <input
@@ -36414,18 +36576,18 @@ function renderAdmin() {
             </td>
             <td class="admin-question-actions-cell">
               <div class="admin-question-row-actions">
-                ${renderAdminIconButton({
+                ${questionsCan.edit ? renderAdminIconButton({
           icon: "pencil",
           label: `Edit question ${idx + 1}`,
           attrs: `data-action="admin-edit" data-qid="${escapeHtml(questionId)}"${questionOpsLocked || !questionId ? " disabled" : ""}`,
-        })}
-                ${renderAdminIconButton({
+        }) : ""}
+                ${questionsCan.remove ? renderAdminIconButton({
           icon: "trash",
           label: isDeleting ? `Deleting question ${idx + 1}...` : `Delete question ${idx + 1}`,
           variant: "danger",
           attrs: `data-action="admin-delete" data-qid="${escapeHtml(questionId)}"${(questionOpsLocked || !questionId) && !isDeleting ? " disabled" : ""}`,
           busy: isDeleting,
-        })}
+        }) : ""}
               </div>
             </td>
           </tr>
@@ -36454,12 +36616,12 @@ function renderAdmin() {
     const questionYearGroups = buildAdminCourseYearGroups(allCourses);
     const questionYearGroup = findAdminCourseYearGroup(questionYearGroups, selectedCourse);
     const questionsHeaderActions = `
-      ${renderAdminIconButton({
+      ${questionsCan.create ? renderAdminIconButton({
       icon: "plus",
       label: "New question",
       attrs: `data-action="admin-open-editor-new"${questionOpsLocked ? " disabled" : ""}`,
       variant: "primary",
-    })}
+    }) : ""}
     `;
     const questionsPageHeaderHtml = renderAdminPageHeader({
       id: "questions",
@@ -36502,21 +36664,21 @@ function renderAdmin() {
         ? `<div class="admin-question-bulk-bar" style="margin-top: 0.74rem;">
             <p class="admin-question-selection-count">Selected: <b>${selectedQuestionCount}</b></p>
             <div class="stack">
-              <button class="btn ghost admin-btn-sm ${isBulkDrafting ? "is-loading" : ""}" type="button" data-action="admin-bulk-draft" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+              ${questionsCan.edit ? `<button class="btn ghost admin-btn-sm ${isBulkDrafting ? "is-loading" : ""}" type="button" data-action="admin-bulk-draft" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
                 ${isBulkDrafting ? `<span class="inline-loader" aria-hidden="true"></span><span>Drafting...</span>` : "Draft selected"}
               </button>
               <button class="btn ghost admin-btn-sm ${isBulkPublishing ? "is-loading" : ""}" type="button" data-action="admin-bulk-publish" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
                 ${isBulkPublishing ? `<span class="inline-loader" aria-hidden="true"></span><span>Publishing...</span>` : "Publish selected"}
-              </button>
-              <button class="btn danger admin-btn-sm ${isBulkDeleting ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
+              </button>` : ""}
+              ${questionsCan.remove ? `<button class="btn danger admin-btn-sm ${isBulkDeleting ? "is-loading" : ""}" type="button" data-action="admin-bulk-delete" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>
                 ${isBulkDeleting ? `<span class="inline-loader" aria-hidden="true"></span><span>Deleting...</span>` : "Delete selected"}
-              </button>
+              </button>` : ""}
               <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-selection" ${questionOpsLocked || !selectedQuestionCount ? "disabled" : ""}>Clear selection</button>
             </div>
           </div>`
         : ""
       }
-        <p class="subtle admin-question-reorder-hint" style="margin-top: 0.7rem;">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>
+        ${questionsCan.edit ? `<p class="subtle admin-question-reorder-hint" style="margin-top: 0.7rem;">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>` : ""}
         <div class="table-wrap" style="margin-top: 0.6rem;">
           <table>
             <thead>

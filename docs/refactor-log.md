@@ -2,6 +2,44 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-09 — Admin layers part 3: single-action permissions (tick boxes)
+- Super admins can now tick single actions for each admin on the **Admin
+  access** page instead of whole areas: People (add users, edit details,
+  approve/suspend/access switches, set passwords, remove users,
+  universities & organizations), MCQ Bank (subjects & topics, add / edit /
+  delete questions, bulk import), Video Courses, Messaging (notifications,
+  pop-ups), System (activity & logs).
+- Data: new nullable `admin_permissions.permissions text[]`
+  (migration `20261009235000_admin_action_permissions`, rollback in
+  `supabase/rollbacks/`). **Null = every action in the admin's areas**, so all
+  existing rows keep exactly what they had. The website saves `areas` as the
+  areas with at least one ticked action (`buildAdminAccessRow`), so the old
+  area guards stay consistent.
+- Enforcement is **triggers, not RLS**: the site saves questions/profiles/topics
+  through upserts, and an INSERT policy is checked even when the upsert
+  updates, so RLS cannot tell add from edit. AFTER INSERT / BEFORE UPDATE OR
+  DELETE row triggers (`private.guard_admin_action`, `guard_admin_question_action`,
+  `guard_admin_profile_action`) check `private.admin_can(action)`. They skip
+  non-admins, `auth.uid() is null` (service role / Edge Functions), nested
+  trigger/cascade work (`pg_trigger_depth() > 1`), no-op updates, and an
+  admin's own profile row. The BEFORE triggers are named `trg_<table>_aa_*`
+  so they fire before the other BEFORE triggers and see only what the client
+  sent. **Question delete is an archive** (`status -> 'archived'`), so that
+  update needs `mcq.questions_delete`.
+- Profiles: changing `approved`, `mcq_access_enabled`, `courses_access_enabled`,
+  `auto_approval_blocked_at` or `mcq_access_held_at` needs `users.access`; any
+  other column needs `users.edit`.
+- The four admin Edge Functions select `*` from `admin_permissions` (works
+  before and after the column exists) and check their action with `adminCan`
+  (`users.create` / `users.delete` / `users.password` / `users.access`).
+- Website: `ADMIN_PERMISSIONS`, `ADMIN_PAGE_PERMISSIONS`, `adminAccessCan()`;
+  pages show when the admin holds any of their actions; Users and Questions
+  hide the buttons and row-menu items for actions not held; the auto-approval
+  sweep needs `users.access`. Video Courses / Notifications / Pop-ups /
+  Subjects / Bulk import / Organizations / Logs are gated by page.
+- **Adding an action** = `ADMIN_PERMISSIONS` + the migration check constraint
+  (a test compares them) + a trigger or Edge Function check. The action's
+  prefix decides its area in SQL (`private.admin_permission_area`).
 ### 2026-10-09 — Video Courses website visibility flag
 - `supabase.config.js` now exposes `videoCoursesVisible`. When it is exactly
   `false`, `isVideoCoursesHidden()` removes the public/student Video Courses

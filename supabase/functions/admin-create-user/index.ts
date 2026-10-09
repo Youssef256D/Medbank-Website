@@ -78,31 +78,39 @@ function parseBearerToken(authHeader: string): string {
 // not apply here; these checks do the same job. Until that migration is
 // applied the table does not exist and every admin keeps full access, as
 // before.
-type AdminAccess = { ok: boolean; isSuper: boolean; areas: string[] };
+// `permissions` (migration 20261009235000_admin_action_permissions) narrows
+// an area to single actions; null means every action in the admin's areas.
+type AdminAccess = { ok: boolean; isSuper: boolean; areas: string[]; permissions: string[] | null };
 
 async function loadAdminAccess(client: ReturnType<typeof createClient>, actorId: string): Promise<AdminAccess> {
   const { data, error } = await client
     .from("admin_permissions")
-    .select("is_super,areas")
+    .select("*")
     .eq("user_id", actorId)
     .maybeSingle();
   if (error) {
     const code = String((error as { code?: string }).code || "");
     const message = String(error.message || "");
     if (code === "42P01" || code === "PGRST205" || (/admin_permissions/i.test(message) && /does not exist|schema cache/i.test(message))) {
-      return { ok: true, isSuper: true, areas: [] };
+      return { ok: true, isSuper: true, areas: [], permissions: null };
     }
-    return { ok: false, isSuper: false, areas: [] };
+    return { ok: false, isSuper: false, areas: [], permissions: null };
   }
   return {
     ok: true,
     isSuper: Boolean(data?.is_super),
     areas: Array.isArray(data?.areas) ? data.areas.map((area: unknown) => String(area)) : [],
+    permissions: Array.isArray(data?.permissions) ? data.permissions.map((entry: unknown) => String(entry)) : null,
   };
 }
 
 function adminHasArea(access: AdminAccess, area: string): boolean {
   return access.isSuper || access.areas.includes(area);
+}
+
+function adminCan(access: AdminAccess, permission: string): boolean {
+  if (access.isSuper) return true;
+  return adminHasArea(access, "people") && (access.permissions === null || access.permissions.includes(permission));
 }
 
 async function anyTargetIsAdmin(client: ReturnType<typeof createClient>, ids: string[]): Promise<boolean | null> {
@@ -224,6 +232,9 @@ Deno.serve(async (req) => {
   }
   if (!adminHasArea(adminAccess, "people")) {
     return jsonResponse(403, { ok: false, error: "Your admin account does not include the People area." }, requestOrigin);
+  }
+  if (!adminCan(adminAccess, "users.create")) {
+    return jsonResponse(403, { ok: false, error: "Your admin account is not allowed to add users." }, requestOrigin);
   }
   if (role === "admin" && !adminAccess.isSuper) {
     return jsonResponse(403, { ok: false, error: "Only a super admin can create an admin account." }, requestOrigin);

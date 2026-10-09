@@ -23114,6 +23114,89 @@ body.theme-dark {
 .admin-access-table .btn:disabled {
   opacity: 0.45;
 }
+/* Single-action ticks inside each area (admin_permissions.permissions). */
+.admin-access-areas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.6rem 1.2rem;
+  align-items: start;
+}
+.admin-access-everything {
+  margin: 0;
+  padding-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.admin-access-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.admin-access-group .admin-access-area {
+  font-weight: 600;
+}
+.admin-access-group-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  list-style: none;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.admin-access-group-summary::-webkit-details-marker {
+  display: none;
+}
+.admin-access-group-summary:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 2px;
+}
+.admin-access-chevron {
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: 0.15rem;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.admin-access-group[open] > .admin-access-group-summary .admin-access-chevron {
+  transform: rotate(45deg);
+}
+.admin-access-group[open] > .admin-access-permissions {
+  margin-top: 0.2rem;
+}
+.admin-access-count {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.admin-access-permissions {
+  display: flex;
+  flex-direction: column;
+  padding-left: 1.4rem;
+  border-left: 1px solid var(--line);
+  margin-left: 0.45rem;
+}
+.admin-access-permission {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 28px;
+  color: var(--ink);
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+.admin-access-permission:has(input:disabled) {
+  color: var(--muted);
+  cursor: default;
+}
+@media (max-width: 640px) {
+  .admin-access-permission {
+    min-height: 40px;
+  }
+}
 
 /* 2026-10 Mobile browser "get the app" sheet (showMobileAppPrompt in main.js). */
 .map-root {

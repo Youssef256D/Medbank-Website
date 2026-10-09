@@ -11,13 +11,14 @@ assert.ok(start >= 0 && end > start, 'admin layers helper markers moved');
 const context = vm.createContext({});
 vm.runInContext(
   `${mainSource.slice(start, end)}
-  this.api = { ADMIN_AREAS, ADMIN_AREA_IDS, ADMIN_PAGE_AREAS, ADMIN_SUPER_ONLY_PAGES, normalizeAdminAccess, adminAccessHasArea, canAdminAccessPage, describeAdminAccess };`,
+  this.api = { ADMIN_AREAS, ADMIN_AREA_IDS, ADMIN_PERMISSIONS, ADMIN_PERMISSION_IDS, ADMIN_PAGE_AREAS, ADMIN_PAGE_PERMISSIONS, ADMIN_SUPER_ONLY_PAGES, normalizeAdminAccess, buildAdminAccessRow, adminAccessHasArea, adminAccessCan, canAdminAccessPage, describeAdminAccess };`,
   context,
 );
 const api = context.api;
 
 const PERMISSIONS_MIGRATION = fs.readFileSync('supabase/migrations/20260930030000_admin_permission_areas.sql', 'utf8');
 const ENFORCEMENT_MIGRATION = fs.readFileSync('supabase/migrations/20260930030100_admin_area_enforcement.sql', 'utf8');
+const ACTIONS_MIGRATION = fs.readFileSync('supabase/migrations/20261009235000_admin_action_permissions.sql', 'utf8');
 
 test('the website areas are exactly the areas the database allows', () => {
   const check = PERMISSIONS_MIGRATION.match(/areas <@ array\[([^\]]+)\]/);
@@ -100,4 +101,86 @@ test('the enforcement migration only adds restrictive policies and keeps student
 test('every current admin is seeded as a super admin', () => {
   assert.match(PERMISSIONS_MIGRATION, /insert into public\.admin_permissions \(user_id, is_super, areas\)\s+select p\.id, true,/);
   assert.match(PERMISSIONS_MIGRATION, /where p\.role::text = 'admin'/);
+});
+
+test('the website actions are exactly the actions the database allows', () => {
+  const check = ACTIONS_MIGRATION.match(/permissions <@ array\[([^\]]+)\]/);
+  assert.ok(check, 'permissions check constraint not found');
+  const dbActions = check[1].split(',').map((entry) => entry.trim().replace(/'/g, ''));
+  assert.deepEqual([...api.ADMIN_PERMISSION_IDS], dbActions);
+  for (const permission of api.ADMIN_PERMISSIONS) {
+    assert.ok(api.ADMIN_AREA_IDS.includes(permission.area), permission.id);
+    // The database derives the area from the prefix.
+    const prefixArea = { users: 'people', mcq: 'mcq', video_courses: 'video_courses', messaging: 'messaging', system: 'system' }[permission.id.split('.')[0]];
+    assert.equal(prefixArea, permission.area, permission.id);
+  }
+});
+
+test('a row without permissions keeps every action in its areas', () => {
+  const access = api.normalizeAdminAccess({ is_super: false, areas: ['people'] });
+  assert.equal(api.adminAccessCan(access, 'users.create'), true);
+  assert.equal(api.adminAccessCan(access, 'users.delete'), true);
+  assert.equal(api.adminAccessCan(access, 'mcq.questions_edit'), false);
+});
+
+test('single ticked actions decide buttons and pages', () => {
+  const access = api.normalizeAdminAccess({
+    is_super: false,
+    areas: ['people', 'mcq'],
+    permissions: ['users.create', 'mcq.questions_edit', 'messaging.popups'],
+  });
+  assert.equal(api.adminAccessCan(access, 'users.create'), true);
+  assert.equal(api.adminAccessCan(access, 'users.delete'), false);
+  assert.equal(api.adminAccessCan(access, 'mcq.questions_edit'), true);
+  assert.equal(api.adminAccessCan(access, 'mcq.questions_delete'), false);
+  // An action outside the admin's areas does not count.
+  assert.equal(api.adminAccessCan(access, 'messaging.popups'), false);
+  assert.equal(api.canAdminAccessPage(access, 'users'), true);
+  assert.equal(api.canAdminAccessPage(access, 'questions'), true);
+  assert.equal(api.canAdminAccessPage(access, 'organizations'), false);
+  assert.equal(api.canAdminAccessPage(access, 'bulk-import'), false);
+  assert.equal(api.canAdminAccessPage(access, 'popups'), false);
+  assert.equal(api.describeAdminAccess(access), 'People (1/6), MCQ Bank (1/5)');
+});
+
+test('saving derives areas from the ticked actions', () => {
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(api.buildAdminAccessRow({ isSuper: false, permissions: ['mcq.bulk_import', 'users.edit', 'bogus'] }))),
+    { is_super: false, areas: ['people', 'mcq'], permissions: ['users.edit', 'mcq.bulk_import'] },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(api.buildAdminAccessRow({ isSuper: true, permissions: [] }))),
+    { is_super: true, areas: [...api.ADMIN_AREA_IDS], permissions: null },
+  );
+});
+
+test('every area page lists the actions that open it', () => {
+  for (const page of Object.keys(api.ADMIN_PAGE_AREAS)) {
+    const permissions = api.ADMIN_PAGE_PERMISSIONS[page];
+    assert.ok(Array.isArray(permissions) && permissions.length, page);
+    for (const permission of permissions) {
+      assert.equal(api.ADMIN_PERMISSIONS.find((entry) => entry.id === permission)?.area, api.ADMIN_PAGE_AREAS[page], `${page}: ${permission}`);
+    }
+  }
+});
+
+test('the action migration adds triggers only and never touches existing policies', () => {
+  assert.doesNotMatch(ACTIONS_MIGRATION, /\b(create|alter|drop) policy\b/i);
+  assert.match(ACTIONS_MIGRATION, /add column if not exists permissions text\[\]/);
+  // Existing rows keep null = every action in their areas.
+  assert.doesNotMatch(ACTIONS_MIGRATION, /update public\.admin_permissions/i);
+  assert.match(ACTIONS_MIGRATION, /pg_trigger_depth\(\) > 1/);
+});
+
+test('every admin Edge Function checks its own action', () => {
+  const expected = {
+    'admin-create-user': 'users.create',
+    'admin-delete-user': 'users.delete',
+    'admin-set-user-password': 'users.password',
+    'admin-set-user-access': 'users.access',
+  };
+  for (const [name, permission] of Object.entries(expected)) {
+    const source = fs.readFileSync(`supabase/functions/${name}/index.ts`, 'utf8');
+    assert.match(source, new RegExp(`adminCan\\(adminAccess, "${permission.replace('.', '\\.')}"\\)`), name);
+  }
 });

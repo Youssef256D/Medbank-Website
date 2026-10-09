@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-09 — Tick-box admin permissions
+Super admins can now choose exactly what each admin may do on the Admin access
+page: tick a whole area or single actions such as *Add new users*, *Edit
+questions* or *Send notifications*. Buttons for actions an admin does not hold
+are hidden, and the database and admin Edge Functions refuse them. Existing
+admins keep exactly what they had. Needs migration
+`20261009235000_admin_action_permissions` and the four admin Edge Functions
+redeployed. Static cache bust: `2026-10-09.04`.
 ### 2026-10-09 — Hide Video Courses from the website
 Video Courses can now be hidden from all public and student website surfaces
 with one `videoCoursesVisible` config flag. The current shipped value is off:
