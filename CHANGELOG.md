@@ -32,6 +32,10 @@ hosted Supabase is the source of truth.
   instead of 30s while `getStudentRealtimeConnectionState()` is `live`.
 - Tests `app-popups-utils` / `universities-utils` now assert the new loader
   shape (support list + main.js after them) instead of `loadScript(` order.
+- **Migration `20261011184347_performance_advisor_fixes` (applied).** 12
+  foreign-key covering indexes, and `app_popup_views_own` /
+  `content_protection_events_insert_own` now use `(select auth.uid())`
+  (same predicate, same names). Rollback in `supabase/rollbacks/`.
 - **Not done on purpose:** merging the advisor's "multiple permissive
   policies". The Flutter repo rewrites several of them by name; a merged
   policy would keep a stale copy of the old predicate.
