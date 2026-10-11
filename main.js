@@ -33994,7 +33994,7 @@ function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection
 // ── Organizations (admin) ────────────────────────────────────────────────
 // Mirrors the MedBank app's admin Organizations screens. An organization's
 // members see its organization-only video courses; join codes are how
-// students (or, with a creator code, lecturers) join. RLS is the real gate:
+// students and lecturers join (one code works for both). RLS is the real gate:
 // writes to organizations, codes and members need the People area, and
 // course links (platform_course_organizations) need Video Courses.
 const ORGANIZATIONS_SELECT = "id,name,name_ar,is_active,sort_order,created_at,updated_at";
@@ -34258,7 +34258,7 @@ function renderAdminOrganizationCodeRow(code) {
     ? `${Number(code.use_count) || 0} of ${Number(code.max_uses)} uses`
     : `${Number(code?.use_count) || 0} uses`;
   const meta = [
-    code?.role === "creator" ? "For creators" : "For students",
+    "Students and creators",
     code?.label || "",
     uses,
     code?.expires_at ? `Expires ${formatReportDateTime(code.expires_at)}` : "No expiry",
@@ -34441,12 +34441,7 @@ function renderAdminOrganizationDialogs() {
     return renderAdminOrganizationDialogShell("organization-code", "New code", `
       <form id="admin-organization-code-form" class="admin-university-editor">
         <fieldset ${saving ? "disabled" : ""}>
-          <label>For
-            <select name="role">
-              <option value="student">Students</option>
-              <option value="creator">Creators (lecturers)</option>
-            </select>
-          </label>
+          <p class="subtle">One code works for students and creators alike.</p>
           <label>Custom code (optional)<input name="code" maxlength="40" pattern="[A-Za-z0-9-]{6,40}" placeholder="Leave empty to generate one" /></label>
           <p class="subtle">6 to 40 letters, digits or dashes.</p>
           <label>Label (optional)<input name="label" maxlength="120" placeholder="e.g. Year 1 cohort" /></label>
@@ -34712,7 +34707,9 @@ function wireAdminOrganizations() {
       const { data, error } = await runWithTimeoutResult(
         client.rpc("admin_create_organization_code", {
           p_organization_id: organization.id,
-          p_role: form.elements.role.value === "creator" ? "creator" : "student",
+          // organization_codes.role is legacy (20261011150000): every code
+          // works for students and creators.
+          p_role: "student",
           p_label: String(form.elements.label.value || "").trim() || null,
           p_expires_at: expiresAt ? expiresAt.toISOString() : null,
           p_max_uses: Number.isFinite(maxUses) && maxUses > 0 ? maxUses : null,
