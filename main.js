@@ -233,15 +233,18 @@ const ADMIN_NAV_GROUPS = [
     id: "video-courses",
     label: "Video Courses",
     items: [
-      { section: "overview", label: "Catalog" },
-      { section: "builder", label: "Course Builder" },
-      { section: "enrollments", label: "Enrolled Users" },
-      { section: "requests", label: "Enrollment Requests" },
-      { section: "coupons", label: "Activation Coupons" },
-      { section: "approvals", label: "Course Approvals" },
-      { section: "suggestions", label: "Suggestions" },
+      // Ordered by job: the courses themselves, then the students in them,
+      // then reaching students. Labels match the in-page tabs
+      // (ADMIN_VIDEO_COURSE_TABS) so the two never disagree.
+      { section: "overview", label: "All courses" },
+      { section: "builder", label: "Course content" },
+      { section: "approvals", label: "Review queue" },
+      { section: "enrollments", label: "Students" },
+      { section: "requests", label: "Join requests" },
+      { section: "coupons", label: "Activation codes" },
       { section: "announcements", label: "Announcements" },
-      { section: "availability", label: "Availability" },
+      { section: "suggestions", label: "Suggestions" },
+      { section: "availability", label: "Open / pause" },
     ],
   },
   {
@@ -623,6 +626,8 @@ const state = {
   adminCourseBuilderPreview: false,
   adminCoursePlatformSection: "builder",
   adminCourseBuilderActiveType: null,
+  // All courses: which course's details panel is open ("" = none).
+  adminCourseDetailsOpenId: "",
   adminCourseBuilderActiveId: "",
   adminCourseBuilderActiveParentId: "",
   adminCourseBuilderModuleCollapsed: {},
@@ -34807,17 +34812,20 @@ function renderAdminCourseAudienceForm(course) {
   const visibility = String(course?.visibility || "public") === "organization" ? "organization" : "public";
   const selectedIds = new Set(getAdminCourseOrganizationIds(courseId));
   const organizations = getAdminCourseOrganizationOptions();
-  return `<form id="admin-course-audience-form" class="course-builder-form" data-course-id="${escapeHtml(courseId)}">
-    <h4>Audience</h4>
-    <p class="subtle">Who can see this course.</p>
-    <label class="course-builder-check"><input type="radio" name="audience_visibility" value="public" ${visibility === "public" ? "checked" : ""} /> Every student</label>
-    <label class="course-builder-check"><input type="radio" name="audience_visibility" value="organization" ${visibility === "organization" ? "checked" : ""} ${organizations.length || visibility === "organization" ? "" : "disabled"} /> Only members of these organizations</label>
-    <div class="admin-course-audience-orgs">
-      ${organizations.length ? organizations.map((organization) => `
-        <label class="course-builder-check"><input type="checkbox" data-audience-organization value="${escapeHtml(organization.id)}" ${selectedIds.has(organization.id) ? "checked" : ""} /> ${escapeHtml(organization.name)}${organization.is_active ? "" : " (hidden)"}</label>
-      `).join("") : `<p class="subtle">No organizations yet. Add one on the Organizations page.</p>`}
-    </div>
-    <div class="stack"><button class="btn admin-btn-sm" type="submit">Save audience</button></div>
+  return `<form id="admin-course-audience-form" class="vc-details-form vc-audience" data-course-id="${escapeHtml(courseId)}">
+    <fieldset class="vc-fieldset">
+      <legend>Who can see this course</legend>
+      <div class="vc-choice-row">
+        <label class="vc-choice"><input type="radio" name="audience_visibility" value="public" ${visibility === "public" ? "checked" : ""} /><span><b>Every student</b><small>Anyone on MedBank can find it.</small></span></label>
+        <label class="vc-choice"><input type="radio" name="audience_visibility" value="organization" ${visibility === "organization" ? "checked" : ""} ${organizations.length || visibility === "organization" ? "" : "disabled"} /><span><b>Only some organizations</b><small>Only members of the ones ticked below.</small></span></label>
+      </div>
+      <div class="admin-course-audience-orgs vc-org-list">
+        ${organizations.length ? organizations.map((organization) => `
+          <label class="vc-check"><input type="checkbox" data-audience-organization value="${escapeHtml(organization.id)}" ${selectedIds.has(organization.id) ? "checked" : ""} /> ${escapeHtml(organization.name)}${organization.is_active ? "" : " (hidden)"}</label>
+        `).join("") : `<p class="subtle">No organizations yet. Add one on the Organizations page.</p>`}
+      </div>
+    </fieldset>
+    <div class="vc-savebar"><span class="subtle">Saved separately from the details above.</span><button class="vc-btn" type="submit"><span>Save audience</span></button></div>
   </form>`;
 }
 
@@ -35670,7 +35678,7 @@ function renderAdmin() {
                 <div><span>Enrollments</span><b>${escapeHtml(formatAdminCount(dashboardCounts.videoEnrolledStudents, { loading: dashboardCountsLoading }))}</b></div>
                 <div><span>Coupons redeemed (7 days)</span><b>${escapeHtml(formatAdminCount(dashboardCounts.couponRedemptionsLast7Days, { loading: dashboardCountsLoading }))}</b></div>
               </div>
-              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-course-platform-section" data-section="overview">Open Catalog</button>
+              <button class="btn ghost admin-btn-sm admin-dash-panel-link" type="button" data-action="admin-course-platform-section" data-section="overview">Open all courses</button>
             </article>` : ""}
           </div>
 
@@ -37958,7 +37966,13 @@ function wireAdmin() {
       // Approval cards jump straight to the course they are about.
       const targetCourseId = String(button.getAttribute("data-course-id") || "").trim();
       if (targetCourseId) {
+        if (targetCourseId !== state.adminCourseBuilderCourseId) {
+          syncAdminCouponCourse(targetCourseId);
+        }
         state.adminCourseBuilderCourseId = targetCourseId;
+        if (button.getAttribute("data-open-details") === "true") {
+          state.adminCourseDetailsOpenId = targetCourseId;
+        }
         state.adminCourseBuilderActiveType = null;
         state.adminCourseBuilderActiveId = "";
         state.adminCourseBuilderActiveParentId = "";
@@ -57817,8 +57831,8 @@ function renderAdminCourseStatsCards(aggregates) {
     <div class="admin-course-table-stats admin-flat-grid">
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Total courses</span><b>${stats.totalCourses}</b></div>
       <div class="admin-course-stat-card"><span class="admin-course-stat-label">Published</span><b>${stats.publishedCourses}</b></div>
-      <div class="admin-course-stat-card"><span class="admin-course-stat-label">Total enrollments</span><b>${stats.totalEnrollments}</b></div>
-      <div class="admin-course-stat-card"><span class="admin-course-stat-label">Pending requests</span><b>${stats.totalPendingRequests}</b></div>
+      <div class="admin-course-stat-card"><span class="admin-course-stat-label">Students enrolled</span><b>${stats.totalEnrollments}</b></div>
+      <div class="admin-course-stat-card"><span class="admin-course-stat-label">Waiting to join</span><b>${stats.totalPendingRequests}</b></div>
     </div>
   `;
 }
@@ -57909,7 +57923,7 @@ function renderAdminCourseTableToolbar() {
         <input class="admin-course-search-input" type="search" id="admin-course-table-search" placeholder="Search courses, codes, instructors" value="${escapeHtml(state.adminCourseTableSearch || "")}" />
       </label>
       <select id="admin-course-table-filter-status" data-action="admin-course-table-filter" aria-label="Status">
-        <option value="all" ${statusFilter === "all" ? "selected" : ""}>All statuses</option>
+        <option value="all" ${statusFilter === "all" ? "selected" : ""}>Any status</option>
         <option value="published" ${statusFilter === "published" ? "selected" : ""}>Published</option>
         <option value="draft" ${statusFilter === "draft" ? "selected" : ""}>Draft</option>
       </select>
@@ -57931,13 +57945,13 @@ function renderAdminCourseTable(courses, selectedCourseId, options = {}) {
           <thead>
             <tr>
               <th>Course</th>
-              <th>Audience</th>
               <th>Status</th>
-              <th>Enrollment</th>
-              <th>Modules</th>
-              <th>Lessons</th>
-              <th>Enrolled</th>
-              <th>Pending</th>
+              <th>Who can see it</th>
+              <th class="vc-num">Modules</th>
+              <th class="vc-num">Lessons</th>
+              <th class="vc-num">Students</th>
+              <th class="vc-num">Waiting</th>
+              <th class="vc-actions-col"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -57946,21 +57960,25 @@ function renderAdminCourseTable(courses, selectedCourseId, options = {}) {
               const stats = getAdminCourseTableRowStats(courseId);
               const isActive = courseId === String(selectedCourseId || "").trim();
               return `
-                <tr class="${isActive ? "is-active" : ""}" data-action="admin-select-course-platform-course" data-course-id="${escapeHtml(courseId)}" role="button" tabindex="0">
+                <tr class="${isActive ? "is-active" : ""}" data-action="admin-select-course-platform-course" data-course-id="${escapeHtml(courseId)}" role="button" tabindex="0" aria-label="${escapeHtml(`Edit details of ${getCoursePlatformCourseTitle(course)}`)}">
                   <td>
                     <b>${escapeHtml(getCoursePlatformCourseTitle(course))}</b>
-                    ${course.course_code ? `<small>${escapeHtml(course.course_code)}</small>` : ""}
+                    <small>${escapeHtml([course.course_code, course.instructor_name].filter(Boolean).join(" · "))}</small>
                   </td>
+                  <td>${renderAdminCourseStatusPill(course)}</td>
                   <td>${escapeHtml(getAdminCourseAudienceLabel(course))}</td>
-                  <td><span class="${course.is_published ? "admin-badge-published" : "admin-badge-draft"}">${course.is_published ? "Published" : "Draft"}</span></td>
-                  <td>${escapeHtml(normalizeCoursePlatformMode(course.enrollment_mode) === "assigned" ? "Assigned" : "Request")}</td>
-                  <td>${stats.modules}</td>
-                  <td>${stats.lessons}</td>
-                  <td>${stats.enrollments}</td>
-                  <td>${stats.pendingRequests || "-"}</td>
+                  <td class="vc-num">${stats.modules}</td>
+                  <td class="vc-num">${stats.lessons}</td>
+                  <td class="vc-num">${stats.enrollments}</td>
+                  <td class="vc-num">${stats.pendingRequests ? `<span class="vc-pill is-warn">${stats.pendingRequests}</span>` : "—"}</td>
+                  <td class="vc-row-actions">
+                    <button type="button" class="vc-row-btn" data-action="admin-select-course-platform-course" data-course-id="${escapeHtml(courseId)}">Details</button>
+                    <button type="button" class="vc-row-btn" data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(courseId)}">Content</button>
+                    <button type="button" class="vc-row-btn" data-action="admin-course-platform-section" data-section="enrollments" data-course-id="${escapeHtml(courseId)}">Students</button>
+                  </td>
                 </tr>
               `;
-            }).join("") : `<tr><td colspan="8" class="subtle">No courses match your filters.</td></tr>`}
+            }).join("") : `<tr><td colspan="8" class="subtle">No courses match your search.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -57969,33 +57987,157 @@ function renderAdminCourseTable(courses, selectedCourseId, options = {}) {
   `;
 }
 
+// The Video Courses admin, tab by tab. One table drives the in-page tab bar,
+// each tab's title and plain-language description, and (through matching
+// labels) the sidebar entries in ADMIN_NAV_GROUPS.
+const ADMIN_VIDEO_COURSE_ICONS = {
+  overview: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M8 4v16"></path>',
+  builder: '<path d="M4 6h16M4 12h10M4 18h7"></path><path d="m15 15 2 2 4-4"></path>',
+  approvals: '<path d="M9 12l2 2 4-4"></path><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"></path>',
+  enrollments: '<circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c.6-3.6 3.3-5.5 6.5-5.5s5.9 1.9 6.5 5.5"></path><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.8c1.7.8 2.8 2.5 3 5.2"></path>',
+  requests: '<path d="M4 4h16v12H8l-4 4V4z"></path><path d="M9 9h6M9 12h4"></path>',
+  coupons: '<path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4V8z"></path><path d="M10 6v12" stroke-dasharray="2 2"></path>',
+  announcements: '<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"></path><path d="M16 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"></path>',
+  suggestions: '<path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.5 6.7 19.4l1.2-6L3.4 9.3l6-.7L12 3z"></path>',
+  availability: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>',
+  plus: '<path d="M12 5v14M5 12h14"></path>',
+  refresh: '<path d="M20 6v5h-5"></path><path d="M19 11a7.5 7.5 0 1 0 .2 3"></path>',
+  download: '<path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"></path>',
+  pencil: '<path d="M16.9 3.6a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19 4 20l1-4.5L16.9 3.6Z"></path>',
+};
+const ADMIN_VIDEO_COURSE_TABS = [
+  {
+    group: "Courses",
+    tabs: [
+      { section: "overview", label: "All courses", title: "All courses", description: "Every video course on MedBank. Choose a course to edit its details, or jump to its content or students." },
+      { section: "builder", label: "Course content", title: "Course content", description: "Modules, lessons, videos and quizzes of one course. Pick a module or lesson on the left to edit it.", perCourse: true },
+      { section: "approvals", label: "Review queue", title: "Review queue", description: "Courses creators sent for review. Approve to make them visible to students, or reject with a note." },
+    ],
+  },
+  {
+    group: "Students",
+    tabs: [
+      { section: "enrollments", label: "Students", title: "Students", description: "Who can watch this course. Enroll students by hand or remove their access.", perCourse: true },
+      { section: "requests", label: "Join requests", title: "Join requests", description: "Students asking to join a course. Approving gives them the course in My Courses." },
+      { section: "coupons", label: "Activation codes", title: "Activation codes", description: "One-time codes that unlock this course or some of its modules. A code is shown in full only once, when you generate it.", perCourse: true },
+    ],
+  },
+  {
+    group: "Reach students",
+    tabs: [
+      { section: "announcements", label: "Announcements", title: "Announcements", description: "Posts sent to everyone enrolled in this course.", perCourse: true },
+      { section: "suggestions", label: "Suggestions", title: "Suggestions", description: "Courses featured in the students' “Suggested for you” list." },
+      { section: "availability", label: "Open / pause", title: "Open or pause video courses", description: "Open or pause the whole Video Courses area for students. The MCQ Bank is not affected, and admins keep access." },
+    ],
+  },
+];
+
+function getAdminVideoCourseTab(section) {
+  for (const group of ADMIN_VIDEO_COURSE_TABS) {
+    const tab = group.tabs.find((entry) => entry.section === section);
+    if (tab) return { ...tab, group: group.group };
+  }
+  return { ...ADMIN_VIDEO_COURSE_TABS[0].tabs[0], group: ADMIN_VIDEO_COURSE_TABS[0].group };
+}
+
+function renderAdminVideoCourseIcon(name, size = 16) {
+  const paths = ADMIN_VIDEO_COURSE_ICONS[name];
+  if (!paths) return "";
+  return `<svg class="vc-icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+
+// A button that says what it does. `attrs` carries the data-action the
+// existing handlers already listen for.
+function renderAdminVideoCourseButton({ label, icon = "", attrs = "", primary = false, ghost = false, busy = false } = {}) {
+  const kind = primary ? "vc-btn is-primary" : ghost ? "vc-btn is-ghost" : "vc-btn";
+  return `<button type="button" class="${kind}${busy ? " is-busy" : ""}" ${attrs}${busy ? ' disabled aria-busy="true"' : ""}>
+    ${icon ? renderAdminVideoCourseIcon(icon, 16) : ""}<span>${escapeHtml(busy && icon === "refresh" ? "Refreshing…" : label)}</span>
+  </button>`;
+}
+
+function renderAdminVideoCourseTabs(activeSection, counts = {}) {
+  return `<nav class="vc-tabs" aria-label="Video courses sections">
+    ${ADMIN_VIDEO_COURSE_TABS.map((group) => `
+      <div class="vc-tab-group" role="group" aria-label="${escapeHtml(group.group)}">
+        <span class="vc-tab-group-label">${escapeHtml(group.group)}</span>
+        <div class="vc-tab-row">
+          ${group.tabs.map((tab) => {
+            const active = tab.section === activeSection;
+            const attention = (tab.section === "approvals" || tab.section === "requests") ? Number(counts[tab.section]) || 0 : 0;
+            return `<button type="button" class="vc-tab${active ? " is-active" : ""}" data-action="admin-course-platform-section" data-section="${escapeHtml(tab.section)}" ${active ? 'aria-current="page"' : ""}>
+              ${renderAdminVideoCourseIcon(tab.section, 16)}
+              <span>${escapeHtml(tab.label)}</span>
+              ${attention ? `<span class="vc-tab-badge" aria-label="${escapeHtml(`${attention} waiting`)}">${escapeHtml(String(attention))}</span>` : ""}
+            </button>`;
+          }).join("")}
+        </div>
+      </div>
+    `).join("")}
+  </nav>`;
+}
+
+function getAdminCourseStatus(course) {
+  const review = String(course?.review_status || "").trim();
+  if (review === "pending") return { label: "In review", tone: "warn" };
+  if (review === "rejected") return { label: "Sent back", tone: "danger" };
+  if (course?.is_active === false) return { label: "Hidden", tone: "muted" };
+  return course?.is_published ? { label: "Published", tone: "good" } : { label: "Draft", tone: "muted" };
+}
+
+function renderAdminCourseStatusPill(course) {
+  const status = getAdminCourseStatus(course);
+  return `<span class="vc-pill is-${status.tone}">${escapeHtml(status.label)}</span>`;
+}
+
+// "Working on": which course a per-course tab is showing, with a switcher and
+// one-click jumps to the same course's other tabs. The select keeps its id;
+// its change handler is unchanged.
 function renderAdminCourseContextBar(courses, selectedCourseId, rows, pendingRequestCount) {
-  const profileCount = rows.enrollments.length;
+  const selectedCourse = courses.find((course) => String(course?.id || "").trim() === selectedCourseId) || null;
   const sortedCourses = [...courses]
     .sort((left, right) => getCoursePlatformCourseTitle(left).localeCompare(getCoursePlatformCourseTitle(right)));
-
+  const title = getCoursePlatformCourseTitle(selectedCourse);
+  const initials = title.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "C";
+  const activeSection = getAdminCoursePlatformSection();
+  const facts = [
+    `${rows.modules.length} ${rows.modules.length === 1 ? "module" : "modules"}`,
+    `${rows.lessons.length} ${rows.lessons.length === 1 ? "lesson" : "lessons"}`,
+    `${rows.enrollments.length} ${rows.enrollments.length === 1 ? "student" : "students"}`,
+  ];
+  if (pendingRequestCount) facts.push(`${pendingRequestCount} waiting to join`);
+  const jumps = [
+    { section: "overview", label: "Details", icon: "pencil", openDetails: true },
+    { section: "builder", label: "Content", icon: "builder" },
+    { section: "enrollments", label: "Students", icon: "enrollments" },
+    { section: "coupons", label: "Codes", icon: "coupons" },
+    { section: "announcements", label: "Announcements", icon: "announcements" },
+  ];
   return `
-    <div class="admin-course-context-bar">
-      <label class="admin-course-context-select">
-        <span>Course</span>
-        <select id="admin-course-builder-course-select">
-              ${sortedCourses.map((course) => {
-                const courseId = String(course?.id || "").trim();
-                const optionParts = [getCoursePlatformCourseTitle(course)];
-                const courseCode = String(course?.course_code || "").trim();
-                if (courseCode) optionParts.push(courseCode);
-                if (!course?.is_published) optionParts.push("Draft");
-                return `<option value="${escapeHtml(courseId)}" ${courseId === selectedCourseId ? "selected" : ""}>${escapeHtml(optionParts.join(" · "))}</option>`;
-              }).join("")}
-        </select>
-      </label>
-      <p class="admin-course-context-meta">${escapeHtml([
-        `${rows.modules.length} ${rows.modules.length === 1 ? "module" : "modules"}`,
-        `${rows.lessons.length} ${rows.lessons.length === 1 ? "lesson" : "lessons"}`,
-        `${profileCount} ${profileCount === 1 ? "enrollment" : "enrollments"}`,
-        `${pendingRequestCount} pending ${pendingRequestCount === 1 ? "request" : "requests"}`,
-      ].join(" · "))}</p>
-      <button class="btn ghost admin-btn-sm admin-course-context-all" type="button" data-action="admin-course-platform-section" data-section="overview">All courses</button>
+    <div class="vc-course-card">
+      <div class="vc-course-avatar" aria-hidden="true">${escapeHtml(initials)}</div>
+      <div class="vc-course-main">
+        <label class="vc-course-switch">
+          <span class="vc-eyebrow">Working on</span>
+          <select id="admin-course-builder-course-select" aria-label="Course">
+            ${sortedCourses.map((course) => {
+              const courseId = String(course?.id || "").trim();
+              const optionParts = [getCoursePlatformCourseTitle(course)];
+              const courseCode = String(course?.course_code || "").trim();
+              if (courseCode) optionParts.push(courseCode);
+              if (!course?.is_published) optionParts.push("Draft");
+              return `<option value="${escapeHtml(courseId)}" ${courseId === selectedCourseId ? "selected" : ""}>${escapeHtml(optionParts.join(" · "))}</option>`;
+            }).join("")}
+          </select>
+        </label>
+        <p class="vc-course-facts">
+          ${selectedCourse ? renderAdminCourseStatusPill(selectedCourse) : ""}
+          <span>${escapeHtml(getAdminCourseAudienceLabel(selectedCourse || {}))}</span>
+          <span>${escapeHtml(facts.join(" · "))}</span>
+        </p>
+      </div>
+      <nav class="vc-course-jumps" aria-label="This course">
+        ${jumps.map((jump) => `<button type="button" class="vc-jump${jump.section === activeSection ? " is-active" : ""}" data-action="admin-course-platform-section" data-section="${jump.section}" data-course-id="${escapeHtml(selectedCourseId)}"${jump.openDetails ? ' data-open-details="true"' : ""} ${jump.section === activeSection ? 'aria-current="page"' : ""}>${renderAdminVideoCourseIcon(jump.icon, 15)}<span>${escapeHtml(jump.label)}</span></button>`).join("")}
+      </nav>
     </div>
   `;
 }
@@ -59123,9 +59265,21 @@ function renderAdminCourseCouponGeneratorForm(courses, selectedId) {
   `;
 }
 
+// Activation codes follow the course in the "Working on" switcher. They kept
+// their own course before, so switching course on another tab left this one
+// showing the old course's codes under the new course's name.
+function syncAdminCouponCourse(courseId) {
+  const nextId = String(courseId || "").trim();
+  if (!nextId || nextId === String(state.adminCourseCouponCourseId || "").trim()) return;
+  state.adminCourseCouponCourseId = nextId;
+  state.adminCourseCouponStats = null;
+  state.adminCourseCoupons = [];
+  state.adminCourseCouponError = "";
+}
+
 function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
-  const selectedId = String(state.adminCourseCouponCourseId || selectedCourseId || courses[0]?.id || "").trim();
-  if (selectedId && state.adminCourseCouponCourseId !== selectedId) state.adminCourseCouponCourseId = selectedId;
+  const selectedId = String(selectedCourseId || state.adminCourseCouponCourseId || courses[0]?.id || "").trim();
+  if (selectedId && state.adminCourseCouponCourseId !== selectedId) syncAdminCouponCourse(selectedId);
   if (selectedId && !state.adminCourseCouponLoading && !state.adminCourseCouponStats && !state.adminCourseCouponError) {
     // Re-render after a load or a recorded error (the error stops the next
     // attempt). With no client the load returns false and records nothing, so
@@ -59145,18 +59299,30 @@ function renderAdminCourseCouponsSection(courses, selectedCourseId, rows) {
     <div class="admin-coupon-page">
       ${generated.length ? `<section class="card admin-coupon-generated" role="status"><div class="flex-between"><div><h3>New codes — save now</h3><p class="subtle">These plaintext values cannot be recovered after leaving this screen.</p></div><div class="stack"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-copy-generated-coupons">Copy all</button><button class="btn ghost admin-btn-sm" type="button" data-action="admin-download-generated-coupons">Download CSV</button></div></div><textarea readonly rows="${Math.min(12, generated.length + 1)}">${escapeHtml(generated.map((row) => row.coupon_code).join("\n"))}</textarea></section>` : ""}
 
-      <section class="admin-coupon-stats admin-flat-grid" aria-label="Coupon statistics">
-        ${[["Total", stats.total], ["Full course", stats.full_course], ["Module", stats.module_access], ["Redeemed", stats.redeemed], ["Students", stats.students], ["Unused", stats.unused], ["Expired", stats.expired], ["Disabled", stats.disabled], ["Rate", `${Number(stats.redemption_rate || 0)}%`]].map(([label, value]) => `<article><b>${escapeHtml(String(value ?? 0))}</b><span>${escapeHtml(label)}</span></article>`).join("")}
+      <section class="vc-coupon-stats" aria-label="Code statistics">
+        ${[["Codes made", stats.total], ["Redeemed", stats.redeemed], ["Not used yet", stats.unused], ["Redemption rate", `${Number(stats.redemption_rate || 0)}%`]].map(([label, value]) => `<article><b>${escapeHtml(String(value ?? 0))}</b><span>${escapeHtml(label)}</span></article>`).join("")}
+        <p class="vc-coupon-breakdown">${escapeHtml([
+          `${Number(stats.full_course) || 0} full course`,
+          `${Number(stats.module_access) || 0} module`,
+          `${Number(stats.students) || 0} students`,
+          `${Number(stats.expired) || 0} expired`,
+          `${Number(stats.disabled) || 0} disabled`,
+        ].join(" · "))}</p>
       </section>
 
       <section class="admin-coupon-report">
-        <div class="flex-between"><div><h3>Coupon records</h3><p class="subtle">Search previews, batches, student names, or MedBank IDs.</p></div></div>
+        <div class="flex-between"><div><h3>All codes</h3><p class="subtle">Search by the last four characters, batch name, student name or MedBank ID.</p></div></div>
         <form id="admin-course-coupon-filter-form" class="admin-coupon-filters" autocomplete="off">
           <input name="search" type="search" value="${escapeHtml(state.adminCourseCouponSearch)}" placeholder="Preview, batch, student ID..." />
           <select name="coupon_type"><option value="all">All types</option><option value="full_course" ${state.adminCourseCouponFilterType === "full_course" ? "selected" : ""}>Full course</option><option value="module_access" ${state.adminCourseCouponFilterType === "module_access" ? "selected" : ""}>Module</option></select>
           <select name="status"><option value="all">All statuses</option>${["unused", "used", "expired", "disabled"].map((status) => `<option value="${status}" ${state.adminCourseCouponStatus === status ? "selected" : ""}>${status[0].toUpperCase() + status.slice(1)}</option>`).join("")}</select>
+          <details class="vc-more-filters"${[state.adminCourseCouponCreatedFrom, state.adminCourseCouponCreatedTo, state.adminCourseCouponRedeemedFrom, state.adminCourseCouponRedeemedTo].some(Boolean) ? " open" : ""}>
+            <summary>Date filters</summary>
+            <div class="vc-more-filters-grid">
           <label>Created from<input name="created_from" type="date" value="${escapeHtml(state.adminCourseCouponCreatedFrom)}" /></label><label>Created to<input name="created_to" type="date" value="${escapeHtml(state.adminCourseCouponCreatedTo)}" /></label>
           <label>Redeemed from<input name="redeemed_from" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedFrom)}" /></label><label>Redeemed to<input name="redeemed_to" type="date" value="${escapeHtml(state.adminCourseCouponRedeemedTo)}" /></label>
+            </div>
+          </details>
           <button class="btn ghost admin-btn-sm" type="submit">Apply filters</button>
         </form>
         ${state.adminCourseCouponLoading ? `<div class="courses-empty"><span class="inline-loader"></span><p>Loading coupons...</p></div>` : state.adminCourseCouponError ? `<p class="form-error">${escapeHtml(state.adminCourseCouponError)}</p>` : renderedCoupons.length ? `<div class="table-wrap"><table><thead><tr><th>Preview</th><th>Type / modules</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead><tbody>${renderedCoupons.map((coupon) => `<tr><td><code>••••-${escapeHtml(coupon.code_preview)}</code></td><td>${escapeHtml(coupon.coupon_type === "full_course" ? "Full course" : (coupon.module_titles || []).join(", ") || "Modules")}</td><td><span class="status-badge is-${coupon.status === "used" ? "approved" : coupon.status === "unused" ? "pending" : "rejected"}">${escapeHtml(coupon.status)}</span></td><td>${escapeHtml(coupon.batch_name || "—")}</td><td>${escapeHtml(formatReportDateTime(coupon.created_at))}</td><td>${coupon.redeemed_public_user_id ? `<button class="btn ghost admin-btn-sm" type="button" data-action="admin-open-coupon-student" data-public-user-id="${escapeHtml(coupon.redeemed_public_user_id)}">${escapeHtml(coupon.redeemed_name || "Student")} · ${escapeHtml(coupon.redeemed_public_user_id)}</button><small>${escapeHtml(formatReportDateTime(coupon.redeemed_at))}</small>` : "—"}</td><td>${coupon.status === "unused" ? renderAdminRowMenu({ id: `coupon-${coupon.id}`, label: "More actions", items: [{ label: "Disable", attrs: `data-action="admin-disable-coupon" data-coupon-id="${escapeHtml(coupon.id)}"`, danger: true }] }) : ""}</td></tr>`).join("")}</tbody></table></div>${renderAdminCourseShowMoreButton(hiddenCouponCount, couponsLimitKey)}` : `<p class="subtle">No coupons match these filters.</p>`}
@@ -59178,7 +59344,7 @@ function renderSyllabusOutline(selectedCourse, rows) {
     return `
       <div class="course-builder-outline">
         <div class="course-builder-outline-title">
-          <span>Syllabus Outline</span>
+          <span>Modules &amp; lessons</span>
         </div>
         <div class="outline-empty-state">
           No course selected or created yet.
@@ -59260,9 +59426,9 @@ function renderSyllabusOutline(selectedCourse, rows) {
   return `
     <div class="course-builder-outline">
       <div class="course-builder-outline-title">
-        <span>Syllabus Outline</span>
-        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-select-builder-active" data-active-type="metadata" style="padding: 0.15rem 0.5rem; font-size: 0.75rem;">
-          Edit Course Info
+        <span>Modules &amp; lessons</span>
+        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-select-builder-active" data-active-type="metadata">
+          Course info
         </button>
       </div>
       <div class="course-builder-outline-scroll">
@@ -59340,10 +59506,10 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
               <line x1="12" y1="8" x2="12" y2="16"></line>
               <line x1="8" y1="12" x2="16" y2="12"></line>
             </svg>
-            Create platform course
+            Create a new course
           </h4>
         </div>
-        <p class="subtle" style="margin-top: -0.35rem; margin-bottom: 1.25rem;">This creates a Courses platform course only. It does not create or edit MCQ bank courses.</p>
+        <p class="subtle" style="margin-top: -0.35rem; margin-bottom: 1.25rem;">Start with the basics. After you create it, add modules and lessons here. (MCQ Bank subjects are separate.)</p>
         <div class="course-builder-grid compact">
           <label>Course name<input name="course_name" value="${escapeHtml(getAdminCourseBuilderFieldValue(dk, "course_name", ""))}" required /></label>
           <label>Course code<input value="Assigned when you create the course" readonly aria-readonly="true" tabindex="-1" /><small class="admin-course-code-hint">Assigned automatically</small></label>
@@ -59572,9 +59738,9 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
         </svg>
       </div>
-      <h3>Course Syllabus Editor</h3>
+      <h3>Pick something to edit</h3>
       <p class="subtle" style="max-width: 360px; margin: 0.5rem auto 0;">
-        Select any module, lesson, or course metadata from the syllabus outline on the left to begin editing, or use the quick actions below.
+        Choose a module or lesson on the left, or start with one of these.
       </p>
       <div class="editor-empty-shortcuts">
         <button class="editor-shortcut-btn" type="button" data-action="admin-select-builder-active" data-active-type="metadata">
@@ -59600,28 +59766,113 @@ function renderAdminCoursesComingSoonControl() {
   const loading = state.coursesComingSoonLoading && !state.coursesComingSoonLoadedAt;
   const saving = Boolean(state.coursesComingSoonSaving);
   return `
-    <form id="admin-courses-coming-soon-form" class="course-platform-section-note" style="align-items: center;">
-      <span>
-        <b>${enabled ? "Courses are coming soon for students" : "Courses are open for students"}</b>
-        <small class="subtle" style="display: block; margin-top: 0.2rem;">
-          ${enabled
-            ? "Students see Coming soon and cannot access Courses lessons, materials, progress, or requests."
-            : "Students can open the Courses learning portal normally."}
-        </small>
-        ${state.coursesComingSoonError ? `<small class="subtle" style="display: block; color: var(--danger); margin-top: 0.25rem;">${escapeHtml(state.coursesComingSoonError)}</small>` : ""}
-      </span>
-      <label class="toggle-switch-label" style="margin: 0; min-width: 250px;">
-        <input name="enabled" type="checkbox" class="toggle-switch-input" ${enabled ? "checked" : ""} ${loading || saving ? "disabled" : ""} />
-        <span class="toggle-switch-track" aria-hidden="true">
-          <span class="toggle-switch-thumb"></span>
-        </span>
-        <span class="toggle-switch-text">
-          <b>${enabled ? "Coming soon is ON" : "Coming soon is OFF"}</b><br />
-          <span class="subtle">${saving ? "Saving..." : loading ? "Checking status..." : "Admin access stays open."}</span>
-        </span>
+    <form id="admin-courses-coming-soon-form" class="vc-availability">
+      <div class="vc-availability-state ${enabled ? "is-paused" : "is-open"}">
+        <span class="vc-availability-dot" aria-hidden="true"></span>
+        <div>
+          <b>${enabled ? "Paused — students see “Coming soon”" : "Open — students can watch their courses"}</b>
+          <p class="subtle">${enabled
+            ? "Lessons, materials, progress and join requests are closed to students until you open video courses again."
+            : "Students reach their courses, lessons and materials as normal."}</p>
+          ${state.coursesComingSoonError ? `<p class="form-error">${escapeHtml(state.coursesComingSoonError)}</p>` : ""}
+        </div>
+      </div>
+      <label class="vc-switch">
+        <input name="enabled" type="checkbox" ${enabled ? "checked" : ""} ${loading || saving ? "disabled" : ""} />
+        <span><b>Pause video courses for students</b><small>${saving ? "Saving…" : loading ? "Checking the current setting…" : "Tick, then Save. Admins keep full access either way."}</small></span>
       </label>
-      <button class="btn admin-btn-sm ${saving ? "is-loading" : ""}" type="submit" ${loading || saving ? "disabled" : ""}>Save availability</button>
+      <div class="vc-savebar">
+        <span class="subtle">The MCQ Bank is not affected.</span>
+        <button class="vc-btn is-primary${saving ? " is-busy" : ""}" type="submit" ${loading || saving ? "disabled" : ""}><span>${saving ? "Saving…" : "Save"}</span></button>
+      </div>
     </form>
+  `;
+}
+
+// One course's details, opened from "Details" in All courses. Field names
+// and the form id are what adminSaveCourseMetadata and the draft keeper read,
+// so they stay; the layout is new: grouped fields, one Save, and Delete set
+// apart where it cannot be hit by accident.
+function renderAdminCourseDetailsPanel(selectedCourse) {
+  const selectedCourseId = String(selectedCourse?.id || "").trim();
+  const title = getCoursePlatformCourseTitle(selectedCourse);
+  return `
+    <section class="vc-details" aria-labelledby="vc-details-title">
+      <header class="vc-details-head">
+        <div>
+          <p class="vc-eyebrow">Course details</p>
+          <h4 id="vc-details-title">${escapeHtml(title)} ${renderAdminCourseStatusPill(selectedCourse)}</h4>
+        </div>
+        <div class="vc-details-head-actions">
+          ${renderAdminVideoCourseButton({ label: "Open content", icon: "builder", ghost: true, attrs: `data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(selectedCourseId)}"` })}
+          <button type="button" class="vc-close" data-action="admin-close-course-details" aria-label="Close course details" title="Close">×</button>
+        </div>
+      </header>
+
+      <form id="admin-course-metadata-form" class="vc-details-form">
+        <fieldset class="vc-fieldset">
+          <legend>Basics</legend>
+          <div class="vc-grid">
+            <label class="vc-span-2">Course name<input name="course_name" value="${escapeHtml(selectedCourse.course_name || "")}" required /></label>
+            <label>Course code<input name="course_code" value="${escapeHtml(selectedCourse.course_code || "")}" readonly aria-readonly="true" /><small>Assigned automatically</small></label>
+            <label>Price ($)<input name="price" type="number" min="0" step="0.01" value="${escapeHtml(String(Number(selectedCourse.price) || 0))}" /></label>
+            <label>Level<input name="level" placeholder="e.g. Year 3" value="${escapeHtml(selectedCourse.level || "")}" /></label>
+            <label>Estimated duration<input name="estimated_duration" placeholder="e.g. 6 weeks" value="${escapeHtml(selectedCourse.estimated_duration || "")}" /></label>
+            <label class="vc-span-2">Description<textarea name="description" rows="3">${escapeHtml(selectedCourse.description || "")}</textarea></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="vc-fieldset">
+          <legend>Status &amp; joining</legend>
+          <div class="vc-grid">
+            <label class="vc-switch"><input type="checkbox" name="is_published" ${selectedCourse.is_published ? "checked" : ""} /><span><b>Published</b><small>Students can find it. Off keeps it as a draft.</small></span></label>
+            <label class="vc-switch"><input type="checkbox" name="is_active" ${selectedCourse.is_active !== false ? "checked" : ""} /><span><b>Active</b><small>Off hides it everywhere without deleting anything.</small></span></label>
+            <label>How students join
+              <select name="enrollment_mode">
+                <option value="request" ${normalizeCoursePlatformMode(selectedCourse.enrollment_mode) === "request" ? "selected" : ""}>They ask, an admin approves</option>
+                <option value="assigned" ${normalizeCoursePlatformMode(selectedCourse.enrollment_mode) === "assigned" ? "selected" : ""}>Only students an admin adds</option>
+              </select>
+            </label>
+            <label class="vc-switch">
+              <input type="hidden" name="progression_mode_field" value="1" />
+              <input type="checkbox" name="progression_sequential" ${selectedCourse.progression_mode === "sequential" ? "checked" : ""} />
+              <span><b>Unlock lessons in order</b><small>Each lesson (and its required quiz) must be finished before the next opens. Activation codes still decide which modules a student owns.</small></span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="vc-fieldset">
+          <legend>Cover &amp; intro</legend>
+          <div class="vc-grid">
+            ${renderAdminCourseCoverUploadField("admin-course-metadata-form_" + selectedCourseId, selectedCourse.cover_image_url || "")}
+            <label>Intro video URL<input name="intro_video_url" placeholder="Optional" value="${escapeHtml(selectedCourse.intro_video_url || "")}" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="vc-fieldset">
+          <legend>Instructor</legend>
+          <div class="vc-grid">
+            <div class="vc-span-2">${renderAdminInstructorPicker(selectedCourse.instructor_name || "", selectedCourse.owner_id || "")}</div>
+            <label class="vc-span-2">Instructor bio<textarea name="instructor_bio" rows="2">${escapeHtml(selectedCourse.instructor_bio || "")}</textarea></label>
+          </div>
+        </fieldset>
+
+        <div class="vc-savebar">
+          <span class="subtle">Changes are saved for students as soon as you press Save.</span>
+          <button class="vc-btn is-primary" type="submit"><span>Save changes</span></button>
+        </div>
+      </form>
+
+      ${renderAdminCourseAudienceForm(selectedCourse)}
+
+      <section class="vc-danger" aria-label="Delete course">
+        <div>
+          <b>Delete this course</b>
+          <p class="subtle">Removes the course, its modules and lessons, and every student's access. This cannot be undone.</p>
+        </div>
+        <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
+      </section>
+    </section>
   `;
 }
 
@@ -59648,12 +59899,10 @@ function adminRenderCourseBuilder(courseId) {
     state.adminCourseBuilderCourseId = selectedCourse.id;
   }
 
-  // Initialize selection states
-  if (!selectedCourse) {
-    state.adminCourseBuilderActiveType = "course-create";
-    state.adminCourseBuilderActiveId = "";
-    state.adminCourseBuilderActiveParentId = "";
-  }
+  // No course yet shows the create form by itself (renderFocusedEditorPanel
+  // checks `!selectedCourse`). Writing "course-create" into state here used to
+  // stick: a page opened while courses were still loading kept showing
+  // "Create course" next to the course you had picked.
 
   const selectedCourseId = String(selectedCourse?.id || "").trim();
   const rows = getAdminCourseBuilderCourseRows(selectedCourseId);
@@ -59662,95 +59911,56 @@ function adminRenderCourseBuilder(courseId) {
       && String(request?.status || "").trim() === "pending",
   ).length;
   const activePlatformSection = getAdminCoursePlatformSection();
-  const showsCourseContextBar = ["builder", "enrollments", "suggestions", "announcements"].includes(activePlatformSection);
 
-  const refreshPlatformActionHtml = renderAdminIconButton({
-    icon: "refresh",
-    label: "Refresh platform",
-    attrs: `data-action="admin-courses-platform-refresh"`,
-    busy: Boolean(state.adminCoursesPlatformLoading),
-  });
-  const newCourseActionHtml = renderAdminIconButton({
-    icon: "plus",
-    label: "New course",
-    attrs: `data-action="admin-create-platform-course"`,
-    variant: "primary",
-  });
+  const showsCourseContextBar = ["builder", "enrollments", "coupons", "announcements"].includes(activePlatformSection);
   const pendingApprovalsCount = (courses || []).filter((course) => String(course?.review_status || "").trim() === "pending").length;
+  const allPendingRequestCount = (state.adminCoursesPlatformRequests || [])
+    .filter((request) => String(request?.status || "").trim() === "pending").length;
+  const activeTab = getAdminVideoCourseTab(activePlatformSection);
 
-  let headerTitle = "Video Courses";
-  let headerCount = null;
-  let headerActions = refreshPlatformActionHtml;
-  let headerNotes = [];
-  if (activePlatformSection === "overview") {
-    headerTitle = "Catalog";
-    headerCount = courses.length;
-    headerActions = `${refreshPlatformActionHtml}${newCourseActionHtml}`;
-    headerNotes = [
-      "Every course students can see, with modules, lessons, and enrollment counts.",
-      "Select a course below to edit its details, cover, instructor, status, and enrollment mode.",
-    ];
-  } else if (activePlatformSection === "builder") {
-    headerTitle = "Course Builder";
-    headerActions = `${refreshPlatformActionHtml}${newCourseActionHtml}`;
-    headerNotes = ["Create new student courses, then build their modules, video lessons, and lesson materials."];
-  } else if (activePlatformSection === "approvals") {
-    headerTitle = "Course approvals";
-    headerCount = pendingApprovalsCount;
-    headerNotes = [
-      "Creators build courses in the MedBank app and submit them here for review.",
-      "A course stays hidden from students until it is approved and published.",
-    ];
-  } else if (activePlatformSection === "enrollments") {
-    headerTitle = "Enrolled users";
-    headerCount = rows.enrollments.length;
-    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Enroll users", attrs: `data-action="admin-open-course-enrollment-picker"`, variant: "primary" }) : ""}`;
-    headerNotes = [
-      "Choose a course above, then review or search its enrolled students.",
-      "Use Enroll users to manually add students to this course.",
-    ];
-  } else if (activePlatformSection === "coupons") {
-    headerTitle = "Activation coupons";
-    headerCount = state.adminCourseCouponStats ? Number(state.adminCourseCouponStats.total) || 0 : (state.adminCourseCoupons || []).length;
-    headerActions = `${renderAdminIconButton({ icon: "refresh", label: "Refresh coupons", attrs: `data-action="admin-refresh-coupons"`, busy: Boolean(state.adminCourseCouponLoading) })}${renderAdminIconButton({ icon: "download", label: "Export report", attrs: `data-action="admin-export-coupons"` })}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Generate coupons", attrs: `data-action="admin-open-course-coupon-generator"`, variant: "primary" }) : ""}`;
-    headerNotes = [
-      "Generate one-time activation codes and track redemptions for a course.",
-      "Plain codes are shown once — MedBank stores only a SHA-256 hash and a four-character preview.",
-    ];
-  } else if (activePlatformSection === "suggestions") {
-    headerTitle = "Suggestions";
-    headerCount = (state.adminCoursesPlatformSuggestions || []).length;
-    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "Add suggestion", attrs: `data-action="admin-open-course-suggestion-editor"`, variant: "primary" }) : ""}`;
-    headerNotes = [
-      "Choose which courses appear on the Course Suggestions page.",
-      "Feature important courses first for students by year and semester.",
-    ];
-  } else if (activePlatformSection === "announcements") {
-    headerTitle = "Announcements";
-    headerCount = (state.adminCoursesPlatformAnnouncements || []).length;
-    headerActions = `${refreshPlatformActionHtml}${selectedCourse ? renderAdminIconButton({ icon: "plus", label: "New announcement", attrs: `data-action="admin-open-course-announcement-composer"`, variant: "primary" }) : ""}`;
-    headerNotes = [
-      "Push announcements to enrolled students from the selected course.",
-      "Browse posts from every course in the feed below.",
-    ];
-  } else if (activePlatformSection === "requests") {
-    headerTitle = "Enrollment requests";
-    headerCount = (state.adminCoursesPlatformRequests || []).length;
-    headerNotes = [
-      "Approve or reject requests so courses move into a student's My Courses page.",
-      "Filter by status and expand a course group to review its requests.",
-    ];
-  } else if (activePlatformSection === "availability") {
-    headerTitle = "Course availability";
-    headerNotes = ["Open or pause the student Courses learning portal without changing MCQ Bank access."];
+  // One labelled refresh, and at most two named actions, instead of a row of
+  // bare icons whose "+" meant something different on every tab.
+  const refreshAction = activePlatformSection === "coupons"
+    ? { label: "Refresh", attrs: 'data-action="admin-refresh-coupons"', busy: Boolean(state.adminCourseCouponLoading) }
+    : activePlatformSection === "availability"
+      ? null
+      : { label: "Refresh", attrs: 'data-action="admin-courses-platform-refresh"', busy: Boolean(state.adminCoursesPlatformLoading) };
+  const headerActions = [];
+  if (activePlatformSection === "overview" || activePlatformSection === "builder") {
+    headerActions.push({ label: "New course", icon: "plus", attrs: 'data-action="admin-create-platform-course"', primary: true });
+  } else if (activePlatformSection === "enrollments" && selectedCourse) {
+    headerActions.push({ label: "Enroll students", icon: "plus", attrs: 'data-action="admin-open-course-enrollment-picker"', primary: true });
+  } else if (activePlatformSection === "coupons" && selectedCourse) {
+    headerActions.push({ label: "Export report", icon: "download", attrs: 'data-action="admin-export-coupons"' });
+    headerActions.push({ label: "Generate codes", icon: "plus", attrs: 'data-action="admin-open-course-coupon-generator"', primary: true });
+  } else if (activePlatformSection === "suggestions" && selectedCourse) {
+    headerActions.push({ label: "Add suggestion", icon: "plus", attrs: 'data-action="admin-open-course-suggestion-editor"', primary: true });
+  } else if (activePlatformSection === "announcements" && selectedCourse) {
+    headerActions.push({ label: "New announcement", icon: "plus", attrs: 'data-action="admin-open-course-announcement-composer"', primary: true });
   }
-  const coursesPlatformHeaderHtml = renderAdminPageHeader({
-    id: `video-courses-${activePlatformSection}`,
-    title: headerTitle,
-    count: headerCount,
-    actions: headerActions,
-    notes: headerNotes,
-  });
+  const headerCount = {
+    overview: courses.length,
+    approvals: pendingApprovalsCount,
+    enrollments: rows.enrollments.length,
+    coupons: state.adminCourseCouponStats ? Number(state.adminCourseCouponStats.total) || 0 : null,
+    suggestions: (state.adminCoursesPlatformSuggestions || []).length,
+    announcements: (state.adminCoursesPlatformAnnouncements || []).length,
+    requests: allPendingRequestCount,
+  }[activePlatformSection];
+  const coursesPlatformHeaderHtml = `
+    <header class="vc-head">
+      <div class="vc-head-text">
+        <p class="vc-eyebrow">Video courses · ${escapeHtml(activeTab.group)}</p>
+        <h3>${escapeHtml(activeTab.title)}${headerCount === null || headerCount === undefined ? "" : ` <span class="vc-head-count">${escapeHtml(String(headerCount))}</span>`}</h3>
+        <p class="vc-head-desc">${escapeHtml(activeTab.description)}</p>
+      </div>
+      <div class="vc-head-actions">
+        ${refreshAction ? renderAdminVideoCourseButton({ ...refreshAction, icon: "refresh", ghost: true }) : ""}
+        ${headerActions.map((action) => renderAdminVideoCourseButton(action)).join("")}
+      </div>
+    </header>
+    ${renderAdminVideoCourseTabs(activePlatformSection, { approvals: pendingApprovalsCount, requests: allPendingRequestCount, overview: courses.length })}
+  `;
 
   return `
     <section class="card admin-section courses-admin-builder" id="admin-courses-platform-builder">
@@ -59765,126 +59975,9 @@ function adminRenderCourseBuilder(courseId) {
         ${activePlatformSection === "overview" ? `
           ${renderAdminCourseStatsCards()}
           ${renderAdminCourseTable(courses, selectedCourseId, { showStats: false })}
-          ${selectedCourse ? `
-            <div class="course-platform-section-note">
-              <b>Course metadata</b>
-              <span>Select a course in the table above to edit its details.</span>
-            </div>
-            <form id="admin-course-metadata-form" class="course-builder-form" style="background: transparent; border: none; padding: 0; gap: 1.5rem;">
-            <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid var(--line); padding-bottom: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.75rem;">
-              <h4 style="margin: 0; border: none; padding: 0;">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.25rem; vertical-align: middle;">
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                </svg>
-                Edit Course Details
-              </h4>
-              <div class="stack">
-                <button class="btn ghost admin-btn-sm" type="button" data-action="admin-course-platform-section" data-section="builder" data-course-id="${escapeHtml(selectedCourseId)}">Open in Course Builder</button>
-                <button class="btn admin-btn-sm" type="submit">Save course metadata</button>
-                <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
-              </div>
-            </div>
-
-            <div class="course-metadata-groups">
-              <!-- Primary Information Card -->
-              <div class="course-metadata-card">
-                <div class="course-metadata-card-header">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="16" x2="12" y2="12"></line>
-                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                  </svg>
-                  Primary Information
-                </div>
-                <div class="course-metadata-card-body grid-2col">
-                  <label>Course name<input name="course_name" value="${escapeHtml(selectedCourse.course_name || "")}" required /></label>
-                  <label>Course code<input name="course_code" value="${escapeHtml(selectedCourse.course_code || "")}" readonly aria-readonly="true" /></label>
-                  <label>Level<input name="level" value="${escapeHtml(selectedCourse.level || "")}" /></label>
-                  <label>Estimated duration<input name="estimated_duration" value="${escapeHtml(selectedCourse.estimated_duration || "")}" /></label>
-                  <label>Price ($)<input name="price" type="number" min="0" step="0.01" value="${escapeHtml(selectedCourse.price || 0)}" /></label>
-                </div>
-              </div>
-
-              <!-- Academic & Status Card -->
-              <div class="course-metadata-card">
-                <div class="course-metadata-card-header">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M22 10v6M2 10l10-5 10 5-10 5z"></path>
-                    <path d="M6 12v5c0 2 2 3 6 3s6-1 6-3v-5"></path>
-                  </svg>
-                  Academic Settings & Status
-                </div>
-                <div class="course-metadata-card-body grid-2col">
-                  <label>Enrollment mode
-                    <select name="enrollment_mode">
-                      <option value="assigned" ${normalizeCoursePlatformMode(selectedCourse.enrollment_mode) === "assigned" ? "selected" : ""}>Assigned</option>
-                      <option value="request" ${normalizeCoursePlatformMode(selectedCourse.enrollment_mode) === "request" ? "selected" : ""}>Request only</option>
-                    </select>
-                  </label>
-                  <div style="display: flex; gap: 1.5rem; align-items: center; margin-top: 1.25rem; flex-wrap: wrap;">
-                    <label class="course-builder-check" style="margin: 0;"><input type="checkbox" name="is_published" ${selectedCourse.is_published ? "checked" : ""} /> Published course</label>
-                    <label class="course-builder-check" style="margin: 0;"><input type="checkbox" name="is_active" ${selectedCourse.is_active !== false ? "checked" : ""} /> Active course</label>
-                  </div>
-                  ${renderAdminCourseProgressionField(selectedCourse.progression_mode === "sequential" ? "checked" : "")}
-                </div>
-              </div>
-
-              <!-- Media & Cover Card -->
-              <div class="course-metadata-card">
-                <div class="course-metadata-card-header">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                    <polyline points="21 15 16 10 5 21"></polyline>
-                  </svg>
-                  Media & Cover
-                </div>
-                <div class="course-metadata-card-body grid-2col">
-                  ${renderAdminCourseCoverUploadField("admin-course-metadata-form_" + selectedCourseId, selectedCourse.cover_image_url || "")}
-                  <label>Intro video URL<input name="intro_video_url" value="${escapeHtml(selectedCourse.intro_video_url || "")}" /></label>
-                </div>
-              </div>
-
-              <!-- Instructor Info Card -->
-              <div class="course-metadata-card">
-                <div class="course-metadata-card-header">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                    <circle cx="12" cy="7" r="4"></circle>
-                  </svg>
-                  Instructor Information
-                </div>
-                <div class="course-metadata-card-body" style="display: flex; flex-direction: column; gap: 1rem;">
-                  ${renderAdminInstructorPicker(selectedCourse.instructor_name || "", selectedCourse.owner_id || "")}
-                  <label>Instructor bio<textarea name="instructor_bio" rows="3">${escapeHtml(selectedCourse.instructor_bio || "")}</textarea></label>
-                </div>
-              </div>
-
-              <!-- Course Description Card -->
-              <div class="course-metadata-card">
-                <div class="course-metadata-card-header">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                  </svg>
-                  Course Description
-                </div>
-                <div class="course-metadata-card-body">
-                  <label>Description<textarea name="description" rows="4">${escapeHtml(selectedCourse.description || "")}</textarea></label>
-                </div>
-              </div>
-            </div>
-
-            <div class="stack" style="border-top: 2px solid var(--line); padding-top: 1.25rem;">
-              <button class="btn admin-btn-sm" type="submit">Save course metadata</button>
-              <button class="btn danger admin-btn-sm" type="button" data-action="admin-delete-platform-course" data-course-id="${escapeHtml(selectedCourseId)}">Delete course</button>
-            </div>
-            </form>
-            ${renderAdminCourseAudienceForm(selectedCourse)}
-          ` : renderAdminCoursesEmptyState()}
+          ${selectedCourse && String(state.adminCourseDetailsOpenId || "") === selectedCourseId
+            ? renderAdminCourseDetailsPanel(selectedCourse)
+            : courses.length ? `<p class="vc-hint">${renderAdminVideoCourseIcon("pencil", 15)}<span>Choose <b>Details</b> on a course to edit its name, price, cover, instructor, status and audience.</span></p>` : renderAdminCoursesEmptyState()}
         ` : ""}
 
         ${activePlatformSection === "suggestions" ? renderAdminGlobalSuggestions() : ""}
@@ -60321,6 +60414,7 @@ function wireAdminCoursesPlatformBuilder() {
     }
 
     if (target.id === "admin-course-builder-course-select") {
+      syncAdminCouponCourse(String(target.value || ""));
       state.adminCourseBuilderCourseId = String(target.value || "");
       state.adminCourseBuilderPreview = false;
       state.adminCourseBuilderActiveType = null;
@@ -60442,10 +60536,17 @@ function wireAdminCoursesPlatformBuilder() {
       state.adminCourseBuilderActiveParentId = "";
       state.skipNextRouteAnimation = true;
       render();
+    } else if (action === "admin-close-course-details") {
+      state.adminCourseDetailsOpenId = "";
+      state.skipNextRouteAnimation = true;
+      render();
     } else if (action === "admin-select-course-platform-course") {
       const courseId = button.getAttribute("data-course-id") || "";
       if (!isUuidValue(courseId)) return;
+      if (courseId !== state.adminCourseBuilderCourseId) syncAdminCouponCourse(courseId);
       state.adminCourseBuilderCourseId = courseId;
+      // Choosing a course in All courses opens its details.
+      state.adminCourseDetailsOpenId = courseId;
       state.adminCourseBuilderActiveType = null;
       state.adminCourseBuilderActiveId = "";
       state.adminCourseBuilderActiveParentId = "";
