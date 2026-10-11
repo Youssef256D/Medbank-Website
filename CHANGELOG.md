@@ -9,6 +9,31 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-11 — Video Courses admin, rebuilt for clarity
+- **Clear names, grouped by job.** The nine sections are now *All courses ·
+  Course content · Review queue* (Courses), *Students · Join requests ·
+  Activation codes* (Students) and *Announcements · Suggestions · Open /
+  pause* (Reach students), in the sidebar and in a new in-page tab bar with
+  the same groups. Waiting reviews and join requests show a count.
+- **Every page says what it is for** in one always-visible line, and its
+  buttons say what they do (*Refresh*, *New course*, *Enroll students*,
+  *Generate codes*…) instead of bare ↻ / + / ⓘ icons.
+- **"Working on" course card** on every per-course tab (content, students,
+  codes, announcements): switch course, see its status and counts, and jump
+  to the same course's other tabs. Activation codes now follow this course
+  (they used to keep showing the previous course's codes).
+- **All courses:** status pills, *Details / Content / Students* on every
+  row; details open only for the course you pick, grouped into Basics,
+  Status & joining, Cover & intro, Instructor and Audience, with one Save
+  and *Delete* set apart. The audience choice is fixed (it rendered as
+  stray radio dots).
+- **Course content** no longer shows *Create course* next to a course you
+  picked when the page was opened before courses loaded.
+- **Activation codes:** four headline numbers and a breakdown line instead
+  of nine tiles; date filters fold away. **Open / pause** reads as a plain
+  status with one switch.
+No backend change. Static cache bust: `2026-10-11.04`.
+
 ### 2026-10-11 — Pick organizations when adding a creator
 The *Add user* dialog now shows an **Organizations** checklist when the role
 is Creator, and requires at least one. Before, the website never sent any, so

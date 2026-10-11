@@ -23518,3 +23518,441 @@ body.theme-dark .map-lang button[aria-pressed="true"] { background: #f5f5f5; col
   gap: 0.35rem;
   padding-left: 1.5rem;
 }
+
+/* ── Video Courses admin (2026-10-11 redesign) ────────────────────────────
+   Header with a plain description and labelled actions, grouped section
+   tabs, the "Working on" course card, row actions, and the course details
+   panel. Built on the theme tokens so dark mode follows. */
+.courses-admin-builder .vc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1rem;
+}
+.vc-head-text { min-width: 0; flex: 1 1 22rem; }
+.vc-eyebrow {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+.vc-head h3 {
+  margin: 0;
+  font-size: 1.55rem;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.vc-head-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.vc-head-desc { margin: 0.35rem 0 0; color: var(--muted); max-width: 46rem; line-height: 1.45; }
+.vc-head-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+
+.vc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  white-space: nowrap;
+}
+.vc-btn:hover { border-color: var(--brand); box-shadow: var(--shadow-soft); }
+.vc-btn:focus-visible { outline: 3px solid var(--brand-soft); outline-offset: 2px; }
+.vc-btn.is-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.vc-btn.is-primary:hover { background: var(--brand-strong); border-color: var(--brand-strong); }
+.vc-btn.is-ghost { background: transparent; }
+.vc-btn.is-busy { opacity: 0.7; cursor: progress; }
+.vc-btn.is-busy .vc-icon { animation: vc-spin 0.9s linear infinite; }
+@keyframes vc-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .vc-btn.is-busy .vc-icon { animation: none; } }
+
+/* Section tabs: three labelled columns (Courses · Students · Reach
+   students), stacked on narrow windows. */
+.vc-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 0.6rem 0;
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+.vc-tab-group { display: grid; align-content: start; gap: 0.3rem; min-width: 0; padding: 0 0.6rem; }
+.vc-tab-group + .vc-tab-group { border-left: 1px solid var(--line); }
+.vc-tab-group-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 0.5rem;
+}
+.vc-tab-row { display: grid; gap: 0.15rem; }
+.vc-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.93rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.vc-tab > span:not(.vc-tab-badge) { flex: 1 1 auto; min-width: 0; }
+.vc-tab .vc-icon { color: var(--muted); flex: none; }
+.vc-tab:hover { background: var(--surface-strong); border-color: var(--line); }
+.vc-tab:focus-visible { outline: 3px solid var(--brand-soft); outline-offset: 1px; }
+.vc-tab.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
+.vc-tab.is-active .vc-icon { color: #fff; }
+.vc-tab-badge {
+  flex: none;
+  min-width: 1.35rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #3a2108;
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1.35rem;
+  text-align: center;
+}
+/* Below this width the admin sidebar turns into a horizontal rail listing
+   the same sections in the same order, so the in-page tabs would only
+   repeat it. */
+@media (max-width: 960px) {
+  .vc-tabs { display: none; }
+}
+
+/* Status pills used in the table, the course card and the details panel. */
+.vc-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.vc-pill.is-good { background: rgba(43, 147, 72, 0.14); color: var(--good); }
+.vc-pill.is-warn { background: rgba(244, 162, 89, 0.22); color: #8a4b0f; }
+.vc-pill.is-danger { background: rgba(196, 58, 58, 0.12); color: var(--danger); }
+.vc-pill.is-muted { background: var(--line); color: var(--muted); }
+body.theme-dark .vc-pill.is-warn { color: var(--accent); }
+
+/* "Working on" course card. */
+.vc-course-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.9rem 1rem;
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow-soft);
+}
+.vc-course-avatar {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+.vc-course-main { min-width: 0; display: grid; gap: 0.3rem; }
+.vc-course-switch { display: grid; gap: 0.1rem; margin: 0; }
+.vc-course-switch .vc-eyebrow { margin: 0; }
+.vc-course-switch select {
+  max-width: 100%;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  padding: 0.15rem 1.8rem 0.15rem 0.3rem;
+  margin-left: -0.3rem;
+  cursor: pointer;
+}
+.vc-course-switch select:hover,
+.vc-course-switch select:focus { border-color: var(--line-strong); background-color: var(--surface-soft); }
+.vc-course-facts {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.vc-course-facts code { font-size: 0.8rem; color: var(--ink); }
+.vc-course-jumps { display: flex; flex-wrap: wrap; gap: 0.3rem; justify-content: flex-end; }
+.vc-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.25rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vc-jump:hover { border-color: var(--brand); color: var(--brand-strong); }
+.vc-jump.is-active { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-strong); }
+body.theme-dark .vc-jump:hover,
+body.theme-dark .vc-jump.is-active { color: var(--ink); }
+@media (max-width: 900px) {
+  .vc-course-card { grid-template-columns: auto minmax(0, 1fr); }
+  .vc-course-jumps { grid-column: 1 / -1; justify-content: flex-start; }
+}
+
+/* All courses table additions. */
+.admin-course-table td small { display: block; color: var(--muted); }
+.admin-course-table .vc-num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-course-table .vc-actions-col { width: 1%; }
+.vc-row-actions { white-space: nowrap; text-align: right; }
+.vc-row-btn {
+  min-height: 2rem;
+  padding: 0.25rem 0.65rem;
+  margin-left: 0.25rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vc-row-btn:hover { border-color: var(--brand); color: var(--brand-strong); }
+body.theme-dark .vc-row-btn:hover { color: var(--ink); }
+.vc-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 0;
+  padding: 0.85rem 1rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+}
+
+/* Course details panel. */
+.vc-details {
+  margin-top: 1.25rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 1rem;
+}
+.vc-details-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+.vc-details-head h4 { margin: 0; font-size: 1.25rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.vc-details-head-actions { display: flex; align-items: center; gap: 0.5rem; }
+.vc-close {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.vc-close:hover { color: var(--ink); border-color: var(--line-strong); }
+.vc-details-form { display: grid; gap: 1rem; margin: 0; padding: 0; background: none; border: 0; }
+.vc-fieldset {
+  margin: 0;
+  padding: 1rem 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.vc-fieldset legend {
+  padding: 0 0.4rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+.vc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.85rem 1rem; }
+.vc-grid > label,
+.vc-grid > div > label { display: grid; align-content: start; gap: 0.3rem; font-weight: 600; font-size: 0.88rem; margin: 0; }
+.vc-grid { align-items: start; }
+.vc-org-list > p { grid-column: 1 / -1; margin: 0; }
+.vc-grid small { color: var(--muted); font-weight: 400; }
+.vc-span-2 { grid-column: 1 / -1; }
+@media (max-width: 720px) { .vc-grid { grid-template-columns: minmax(0, 1fr); } }
+.vc-grid > label.vc-switch,
+.vc-choice,
+.vc-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  font-weight: 400;
+  cursor: pointer;
+}
+.vc-switch input,
+.vc-choice input,
+.vc-check input { width: 1.1rem; height: 1.1rem; margin: 0.15rem 0 0; flex: none; accent-color: var(--brand); }
+.vc-switch span,
+.vc-choice span { display: grid; gap: 0.1rem; }
+.vc-switch small,
+.vc-choice small { color: var(--muted); font-size: 0.82rem; }
+.vc-switch,
+.vc-choice {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.vc-choice:has(input:checked),
+.vc-switch:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+.vc-choice:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
+.vc-choice-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+@media (max-width: 720px) { .vc-choice-row { grid-template-columns: minmax(0, 1fr); } }
+.vc-org-list.admin-course-audience-orgs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.45rem 1rem;
+  padding: 0.85rem 0 0;
+}
+.vc-savebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+}
+.vc-details-form > .vc-savebar { position: sticky; bottom: 0.75rem; z-index: 2; box-shadow: var(--shadow-soft); background: var(--surface-strong); }
+.vc-danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(196, 58, 58, 0.35);
+  border-radius: var(--radius-md);
+}
+.vc-danger p { margin: 0.2rem 0 0; }
+
+/* Activation codes: four headline numbers and a one-line breakdown instead
+   of nine equal tiles; date filters folded away until needed. */
+.vc-coupon-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1.25rem;
+}
+.vc-coupon-stats article {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+.vc-coupon-stats b { font-size: 1.6rem; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.vc-coupon-stats span { color: var(--muted); font-size: 0.85rem; }
+.vc-coupon-breakdown { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 0.85rem; }
+@media (max-width: 720px) { .vc-coupon-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.admin-coupon-filters .vc-more-filters { grid-column: 1 / -1; }
+.vc-more-filters summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--brand-strong);
+  padding: 0.35rem 0;
+}
+body.theme-dark .vc-more-filters summary { color: var(--brand); }
+.vc-more-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+}
+.vc-more-filters-grid label { display: grid; gap: 0.3rem; margin: 0; }
+
+/* Open / pause video courses. */
+.vc-availability { display: grid; gap: 1rem; max-width: 44rem; }
+.vc-availability-state {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+.vc-availability-state p { margin: 0.25rem 0 0; }
+.vc-availability-dot { width: 0.8rem; height: 0.8rem; margin-top: 0.35rem; border-radius: 999px; flex: none; background: var(--good); box-shadow: 0 0 0 4px rgba(43, 147, 72, 0.18); }
+.vc-availability-state.is-paused .vc-availability-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(244, 162, 89, 0.25); }
+.vc-availability > .vc-switch { display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; }
+
+/* Dark theme is monochrome (--brand is near-black there), so the brand
+   accents above would disappear: primary actions and the active tab go
+   light-on-dark, and brand-coloured text uses the muted ink. */
+body.theme-dark .vc-eyebrow,
+body.theme-dark .vc-tab-group-label { color: var(--muted); }
+body.theme-dark .vc-head-count { background: rgba(255, 255, 255, 0.12); color: var(--ink); }
+body.theme-dark .vc-btn.is-primary,
+body.theme-dark .vc-tab.is-active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface-strong);
+}
+body.theme-dark .vc-btn.is-primary:hover { background: #ffffff; border-color: #ffffff; }
+body.theme-dark .vc-tab.is-active .vc-icon { color: var(--surface-strong); }
+body.theme-dark .vc-course-avatar { background: rgba(255, 255, 255, 0.1); color: var(--ink); }
+body.theme-dark .vc-tab-badge { background: #f4a259; color: #3a2108; }
+body.theme-dark .vc-choice:has(input:checked),
+body.theme-dark .vc-switch:has(input:checked) { border-color: var(--line-strong); }
