@@ -304,6 +304,9 @@ const BACKGROUND_SYNC_INTERVAL_MS = 15000;
 const ADMIN_QUESTION_BACKGROUND_REFRESH_MS = 180000;
 const ADMIN_BACKUP_RESTORE_CHECK_COOLDOWN_MS = 5 * 60 * 1000;
 const STUDENT_DATA_REFRESH_MS = 30000;
+// Used instead of STUDENT_DATA_REFRESH_MS while every realtime channel is live:
+// content/session/refresh-trigger changes then arrive as events.
+const STUDENT_DATA_REFRESH_REALTIME_LIVE_MS = 2 * 60 * 1000;
 const STUDENT_FULL_DATA_REFRESH_MS = 10 * 60 * 1000;
 // Fallback only: this poll runs while the session realtime channel is down,
 // which is exactly when the backend is struggling. Each tick can pull a
@@ -317,6 +320,9 @@ const STUDENT_DATA_REFRESH_BACKOFF_MAX_MS = 5 * 60 * 1000;
 const STUDENT_FORCE_REFRESH_POLL_MS = 15000;
 const STUDENT_BACKGROUND_SYNC_POLL_MS = 10000;
 const STUDENT_ACCESS_POLL_MS = 6000;
+// While the profile-access realtime channel is subscribed it delivers approval
+// changes; the 6s poll then only re-checks this often as a safety net.
+const STUDENT_ACCESS_REALTIME_SAFETY_CHECK_MS = 2 * 60 * 1000;
 const STUDENT_ACCESS_LOG_THROTTLE_MS = 60000;
 const ADMIN_APPROVED_ACCESS_REPAIR_COOLDOWN_MS = 60000;
 const AUTO_STUDENT_REFRESH_SIGNAL_COOLDOWN_MS = 500;
@@ -1437,6 +1443,7 @@ let studentDataRefreshFailureStreak = 0;
 let studentDataRefreshBackoffUntil = 0;
 let studentAccessPollHandle = null;
 let studentAccessPollInFlight = false;
+let studentAccessLastCheckedAt = 0;
 let siteMaintenanceGateRefreshHandle = null;
 let siteMaintenanceGateRefreshInFlight = false;
 let supabaseSessionRecoveryHandle = null;
@@ -19014,6 +19021,10 @@ function clearBackgroundSync() {
   backgroundSyncInFlight = false;
 }
 
+// Runs only while the tab is hidden. It just flushes queued writes: re-reading
+// data nobody is looking at cost a profile query plus a full student/admin
+// snapshot every 15s per hidden tab. Coming back to the tab rehydrates
+// (resumeDeferredAppWork), and the visible-tab polls catch up on stale data.
 async function runBackgroundSyncTick() {
   if (backgroundSyncInFlight) {
     return;
@@ -19028,44 +19039,6 @@ async function runBackgroundSyncTick() {
   backgroundSyncInFlight = true;
   try {
     await flushPendingSyncNow({ throwOnRelationalFailure: false }).catch(() => { });
-    if (isBrowserOffline()) {
-      return;
-    }
-
-    if (
-      currentUser.role === "student"
-      && !isStudentOnboardingRoute(state.route, currentUser)
-      && state.route !== "session"
-      && state.route !== "review"
-    ) {
-      const accessStatus = await enforceCurrentStudentAccessStatus(currentUser).catch((error) => {
-        console.warn("Background student access check failed.", error?.message || error);
-        return { checked: false, active: true };
-      });
-      if (accessStatus?.active === false) {
-        return;
-      }
-      await refreshStudentDataSnapshot(currentUser, {
-        rerender: false,
-      }).catch((error) => {
-        console.warn("Background student refresh failed.", error?.message || error);
-      });
-      return;
-    }
-
-    if (currentUser.role === "admin") {
-      if (state.route === "admin" && ADMIN_AUTO_REFRESH_PAGES.has(String(state.adminPage || "").trim())) {
-        await refreshAdminDataSnapshot(currentUser, {
-          surfaceErrors: false,
-          includeHeavyData: false,
-        }).catch((error) => {
-          console.warn("Background admin refresh failed.", error?.message || error);
-        });
-      }
-      await hydrateRelationalNotifications(currentUser).catch((error) => {
-        console.warn("Background admin notification refresh failed.", error?.message || error);
-      });
-    }
   } finally {
     backgroundSyncInFlight = false;
   }
@@ -19101,7 +19074,7 @@ function ensureAdminDashboardPolling() {
     if (isAdminUserMutationCoolingDown()) {
       return;
     }
-    if (state.adminDataRefreshing) {
+    if (state.adminDataRefreshing || document.visibilityState === "hidden") {
       return;
     }
     refreshAdminDataSnapshot(currentUser, { force: true, surfaceErrors: false, includeHeavyData: false, skipUnchangedProfiles: true })
@@ -19248,6 +19221,7 @@ function ensureStudentBackgroundRefreshPolling(user = null) {
     if (
       studentBackgroundRefreshInFlight
       || state.studentDataRefreshing
+      || document.visibilityState === "hidden"
       || isPostAuthDataWarmupActive(activeUser)
       || state.route === "session"
       || state.route === "review"
@@ -19291,6 +19265,7 @@ async function enforceCurrentStudentAccessStatus(user = null) {
     return { checked: false, active: true, pendingCompletion: true };
   }
 
+  studentAccessLastCheckedAt = Date.now();
   const { data, error } = await runWithTimeoutResult(
     client
       .from("profiles")
@@ -19742,7 +19717,13 @@ function ensureStudentAccessPolling(user = null) {
         clearStudentAccessPolling();
         return;
       }
-      if (studentAccessPollInFlight) {
+      if (studentAccessPollInFlight || document.visibilityState === "hidden") {
+        return;
+      }
+      if (
+        isRealtimeChannelHealthy("profile-access", profileAccessRealtimeSubscriptionKey)
+        && Date.now() - studentAccessLastCheckedAt < STUDENT_ACCESS_REALTIME_SAFETY_CHECK_MS
+      ) {
         return;
       }
       studentAccessPollInFlight = true;
@@ -21779,7 +21760,10 @@ function shouldRefreshStudentData(user) {
     return true;
   }
   const last = Number(state.studentDataLastSyncAt || 0);
-  return !last || (Date.now() - last) > STUDENT_DATA_REFRESH_MS;
+  const refreshAfterMs = getStudentRealtimeConnectionState() === "live"
+    ? STUDENT_DATA_REFRESH_REALTIME_LIVE_MS
+    : STUDENT_DATA_REFRESH_MS;
+  return !last || (Date.now() - last) > refreshAfterMs;
 }
 
 // Relational refresh failed: hold the background poll off for 30s, 60s,

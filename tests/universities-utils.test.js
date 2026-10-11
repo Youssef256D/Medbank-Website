@@ -77,8 +77,10 @@ test('UMD browser namespace and static runtime registrations', () => {
   vm.runInContext(fs.readFileSync('universities-utils.js', 'utf8'), context);
   assert.equal(context.MedBankUniversities.normalizeCollege('medicine'), 'medicine');
   const bootstrap = fs.readFileSync('bootstrap.js', 'utf8');
-  assert.ok(bootstrap.indexOf('loadScript(`universities-utils.js') > 0);
-  assert.ok(bootstrap.indexOf('loadScript(`universities-utils.js') < bootstrap.indexOf('loadScript(`main.js'));
+  // Support scripts must be registered, and main.js only runs after all of them load.
+  const supportList = bootstrap.slice(bootstrap.indexOf('const APP_SUPPORT_SCRIPT_PATHS = ['), bootstrap.indexOf('const APP_MAIN_SCRIPT_PATH'));
+  assert.match(supportList, /"universities-utils\.js"/);
+  assert.match(bootstrap, /APP_SUPPORT_SCRIPT_PATHS\.map\([\s\S]*?\)\s*\.then\(\(\) => loadScript\(mainScriptSrc/);
   assert.match(fs.readFileSync('sw.js', 'utf8'), /universities-utils\.js/);
   assert.match(JSON.parse(fs.readFileSync('package.json')).scripts.lint, /universities-utils\.js/);
 });
