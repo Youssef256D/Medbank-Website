@@ -90,6 +90,7 @@
   ]);
   const NATIVE_OAUTH_REDIRECT_PARAM = "native_redirect";
   const NATIVE_OAUTH_FLAG_PARAM = "native_oauth";
+  const warmedScriptSources = new Set();
   let appLoadPromise = null;
   let appPrefetchTriggered = false;
   let supabaseSdkLoadPromise = null;
@@ -217,9 +218,14 @@
   // Fetches a same-origin script into the HTTP / service-worker cache without
   // executing it, so a later <script> for the same URL is served locally.
   function warmScriptCache(src) {
-    if (typeof fetch !== "function" || document.querySelector(`script[data-src="${src}"]`)) {
+    if (
+      typeof fetch !== "function"
+      || warmedScriptSources.has(src)
+      || document.querySelector(`script[data-src="${src}"]`)
+    ) {
       return;
     }
+    warmedScriptSources.add(src);
     fetch(src, { credentials: "same-origin" }).catch(() => {
       // The real <script> load reports failures; warming is best-effort.
     });
