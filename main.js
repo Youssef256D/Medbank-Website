@@ -596,6 +596,7 @@ const state = {
   adminOrganizationAddMemberQuery: "",
   adminOrganizationAddMemberResults: [],
   adminOrganizationAddMemberSearching: false,
+  adminOrganizationRemovals: null,
   adminOrganizationSaving: false,
   adminCourseCoupons: [],
   adminCourseCouponStats: null,
@@ -34074,6 +34075,21 @@ async function loadAdminOrganizations(options = {}) {
   }
 }
 
+// Students an admin removed from the organization. Their code for it stops
+// working until they are unblocked or added back.
+async function loadAdminOrganizationRemovals(client, organizationId) {
+  try {
+    const data = await runRelationalQueryWithTimeout(
+      client.rpc("admin_list_organization_removals", { p_organization_id: organizationId }),
+      "Blocked members query timed out.",
+    );
+    return { organizationId, rows: Array.isArray(data) ? data : [], error: "" };
+  } catch (error) {
+    console.warn("Could not load blocked members.", error?.message || error);
+    return { organizationId, rows: [], error: getErrorMessage(error, "Could not load blocked members.") };
+  }
+}
+
 async function loadAdminOrganizationDetail(organizationId) {
   const client = getRelationalClient();
   const id = String(organizationId || "").trim();
@@ -34081,7 +34097,9 @@ async function loadAdminOrganizationDetail(organizationId) {
   state.adminOrganizationDetailLoading = true;
   state.adminOrganizationDetailError = "";
   try {
-    const [codes, members, courses] = await Promise.all([
+    // Blocked members never reject: the page still works before the
+    // admin_list_organization_removals RPC exists.
+    const [codes, members, courses, removals] = await Promise.all([
       runRelationalQueryWithTimeout(
         client.from("organization_codes").select(ORGANIZATION_CODES_SELECT).eq("organization_id", id).order("created_at", { ascending: false }),
         "Organization codes query timed out.",
@@ -34094,12 +34112,14 @@ async function loadAdminOrganizationDetail(organizationId) {
         client.from("platform_course_organizations").select(ORGANIZATION_COURSES_SELECT).eq("organization_id", id),
         "Organization courses query timed out.",
       ),
+      loadAdminOrganizationRemovals(client, id),
     ]);
     const courseRows = (Array.isArray(courses) ? courses : [])
       .map((row) => row?.course)
       .filter((course) => isUuidValue(String(course?.id || "")))
       .sort((left, right) => getCoursePlatformCourseTitle(left).localeCompare(getCoursePlatformCourseTitle(right)));
     if (state.adminOrganizationSelectedId === id) {
+      state.adminOrganizationRemovals = removals;
       state.adminOrganizationDetail = {
         organizationId: id,
         codes: Array.isArray(codes) ? codes : [],
@@ -34249,12 +34269,36 @@ function renderAdminOrganizationMemberRow(member) {
   </div>`;
 }
 
+function renderAdminOrganizationRemovalRow(removal) {
+  const name = String(removal?.full_name || "").trim() || String(removal?.email || "").trim() || "Unknown account";
+  const removedAt = removal?.removed_at ? new Date(removal.removed_at) : null;
+  const when = removedAt && !Number.isNaN(removedAt.getTime()) ? `Removed ${removedAt.toLocaleDateString()}` : "Removed";
+  const meta = [
+    removal?.email && removal.email !== name ? removal.email : "",
+    removal?.public_user_id != null ? String(removal.public_user_id) : "",
+    removal?.removed_by_name ? `${when} by ${removal.removed_by_name}` : when,
+  ].filter(Boolean).join(" · ");
+  const userId = escapeHtml(removal?.user_id || "");
+  const busy = state.adminOrganizationSaving ? " disabled" : "";
+  return `<div class="course-request-row">
+    <span>
+      <b>${escapeHtml(name)}</b>
+      <small>${escapeHtml(meta)}</small>
+    </span>
+    <span class="admin-org-blocked-actions">
+      <button class="btn ghost admin-btn-sm" type="button" data-org-unblock="${userId}" data-org-member-name="${escapeHtml(name)}"${busy}>Unblock</button>
+      <button class="btn admin-btn-sm" type="button" data-org-member-add-id="${userId}"${busy}>Add back</button>
+    </span>
+  </div>`;
+}
+
 function renderAdminOrganizationDetail(organization) {
   const detail = state.adminOrganizationDetail?.organizationId === organization.id ? state.adminOrganizationDetail : null;
   const loading = !detail && (state.adminOrganizationDetailLoading || !state.adminOrganizationDetailError);
   const codes = detail?.codes || [];
   const courses = detail?.courses || [];
   const members = detail?.members || [];
+  const removals = detail && state.adminOrganizationRemovals?.organizationId === organization.id ? state.adminOrganizationRemovals : null;
   const filteredMembers = filterOrganizationMembers(members, state.adminOrganizationMemberSearch);
   const visibleMembers = filteredMembers.slice(0, Math.max(ORGANIZATION_MEMBERS_PAGE_SIZE, Number(state.adminOrganizationMemberLimit) || 0));
   const busy = Boolean(state.adminOrganizationSaving);
@@ -34308,6 +34352,15 @@ function renderAdminOrganizationDetail(organization) {
         ${loading ? loadingNote : visibleMembers.length ? visibleMembers.map(renderAdminOrganizationMemberRow).join("") : `<p class="subtle">${members.length ? "No members match your search." : "No members yet."}</p>`}
       </div>
       ${filteredMembers.length > visibleMembers.length ? `<p class="subtle">Showing ${escapeHtml(String(visibleMembers.length))} of ${escapeHtml(String(filteredMembers.length))}. <button class="btn ghost admin-btn-sm" type="button" data-org-member-more>Show more</button></p>` : ""}
+    </div>
+
+    <div class="admin-org-detail-section">
+      <h3>Blocked${removals ? ` · ${escapeHtml(String(removals.rows.length))}` : ""}</h3>
+      <p class="subtle">People an admin removed. Their code for this organization doesn't work. Unblock lets them join again with a code; Add back makes them a member now.</p>
+      ${removals?.error ? `<div class="admin-popup-notice" role="status">${escapeHtml(removals.error)}</div>` : ""}
+      <div class="course-builder-list">
+        ${loading ? loadingNote : removals?.rows.length ? removals.rows.map(renderAdminOrganizationRemovalRow).join("") : removals?.error ? "" : `<p class="subtle">No one is blocked.</p>`}
+      </div>
     </div>
   </section>`;
 }
@@ -34436,11 +34489,15 @@ async function searchAdminOrganizationMemberCandidates(query) {
   const client = getRelationalClient();
   const needle = String(query || "").trim().replace(/[%,()]/g, " ").trim();
   if (!client || needle.length < 2) return [];
+  // public_user_id is a bigint: ilike on it fails the whole query, so an
+  // all-digit search matches it exactly instead.
   const pattern = `%${needle}%`;
+  const filters = [`full_name.ilike.${pattern}`, `email.ilike.${pattern}`];
+  if (/^\d{1,18}$/.test(needle)) filters.push(`public_user_id.eq.${needle}`);
   const rows = await runRelationalQueryWithTimeout(
     client.from("profiles").select("id,full_name,email,public_user_id,role")
       .in("role", ["student", "creator"])
-      .or(`full_name.ilike.${pattern},email.ilike.${pattern},public_user_id.ilike.${pattern}`)
+      .or(filters.join(","))
       .order("full_name", { ascending: true })
       .limit(20),
     "Account search timed out.",
@@ -34651,7 +34708,7 @@ function wireAdminOrganizations() {
   section.querySelectorAll("[data-org-member-remove]").forEach((button) => button.addEventListener("click", () => {
     const userId = button.getAttribute("data-org-member-remove");
     const name = button.getAttribute("data-org-member-name") || "this member";
-    if (!window.confirm(`Remove ${name} from ${organization.name}?\n\nThey lose every organization-only course of ${organization.name}, and their code for it stops working for them until an admin adds them back.`)) return;
+    if (!window.confirm(`Remove ${name} from ${organization.name}?\n\nThey lose every organization-only course of ${organization.name}, and their code for it stops working for them until an admin unblocks them (see Blocked below).`)) return;
     runAdminOrganizationMutation(async (client) => {
       const rows = await runRelationalQueryWithTimeout(
         client.from("organization_members").delete().eq("organization_id", organization.id).eq("user_id", userId).select("user_id"),
@@ -34686,6 +34743,19 @@ function wireAdminOrganizations() {
       refreshAdminOrganizationsView();
     }
   });
+  section.querySelectorAll("[data-org-unblock]").forEach((button) => button.addEventListener("click", () => {
+    const userId = button.getAttribute("data-org-unblock");
+    const name = button.getAttribute("data-org-member-name") || "This person";
+    if (!organization || !isUuidValue(userId)) return;
+    if (!window.confirm(`Unblock ${name}?\n\nThey can join ${organization.name} again with one of its codes.`)) return;
+    runAdminOrganizationMutation(async (client) => {
+      await runRelationalQueryWithTimeout(
+        client.rpc("admin_clear_organization_removal", { p_organization_id: organization.id, p_user_id: userId }),
+        "Unblock timed out.",
+      );
+      toast(`${name} can join ${organization.name} again.`);
+    }, "Could not unblock this person.");
+  }));
   appEl.querySelectorAll("[data-org-member-add-id]").forEach((button) => button.addEventListener("click", () => {
     const userId = button.getAttribute("data-org-member-add-id");
     if (!isUuidValue(userId)) return;

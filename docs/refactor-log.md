@@ -2,6 +2,20 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-11 — Organization member search; Blocked members
+- **Search bug:** `searchAdminOrganizationMemberCandidates` used
+  `public_user_id.ilike.%…%`, but `profiles.public_user_id` is a **bigint**, so
+  Postgres rejected every search. It now ilikes `full_name`/`email` and adds
+  `public_user_id.eq.<n>` only for an all-digit query. Do not ilike that column.
+- **Blocked list:** `private.organization_removals` (removals stick) is not
+  readable from the browser. Migration `20261011120000_admin_organization_removals`
+  adds `admin_list_organization_removals(org)` and
+  `admin_clear_organization_removal(org, user)` (security definer, require
+  `private.admin_can('users.organizations')`; rollback in `supabase/rollbacks/`).
+  The org detail page loads them in `loadAdminOrganizationRemovals`, which never
+  rejects, so the page works before the migration is applied. Rows offer
+  *Unblock* (RPC) and *Add back* (member insert; the after-insert trigger clears
+  the removal).
 ### 2026-10-09 — Admin layers part 3: single-action permissions (tick boxes)
 - Super admins can now tick single actions for each admin on the **Admin
   access** page instead of whole areas: People (add users, edit details,

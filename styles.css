@@ -23454,6 +23454,11 @@ body.theme-dark .map-lang button[aria-pressed="true"] { background: #f5f5f5; col
 .admin-org-detail-section h3 {
   margin: 0;
 }
+.admin-org-blocked-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
 .admin-org-back {
   justify-self: start;
   margin-bottom: 0.5rem;
