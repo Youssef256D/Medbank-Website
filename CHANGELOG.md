@@ -9,6 +9,21 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-11 — Pick organizations when adding a creator
+The *Add user* dialog now shows an **Organizations** checklist when the role
+is Creator, and requires at least one. Before, the website never sent any, so
+`admin-create-user` refused every new creator ("A creator must belong to at
+least one organization"). No migration or function deploy needed. Static cache
+bust: `2026-10-11.02`.
+
+### 2026-10-11 — Organization member search fixed; blocked members list
+*Add member* on an organization now finds students again (searching by the
+numeric user ID matches it exactly). Each organization shows a **Blocked**
+list: people an admin removed, whose code for it no longer works. Admins can
+**Unblock** them (they can join again with a code) or **Add back** (member
+now). Needs migration `20261011120000_admin_organization_removals`. Static
+cache bust: `2026-10-11.01`.
+
 ### 2026-10-09 — Tick-box admin permissions
 Super admins can now choose exactly what each admin may do on the Admin access
 page: tick a whole area or single actions such as *Add new users*, *Edit
