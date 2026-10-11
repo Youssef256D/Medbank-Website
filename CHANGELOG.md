@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-11 — Pick organizations when adding a creator
+The *Add user* dialog now shows an **Organizations** checklist when the role
+is Creator, and requires at least one. Before, the website never sent any, so
+`admin-create-user` refused every new creator ("A creator must belong to at
+least one organization"). No migration or function deploy needed. Static cache
+bust: `2026-10-11.02`.
+
 ### 2026-10-11 — Organization member search fixed; blocked members list
 *Add member* on an organization now finds students again (searching by the
 numeric user ID matches it exactly). Each organization shows a **Blocked**
