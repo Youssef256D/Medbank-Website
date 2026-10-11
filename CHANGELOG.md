@@ -9,6 +9,22 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-11 — `admin-update-user-email` Edge Function
+New function for the MedBank app's admin *Edit details* sheet: changes a
+user's sign-in email in Auth and `profiles.email`, marks it confirmed, and
+answers 409 when another account already uses the address. Needs the
+`users.edit` action; only a super admin may change an admin's email. Deploy
+with `--no-verify-jwt` (it verifies the JWT itself, like the other admin
+functions). The website does not call it yet.
+
+### 2026-10-11 — One organization code for students and creators
+An organization's code now works for everyone: a student who types it joins as
+a student member, a creator as a creator member. The *New code* dialog no
+longer asks who a code is for, and every code reads "Students and creators".
+Codes made before stay valid and now work for both. Needs migration
+`20261011150000_one_organization_code_for_everyone` (rollback in
+`supabase/rollbacks/`). Static cache bust: `2026-10-11.03`.
+
 ### 2026-10-11 — Pick organizations when adding a creator
 The *Add user* dialog now shows an **Organizations** checklist when the role
 is Creator, and requires at least one. Before, the website never sent any, so
