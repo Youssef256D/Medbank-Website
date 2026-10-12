@@ -30,6 +30,36 @@ hosted Supabase is the source of truth.
   be up to 15 s behind; the same device's local copy is exact.
 - **Only the timer tick may pass `clockTick: true`** —
   `tests/session-clock-sync.test.js` asserts this.
+### 2026-10-11 — Faster app load, less polling
+- **bootstrap.js loads in parallel.** The four support scripts
+  (`APP_SUPPORT_SCRIPT_PATHS`) download together and execute in order
+  (`async = false`); `main.js` is pre-fetched by `warmScriptCache()` but only
+  executes after they all load, so it never runs without its config/helpers.
+  Lucide, GSAP and the Supabase SDK no longer block `main.js` (all have
+  fallbacks / `mcq:*-ready` hooks). Returning students warm `main.js` during
+  the startup version check.
+- **supabase-js pinned to 2.117.2** (UMD `dist/umd/supabase.js`). Exact
+  versions are served `immutable` for a year; the `@2` range was cached for
+  hours and could change under us. Bump deliberately.
+- **Hidden tabs stop re-reading data.** `runBackgroundSyncTick` (hidden-only,
+  15s) now only flushes queued writes; it used to run a profile query plus a
+  full student/admin snapshot per hidden tab. The admin dashboard poll and the
+  student background refresh skip hidden tabs. Return-to-tab rehydrates.
+- **Access poll defers to realtime.** While `profile-access` is subscribed,
+  the 6s `ensureStudentAccessPolling` tick only re-checks every
+  `STUDENT_ACCESS_REALTIME_SAFETY_CHECK_MS` (2 min); `studentAccessLastCheckedAt`
+  is stamped in `enforceCurrentStudentAccessStatus`.
+- **Student data refresh** waits `STUDENT_DATA_REFRESH_REALTIME_LIVE_MS` (2 min)
+  instead of 30s while `getStudentRealtimeConnectionState()` is `live`.
+- Tests `app-popups-utils` / `universities-utils` now assert the new loader
+  shape (support list + main.js after them) instead of `loadScript(` order.
+- **Migration `20261011184347_performance_advisor_fixes` (applied).** 12
+  foreign-key covering indexes, and `app_popup_views_own` /
+  `content_protection_events_insert_own` now use `(select auth.uid())`
+  (same predicate, same names). Rollback in `supabase/rollbacks/`.
+- **Not done on purpose:** merging the advisor's "multiple permissive
+  policies". The Flutter repo rewrites several of them by name; a merged
+  policy would keep a stale copy of the old predicate.
 
 ### 2026-10-11 — Video Courses admin, rebuilt for clarity
 - **Clear names, grouped by job.** The nine sections are now *All courses ·

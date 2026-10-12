@@ -12,9 +12,12 @@
   const ROUTE_STATE_ROUTE_KEY = "mcq_last_route";
   const ROUTE_STATE_ROUTE_LOCAL_KEY = "mcq_last_route_local";
   const GOOGLE_OAUTH_PENDING_KEY = "mcq_google_oauth_pending";
+  // Pinned to an exact version: the CDN serves exact versions as immutable
+  // (1-year cache), while the `@2` range is only cached for hours and can change
+  // under us. Bump deliberately.
   const SUPABASE_SDK_SOURCES = [
-    "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2",
-    "https://unpkg.com/@supabase/supabase-js@2",
+    "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js",
+    "https://unpkg.com/@supabase/supabase-js@2.117.2/dist/umd/supabase.js",
   ];
   const GSAP_SDK_SOURCES = [
     "https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js",
@@ -28,6 +31,13 @@
     "https://cdn.jsdelivr.net/npm/lucide@1.21.0/dist/umd/lucide.min.js",
     "https://unpkg.com/lucide@1.21.0/dist/umd/lucide.min.js",
   ];
+  const APP_SUPPORT_SCRIPT_PATHS = [
+    "supabase.config.js",
+    "video-courses-utils.js",
+    "app-popups-utils.js",
+    "universities-utils.js",
+  ];
+  const APP_MAIN_SCRIPT_PATH = "main.js";
   const SCRIPT_LOAD_TIMEOUT_MS = 45000;
   const GSAP_LOAD_TIMEOUT_MS = 9000;
   const LUCIDE_LOAD_TIMEOUT_MS = 5000;
@@ -80,6 +90,7 @@
   ]);
   const NATIVE_OAUTH_REDIRECT_PARAM = "native_redirect";
   const NATIVE_OAUTH_FLAG_PARAM = "native_oauth";
+  const warmedScriptSources = new Set();
   let appLoadPromise = null;
   let appPrefetchTriggered = false;
   let supabaseSdkLoadPromise = null;
@@ -197,11 +208,27 @@
     const script = document.createElement("script");
     script.src = src;
     script.defer = Boolean(options.defer);
-    script.async = Boolean(options.async);
+    script.async = options.ordered ? false : Boolean(options.async);
     script.dataset.src = src;
     const loadPromise = waitForScriptLoad(script, src, timeoutMs);
     document.head.appendChild(script);
     return loadPromise;
+  }
+
+  // Fetches a same-origin script into the HTTP / service-worker cache without
+  // executing it, so a later <script> for the same URL is served locally.
+  function warmScriptCache(src) {
+    if (
+      typeof fetch !== "function"
+      || warmedScriptSources.has(src)
+      || document.querySelector(`script[data-src="${src}"]`)
+    ) {
+      return;
+    }
+    warmedScriptSources.add(src);
+    fetch(src, { credentials: "same-origin" }).catch(() => {
+      // The real <script> load reports failures; warming is best-effort.
+    });
   }
 
   function waitForScriptLoad(script, src, timeoutMs) {
@@ -371,16 +398,24 @@
       return appLoadPromise;
     }
 
-    appLoadPromise = Promise.resolve()
-      .then(() => loadScript(`supabase.config.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
-      .then(() => ensureLucideLoaded())
-      .then(() => {
-        ensureGsapLoaded();
-      })
-      .then(() => loadScript(`video-courses-utils.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
-      .then(() => loadScript(`app-popups-utils.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
-      .then(() => loadScript(`universities-utils.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
-      .then(() => loadScript(`main.js${versionSuffix}`, { defer: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
+    // Icons, animation and the Supabase SDK are all optional at first paint:
+    // main.js has inline-icon / CSS-motion fallbacks and re-renders on the
+    // mcq:*-ready hooks, so none of them may block it.
+    ensureLucideLoaded();
+    ensureGsapLoaded();
+    ensureSupabaseSdkLoaded();
+
+    // main.js (~2.5 MB) starts downloading now so it overlaps the small
+    // scripts, but only executes once they have all loaded: if one fails,
+    // main.js must not run without its config/helper globals (a retry reloads
+    // the failed one). The support scripts download in parallel and execute in
+    // insertion order (dynamic scripts with async = false).
+    const mainScriptSrc = `${APP_MAIN_SCRIPT_PATH}${versionSuffix}`;
+    warmScriptCache(mainScriptSrc);
+    appLoadPromise = Promise.all(
+      APP_SUPPORT_SCRIPT_PATHS.map((path) => loadScript(`${path}${versionSuffix}`, { ordered: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS })),
+    )
+      .then(() => loadScript(mainScriptSrc, { ordered: true, timeoutMs: SCRIPT_LOAD_TIMEOUT_MS }))
       .then(() => {
         if (window.supabase?.createClient) {
           notifySupabaseSdkReady();
@@ -785,6 +820,14 @@
   );
 
   (async () => {
+    // Returning students open straight into the app: overlap the main.js
+    // download with the version check instead of waiting for it.
+    const opensAppImmediately = (readPersistedRoute() || "landing") !== "landing"
+      || hasOAuthCallbackParams()
+      || isGoogleOAuthPendingState();
+    if (opensAppImmediately) {
+      warmScriptCache(`${APP_MAIN_SCRIPT_PATH}${versionSuffix}`);
+    }
     const redirectedToLatestVersion = await ensureLatestPublishedVersionOnStartup().catch((error) => {
       console.warn("Startup version check failed.", error?.message || error);
       return false;
