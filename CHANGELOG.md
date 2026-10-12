@@ -9,6 +9,28 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-12 — Exam clock no longer writes the sessions blob every second
+- The 1s session timer (`timerHandle` interval) calls `syncSessionSnapshot`,
+  which ran `upsertSession` → `scheduleSessionStateSync` on every tick, so an
+  open test upserted the whole `mcq_sessions` app_state blob (~30 KB to 1 MB+)
+  to Supabase once a second per student (measured: 45 writes in 45 s).
+- The tick now passes `persistOptions: { clockTick: true }`. A clock-only tick
+  within `SESSION_CLOCK_CLOUD_SYNC_MS` (15 s) of the last cloud queue only sets
+  `sessionSyncRuntime.clockDirty`; it does **not** set `dirty`, so the sync
+  status count, logout flush and other `dirty` readers are unchanged. Measured
+  after: 5 writes in 45 s.
+- Unchanged: the browser copy still persists per tick; answers/flags/pause/
+  submit sync after the usual 0.6 s; hide/pagehide (`immediate: true`) flush
+  at once (measured 7 ms). `queueSessionStateForCloud` clears `clockDirty`
+  and stamps `lastQueuedAt`.
+- `clockDirty` is included in `hasPendingSessionSyncForId` and the hydration
+  `hasPendingSessionWrites` guard so a remote snapshot can't roll back the
+  local clock while a tick is held.
+- Tradeoff: after a hard crash (no pagehide) the server copy of the timer can
+  be up to 15 s behind; the same device's local copy is exact.
+- **Only the timer tick may pass `clockTick: true`** —
+  `tests/session-clock-sync.test.js` asserts this.
+
 ### 2026-10-11 — Video Courses admin, rebuilt for clarity
 - **Clear names, grouped by job.** The nine sections are now *All courses ·
   Course content · Review queue* (Courses), *Students · Join requests ·
