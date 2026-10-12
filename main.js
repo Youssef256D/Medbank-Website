@@ -16934,6 +16934,7 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
       activeCourseIdByName[String(course.course_name || "").trim()] = course.id;
     });
     const deactivateTopicIds = [];
+    const deleteQuestionTopicIds = [];
     const processedTopicDeletions = [];
     pendingCourseTopicDeletions.forEach((entry) => {
       const courseId = activeCourseIdByName[entry.courseName];
@@ -16951,8 +16952,42 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
         return;
       }
       deactivateTopicIds.push(...matchingTopicIds);
+      if (entry.deleteQuestions) {
+        deleteQuestionTopicIds.push(...matchingTopicIds);
+      }
       processedTopicDeletions.push(entry);
     });
+    // Questions the admin's local cache knows about were already handled
+    // locally (deleted or moved to another topic). Anything else still on a
+    // deleted topic would stay visible to students, so delete it here.
+    if (deleteQuestionTopicIds.length) {
+      const localQuestionExternalIds = new Set(
+        getQuestions().map((question) => String(question?.id || "").trim()).filter(Boolean),
+      );
+      const orphanQuestionIds = [];
+      for (const topicIdBatch of splitIntoBatches([...new Set(deleteQuestionTopicIds)], RELATIONAL_IN_BATCH_SIZE)) {
+        const orphanResult = await fetchRowsPaged((from, to) => (
+          client
+            .from("questions")
+            .select("id,external_id")
+            .in("topic_id", topicIdBatch)
+            .order("id", { ascending: true })
+            .range(from, to)
+        ), { timeoutMessage: "Deleted-topic question lookup timed out." });
+        if (orphanResult.error) {
+          throw orphanResult.error;
+        }
+        (orphanResult.data || []).forEach((row) => {
+          if (isUuidValue(row?.id) && !localQuestionExternalIds.has(String(row?.external_id || "").trim())) {
+            orphanQuestionIds.push(row.id);
+          }
+        });
+      }
+      if (orphanQuestionIds.length) {
+        await permanentlyDeleteRelationalQuestions(client, orphanQuestionIds);
+        markAdminQuestionCountsStale();
+      }
+    }
     for (const deactivateBatch of splitIntoBatches([...new Set(deactivateTopicIds)], RELATIONAL_DELETE_BATCH_SIZE)) {
       await runRelationalQueryWithTimeout(
         client
@@ -16972,7 +17007,29 @@ async function deleteRelationalQuestionsAndDependents(client, questionIds) {
     return;
   }
 
-  for (const idBatch of splitIntoBatches(ids, QUESTION_RELATIONAL_BATCH_SIZE)) {
+  await permanentlyDeleteRelationalQuestions(client, ids);
+}
+
+// Hard-deletes questions through the admin_delete_questions RPC, which also
+// removes them from students' tests (test_block_items is ON DELETE RESTRICT).
+// Falls back to archiving only while the RPC is not deployed yet.
+async function permanentlyDeleteRelationalQuestions(client, dbIds) {
+  let rpcAvailable = true;
+  for (const idBatch of splitIntoBatches(dbIds, QUESTION_RELATIONAL_BATCH_SIZE)) {
+    if (rpcAvailable) {
+      const { error } = await runWithTimeoutResult(
+        client.rpc("admin_delete_questions", { target_question_ids: idBatch }),
+        QUESTION_RELATIONAL_TIMEOUT_MS,
+        "Question delete sync timed out.",
+      );
+      if (!error) {
+        continue;
+      }
+      if (!isMissingRpcFunctionError(error)) {
+        throw error;
+      }
+      rpcAvailable = false;
+    }
     await runRelationalQueryWithTimeout(
       client
         .from("questions")
@@ -16994,7 +17051,7 @@ async function flushPendingRelationalQuestionDeletions(client, pendingExternalId
     return [];
   }
 
-  const archiveDbIds = [];
+  const deleteDbIds = [];
   for (const extIdBatch of splitIntoBatches(pendingDeletions, QUESTION_RELATIONAL_BATCH_SIZE)) {
     const matchRows = await runRelationalQueryWithTimeout(
       client
@@ -17006,22 +17063,13 @@ async function flushPendingRelationalQuestionDeletions(client, pendingExternalId
     );
     (matchRows || []).forEach((row) => {
       if (isUuidValue(row?.id)) {
-        archiveDbIds.push(row.id);
+        deleteDbIds.push(row.id);
       }
     });
   }
 
-  if (archiveDbIds.length) {
-    for (const idBatch of splitIntoBatches([...new Set(archiveDbIds)], QUESTION_RELATIONAL_BATCH_SIZE)) {
-      await runRelationalQueryWithTimeout(
-        client
-          .from("questions")
-          .update({ status: "archived", updated_at: nowISO() })
-          .in("id", idBatch),
-        "Question archive sync timed out.",
-        QUESTION_RELATIONAL_TIMEOUT_MS,
-      );
-    }
+  if (deleteDbIds.length) {
+    await permanentlyDeleteRelationalQuestions(client, [...new Set(deleteDbIds)]);
   }
 
   clearQuestionDeletions(pendingDeletions);
@@ -39460,18 +39508,40 @@ function wireAdmin() {
         toast("This course has no topics to clear.");
         return;
       }
-      if (!window.confirm(`Delete all topics from "${course}"? Questions will be reassigned to the default topic.`)) {
+      const questions = getQuestions();
+      const courseQuestionIds = questions
+        .filter((question) => getQbankCourseTopicMeta(question).course === course)
+        .map((question) => String(question?.id || "").trim())
+        .filter(Boolean);
+      if (!window.confirm(
+        courseQuestionIds.length
+          ? `Delete all topics from "${course}"? All ${courseQuestionIds.length} question(s) in this subject will be permanently deleted.`
+          : `Delete all topics from "${course}"?`,
+      )) {
         return;
+      }
+      if (courseQuestionIds.length) {
+        queueQuestionDeletions(courseQuestionIds);
+        const removeSet = new Set(courseQuestionIds);
+        if (state.adminEditQuestionId && removeSet.has(state.adminEditQuestionId)) {
+          state.adminEditQuestionId = null;
+        }
+        save(STORAGE_KEYS.questions, questions.filter((question) => !removeSet.has(String(question?.id || "").trim())));
+        markAdminQuestionCountsStale();
       }
       const resetTopics = normalizeCourseTopicList([], course);
       const resetTopicKeys = new Set(resetTopics.map((topic) => normalizeTopicKey(topic)));
       existingTopics.forEach((topicName) => {
         if (!resetTopicKeys.has(normalizeTopicKey(topicName))) {
-          queuePendingCourseTopicDeletion(course, topicName);
+          queuePendingCourseTopicDeletion(course, topicName, { deleteQuestions: true });
         }
       });
       applyCourseTopicsUpdate(course, [], { allowQuestionTopicCollapse: true });
-      toast(`Deleted ${existingTopics.length} topic(s) from ${course}.`);
+      toast(
+        courseQuestionIds.length
+          ? `Deleted ${existingTopics.length} topic(s) and ${courseQuestionIds.length} question(s) from ${course}.`
+          : `Deleted ${existingTopics.length} topic(s) from ${course}.`,
+      );
       rerenderCoursesPage();
       flushPendingSyncInBackground();
       return;
@@ -39578,7 +39648,7 @@ function wireAdmin() {
     const topicQuestionCount = topicQuestionIds.length;
     const deleteTopicConfirmed = window.confirm(
       topicQuestionCount
-        ? `Delete topic "${currentTopic}" from "${course}"? ${topicQuestionCount} related question(s) will also be deleted.`
+        ? `Delete topic "${currentTopic}" from "${course}"? ${topicQuestionCount} related question(s) will be permanently deleted.`
         : `Delete topic "${currentTopic}" from "${course}"?`,
     );
     if (!deleteTopicConfirmed) {
@@ -39594,7 +39664,7 @@ function wireAdmin() {
       save(STORAGE_KEYS.questions, nextQuestions);
       markAdminQuestionCountsStale();
     }
-    queuePendingCourseTopicDeletion(course, currentTopic);
+    queuePendingCourseTopicDeletion(course, currentTopic, { deleteQuestions: true });
     applyCourseTopicsUpdate(
       course,
       topics.filter((_, idx) => idx !== topicIndex),
@@ -43012,6 +43082,9 @@ function normalizePendingCourseTopicDeletionEntry(entry) {
   return {
     courseName,
     topicName,
+    // true for a real delete (also deletes the topic's questions); renames
+    // queue the old name without it.
+    deleteQuestions: entry.deleteQuestions === true,
   };
 }
 
@@ -43023,31 +43096,39 @@ function getPendingCourseTopicDeletions() {
     if (!normalized) {
       return;
     }
-    unique.set(`${normalized.courseName}::${normalizeTopicKey(normalized.topicName)}`, normalized);
+    const key = `${normalized.courseName}::${normalizeTopicKey(normalized.topicName)}`;
+    normalized.deleteQuestions = normalized.deleteQuestions || Boolean(unique.get(key)?.deleteQuestions);
+    unique.set(key, normalized);
   });
   return [...unique.values()];
 }
 
 function savePendingCourseTopicDeletions(entries) {
   const normalized = [];
-  const unique = new Set();
+  const unique = new Map();
   (Array.isArray(entries) ? entries : []).forEach((entry) => {
     const nextEntry = normalizePendingCourseTopicDeletionEntry(entry);
     if (!nextEntry) {
       return;
     }
     const key = `${nextEntry.courseName}::${normalizeTopicKey(nextEntry.topicName)}`;
-    if (unique.has(key)) {
+    const existing = unique.get(key);
+    if (existing) {
+      existing.deleteQuestions = existing.deleteQuestions || nextEntry.deleteQuestions;
       return;
     }
-    unique.add(key);
+    unique.set(key, nextEntry);
     normalized.push(nextEntry);
   });
   saveLocalOnly(STORAGE_KEYS.pendingCourseTopicDeletions, normalized);
 }
 
-function queuePendingCourseTopicDeletion(courseName, topicName) {
-  const nextEntry = normalizePendingCourseTopicDeletionEntry({ courseName, topicName });
+function queuePendingCourseTopicDeletion(courseName, topicName, options = {}) {
+  const nextEntry = normalizePendingCourseTopicDeletionEntry({
+    courseName,
+    topicName,
+    deleteQuestions: options?.deleteQuestions === true,
+  });
   if (!nextEntry) {
     return false;
   }

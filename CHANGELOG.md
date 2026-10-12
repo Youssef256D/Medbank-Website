@@ -9,6 +9,32 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Deleting topics now permanently deletes their questions
+- **Bug:** "Delete all topics" moved every question into the default topic
+  (`allowQuestionTopicCollapse`), so students kept seeing them; single-topic
+  Delete only set `questions.status = 'archived'`. The user wants real deletes.
+- New RPC `public.admin_delete_questions(uuid[])` (migration
+  `20261013120000_admin_delete_questions`, SECURITY DEFINER, gated on
+  `mcq.questions_delete`): deletes the questions' `test_block_items`
+  (`test_responses` cascade), deletes test blocks left empty, fixes
+  `question_count`/`current_index` on the rest, then deletes the questions
+  (`question_choices` cascade). Needed because `test_block_items.question_id`
+  is ON DELETE RESTRICT and browser deletes there need the `people` area.
+- `permanentlyDeleteRelationalQuestions()` calls it from both
+  `deleteRelationalQuestionsAndDependents` and
+  `flushPendingRelationalQuestionDeletions`, so **every** question delete is now
+  a hard delete. It falls back to archiving only if the RPC is missing.
+- "Delete all topics" now also deletes the subject's questions.
+- Pending topic deletions carry `deleteQuestions: true` for real deletes. Renames
+  queue the old name **without** it — keep it that way, or a rename deletes the
+  renamed topic's questions. With the flag, the course sync also deletes DB
+  questions still on that topic that are **not** in the admin's local cache
+  (partial cache = they used to stay published under a hidden topic). Local
+  ones are left to the question sync, which runs after the topic sync.
+- One-off purge (run in SQL Editor with the migration): all 1,219 archived
+  questions (all came from deletes), 7,307 test items, 54 emptied test blocks,
+  61 students affected.
+- Tests: `tests/topic-delete-queue.test.js`.
 ### 2026-10-12 — Exam clock no longer writes the sessions blob every second
 - The 1s session timer (`timerHandle` interval) calls `syncSessionSnapshot`,
   which ran `upsertSession` → `scheduleSessionStateSync` on every tick, so an

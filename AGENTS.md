@@ -196,6 +196,9 @@ route, or file you are touching; add your own entry at the top when you finish.
 
 ### Load-bearing traps (details in the log)
 
+- **Topic renames must not set `deleteQuestions`** on the pending topic-deletion
+  queue; only real deletes do. The flag makes the sync hard-delete every DB
+  question still on that topic (2026-10-13).
 - **Never write `profiles.mcq_access_enabled` with an upsert.** The BEFORE
   INSERT eligibility trigger fires on upserts and writes `false` into the real
   row. Admin fields go through `update().eq("id")` (2026-10-02).
