@@ -297,6 +297,11 @@ const SUPABASE_FLUSH_DEBOUNCE_MS = 1200;
 const SUPABASE_RETRY_FLUSH_MS = 1200;
 const SUPABASE_BACKUP_RETRY_MAX_MS = 60000;
 const SESSION_SYNC_FLUSH_MS = 600;
+// The exam clock ticks every second and each tick rewrites the whole
+// mcq_sessions app_state blob (30 KB to 1 MB+). Clock-only changes go to the
+// cloud at most this often; answers, flags, pause, submit, hiding the tab and
+// closing it still sync immediately. The browser copy still updates per tick.
+const SESSION_CLOCK_CLOUD_SYNC_MS = 15000;
 const SESSION_BROWSER_PERSIST_THROTTLE_MS = 10000;
 const ADMIN_DATA_REFRESH_MS = 30000;
 const ADMIN_DASHBOARD_COUNTS_TTL_MS = 60000;
@@ -1491,6 +1496,11 @@ const siteActivityRuntime = {
 const sessionSyncRuntime = {
   timer: null,
   dirty: false,
+  // A clock tick changed the session but its cloud write is being held back
+  // (SESSION_CLOCK_CLOUD_SYNC_MS). Kept apart from `dirty` so sync-status UI
+  // and logout flushing behave exactly as before.
+  clockDirty: false,
+  lastQueuedAt: 0,
   flushing: false,
 };
 const adminActionRuntime = {
@@ -8367,6 +8377,7 @@ function clearSessionSyncTimer() {
 function resetSessionSyncRuntime() {
   clearSessionSyncTimer();
   sessionSyncRuntime.dirty = false;
+  sessionSyncRuntime.clockDirty = false;
   sessionSyncRuntime.flushing = false;
 }
 
@@ -8459,6 +8470,8 @@ function queueSessionStateForCloud() {
   // Only completed tests require the relational history write; in-progress
   // state is preserved through the app-state backup path.
   sessionSyncRuntime.dirty = completedHistorySessions.length ? !queuedRelational : false;
+  sessionSyncRuntime.clockDirty = false;
+  sessionSyncRuntime.lastQueuedAt = Date.now();
   return true;
 }
 
@@ -8499,6 +8512,15 @@ async function flushSessionStateSync() {
 }
 
 function scheduleSessionStateSync(options = {}) {
+  if (
+    options?.clockTick
+    && !options?.immediate
+    && !sessionSyncRuntime.dirty
+    && Date.now() - sessionSyncRuntime.lastQueuedAt < SESSION_CLOCK_CLOUD_SYNC_MS
+  ) {
+    sessionSyncRuntime.clockDirty = true;
+    return;
+  }
   sessionSyncRuntime.dirty = true;
   scheduleSyncStatusUiRefresh();
   if (options?.immediate) {
@@ -10594,6 +10616,7 @@ async function hydrateRelationalState(user) {
   const hasPendingNotificationWrites = isRelationalStorageKeyBusy(STORAGE_KEYS.notifications);
   const hasPendingSessionWrites = isRelationalStorageKeyBusy(STORAGE_KEYS.sessions)
     || sessionSyncRuntime.dirty
+    || sessionSyncRuntime.clockDirty
     || sessionSyncRuntime.flushing;
 
   // Avoid overwriting unsynced local edits per storage key while still allowing safe keys to hydrate.
@@ -12935,14 +12958,14 @@ function cloneTextHighlightStore(value) {
 function hasPendingSessionSyncForId(sessionId = "") {
   const targetId = String(sessionId || "").trim();
   const activeSessionId = String(state.sessionId || "").trim();
-  if (!targetId && (sessionSyncRuntime.dirty || sessionSyncRuntime.flushing || isRelationalStorageKeyBusy(STORAGE_KEYS.sessions))) {
+  if (!targetId && (sessionSyncRuntime.dirty || sessionSyncRuntime.clockDirty || sessionSyncRuntime.flushing || isRelationalStorageKeyBusy(STORAGE_KEYS.sessions))) {
     return true;
   }
   if (
     targetId
     && activeSessionId === targetId
     && state.route === "session"
-    && (sessionSyncRuntime.dirty || sessionSyncRuntime.flushing || isRelationalStorageKeyBusy(STORAGE_KEYS.sessions))
+    && (sessionSyncRuntime.dirty || sessionSyncRuntime.clockDirty || sessionSyncRuntime.flushing || isRelationalStorageKeyBusy(STORAGE_KEYS.sessions))
   ) {
     return true;
   }
@@ -30030,6 +30053,7 @@ function startSessionTicker(sessionId) {
 
     const clockState = syncSessionSnapshot(session, {
       questionStore: getQuestionStore(),
+      persistOptions: { clockTick: true },
     });
     syncSessionTimingDisplays(session);
 
