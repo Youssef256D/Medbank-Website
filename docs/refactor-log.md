@@ -2,6 +2,13 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-13 — Answer dots centred on the option text
+- `.exam-choice`, `.exam-choice-hit`, `.exam-choice-radio-hit` and the phone
+  overrides of `.exam-choice-indicator` / `.exam-choice-radio-hit` used
+  `align-items: start` plus fixed `padding-top`, so the radio dot and ✓/✕
+  stuck to the first line and drifted as the exam font size grew. All now use
+  `align-items: center` (no top padding); verified 0 px offset at font scales
+  1 / 1.35 / 1.8 on 375 px and 1280 px, including multi-line options.
 ### 2026-10-13 — Deleting topics now permanently deletes their questions
 - **Bug:** "Delete all topics" moved every question into the default topic
   (`allowQuestionTopicCollapse`), so students kept seeing them; single-topic
