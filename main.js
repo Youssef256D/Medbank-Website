@@ -27833,16 +27833,6 @@ function renderCreateTest() {
     topicSections.length === 1
     && (!topicSections[0]?.name || String(topicSections[0]?.kind || "") === "flat")
   );
-  const selectedTopicLabel = hasTopicSources && !selectedTopicSource
-    ? "Choose a source first"
-    : selectedTopics.length === 0
-      ? "0 topics selected"
-      : allTopicsSelected
-        ? "All topics"
-        : formatTopicFilterSummary(selectedTopics);
-  const selectedSourceLabel = hasTopicSources
-    ? (selectedTopicSource || "No source selected")
-    : "Direct topics";
   const allowedSources = ["all", "unused", "incorrect", "flagged"];
   if (!allowedSources.includes(state.createTestSource)) {
     state.createTestSource = "all";
@@ -27886,20 +27876,47 @@ function renderCreateTest() {
     topicOptions,
   });
 
+  const topicQuestionCounts = getCreateTestTopicQuestionCounts(selectedCourse, questions, topicOptions);
+  const sourceCounts = getCreateTestSourceCounts(filtered, user.id);
+  const renderTopicChip = (topic, extraClass = "") => {
+    const isNewTopic = isTopicNewForUser(selectedCourse, topic, user);
+    const topicCount = Number(topicQuestionCounts.get(topic)) || 0;
+    return `
+      <label class="admin-course-check create-test-topic-chip ${extraClass} ${topicCount ? "" : "is-empty"}">
+        <input type="checkbox" name="createTestTopics" data-role="create-test-topic" value="${escapeHtml(topic)}" ${(allTopicsSelected || selectedTopics.includes(topic)) ? "checked" : ""} />
+        <span class="create-test-topic-chip-copy">${escapeHtml(topic)}</span>
+        ${isNewTopic ? '<span class="create-test-topic-new-dot" title="New topic" aria-label="New topic"></span>' : ""}
+        <span class="create-test-topic-qcount" title="${topicCount} questions">${topicCount}</span>
+      </label>
+    `;
+  };
+  const startBarCopy = getCreateTestStartBarCopy({
+    questionCount: sourceFiltered.length,
+    topicCount: selectedTopics.length,
+    allTopicsSelected,
+    mode: "tutor",
+    sourceLabel: sourceLabelMap[state.createTestSource],
+    helpMessage: startHelpMessage,
+  });
+
   return `
-    <section class="panel">
-      <h2 class="title">Create a Test</h2>
-      <p class="subtle">Choose course and topics, then generate a test block.</p>
+    <div class="create-test-page">
+    <section class="panel create-test-hero-panel">
+      <div class="create-test-heading">
+        <h2 class="title">Create a Test</h2>
+        <p class="subtle">Pick your topics, choose how you want to practise, then start.</p>
+      </div>
       ${inProgress
       ? `
         <div class="card create-test-active-block">
-          <div>
-            <span><b>Active block detected</b></span>
+          <span class="create-test-active-block-icon" aria-hidden="true"></span>
+          <div class="create-test-active-block-copy">
+            <b>You have a test in progress</b>
             <small class="subtle create-test-active-block-meta">${escapeHtml([inProgressName, inProgressTopicSummary].filter(Boolean).join(" • "))}</small>
           </div>
           <div class="create-test-active-block-actions">
             <button class="btn" data-nav="session">Resume</button>
-            <button class="btn ghost" type="button" data-action="end-active-block" data-session-id="${escapeHtml(inProgress.id)}">End block</button>
+            <button class="btn ghost" type="button" data-action="end-active-block" data-session-id="${escapeHtml(inProgress.id)}">End test</button>
           </div>
         </div>
       `
@@ -27907,32 +27924,37 @@ function renderCreateTest() {
     }
 
       <div class="create-test-filter-layout">
-        <div class="create-test-filter-card">
+        <div class="create-test-step">
+          <div class="create-test-step-head">
+            <span class="create-test-step-num" aria-hidden="true">1</span>
+            <h3 class="create-test-step-title">Course</h3>
+          </div>
           <div class="create-test-primary-filters">
-            <label>
-              Course
-              <select name="course" id="create-test-course-select">
-                ${availableCourses
-      .map((course) => `<option value="${course}" ${selectedCourse === course ? "selected" : ""}>${course}</option>`)
+            <select name="course" id="create-test-course-select" aria-label="Course">
+              ${availableCourses
+      .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
       .join("")}
-              </select>
-            </label>
+            </select>
             ${hasTopicSources
       ? `
-              <label>
-                Source
-                <select name="topicSource" id="create-test-topic-source-select">
-                  <option value="" ${selectedTopicSource ? "" : "selected"}>Choose a source</option>
-                  ${topicSourceOptions
+              <select name="topicSource" id="create-test-topic-source-select" aria-label="Source">
+                <option value="" ${selectedTopicSource ? "" : "selected"}>Choose a source</option>
+                ${topicSourceOptions
         .map((option) => `<option value="${escapeHtml(option.value)}" ${selectedTopicSource === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
         .join("")}
-                </select>
-              </label>
+              </select>
             `
       : ""}
           </div>
         </div>
-        <div class="create-test-filter-card create-test-topics-group">
+        <div class="create-test-step create-test-topics-group">
+          <div class="create-test-step-head">
+            <span class="create-test-step-num" aria-hidden="true">2</span>
+            <h3 class="create-test-step-title">Topics</h3>
+            ${topicSections.length && !(hasTopicSources && !selectedTopicSource)
+      ? `<span id="create-test-topic-count" class="create-test-topic-count" aria-live="polite">${selectedTopics.length} of ${topicOptions.length} selected</span>`
+      : ""}
+          </div>
           ${hasTopicSources && !selectedTopicSource
       ? '<p class="subtle create-test-topic-empty">Choose a source to see the topics inside it.</p>'
       : topicSections.length
@@ -27946,43 +27968,31 @@ function renderCreateTest() {
                   aria-label="Search topics"
                   autocomplete="off"
                 />
-                <span id="create-test-topic-count" class="create-test-topic-count" aria-live="polite">${selectedTopics.length} of ${topicOptions.length} selected</span>
-              </div>
-              <div class="create-test-topic-actions">
-                <button
-                  type="button"
-                  class="btn ghost admin-btn-sm"
-                  data-action="create-test-select-all-topics"
-                  ${allTopicsSelected ? "disabled" : ""}
-                >
-                  Select all topics
-                </button>
-                <button
-                  type="button"
-                  class="btn ghost admin-btn-sm"
-                  data-action="create-test-clear-topic-selection"
-                  ${selectedTopics.length ? "" : "disabled"}
-                >
-                  Clear
-                </button>
+                <div class="create-test-topic-actions">
+                  <button
+                    type="button"
+                    class="btn ghost admin-btn-sm"
+                    data-action="create-test-select-all-topics"
+                    ${allTopicsSelected ? "disabled" : ""}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    class="btn ghost admin-btn-sm"
+                    data-action="create-test-clear-topic-selection"
+                    ${selectedTopics.length ? "" : "disabled"}
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
               <p id="create-test-topic-no-match" class="subtle create-test-topic-empty" hidden>No topics match your search.</p>
-              <div class="create-test-topic-scroll">
+              <div class="create-test-topic-scroll" id="create-test-topic-scroll">
               ${singleFlatTopicSection
       ? `
                   <div class="create-test-topic-list">
-                    ${(topicSections[0]?.topics || [])
-        .map((topic) => {
-          const isNewTopic = isTopicNewForUser(selectedCourse, topic, user);
-          return `
-                            <label class="admin-course-check create-test-topic-chip is-list-item">
-                              <input type="checkbox" name="createTestTopics" data-role="create-test-topic" value="${escapeHtml(topic)}" ${(allTopicsSelected || selectedTopics.includes(topic)) ? "checked" : ""} />
-                              <span class="create-test-topic-chip-copy">${escapeHtml(topic)}</span>
-                              ${isNewTopic ? '<span class="create-test-topic-new-dot" title="New topic" aria-label="New topic"></span>' : ""}
-                            </label>
-                          `;
-        })
-        .join("")}
+                    ${(topicSections[0]?.topics || []).map((topic) => renderTopicChip(topic, "is-list-item")).join("")}
                   </div>
                 `
       : `
@@ -27992,18 +28002,7 @@ function renderCreateTest() {
                           <section class="create-test-topic-section">
                             ${section.name ? `<p class="create-test-topic-section-title">${escapeHtml(section.name)}</p>` : ""}
                             <div class="create-test-topic-grid">
-                              ${section.topics
-            .map((topic) => {
-              const isNewTopic = isTopicNewForUser(selectedCourse, topic, user);
-              return `
-                                    <label class="admin-course-check create-test-topic-chip">
-                                      <input type="checkbox" name="createTestTopics" data-role="create-test-topic" value="${escapeHtml(topic)}" ${(allTopicsSelected || selectedTopics.includes(topic)) ? "checked" : ""} />
-                                      <span class="create-test-topic-chip-copy">${escapeHtml(topic)}</span>
-                                      ${isNewTopic ? '<span class="create-test-topic-new-dot" title="New topic" aria-label="New topic"></span>' : ""}
-                                    </label>
-                                  `;
-            })
-            .join("")}
+                              ${section.topics.map((topic) => renderTopicChip(topic)).join("")}
                             </div>
                           </section>
                         `)
@@ -28017,14 +28016,58 @@ function renderCreateTest() {
       </div>
     </section>
 
-    <section class="panel">
-      <h3 style="margin-top: 0;">Test Setup</h3>
+    <section class="panel create-test-setup-panel">
+      <div class="create-test-step-head">
+        <span class="create-test-step-num" aria-hidden="true">3</span>
+        <h3 class="create-test-step-title">Test setup</h3>
+      </div>
       <form id="create-test-block-form" class="create-test-setup-form" autocomplete="off">
+        <fieldset class="create-test-choice-group">
+          <legend>Mode</legend>
+          <div class="create-test-mode-options">
+            <label class="create-test-mode-option">
+              <input type="radio" name="mode" value="tutor" data-role="create-test-mode" checked />
+              <span class="create-test-mode-copy">
+                <b>Tutor</b>
+                <small>See the answer and explanation as you go.</small>
+              </span>
+            </label>
+            <label class="create-test-mode-option">
+              <input type="radio" name="mode" value="timed" data-role="create-test-mode" />
+              <span class="create-test-mode-copy">
+                <b>Timed</b>
+                <small>Exam conditions with a countdown timer.</small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="create-test-choice-group">
+          <legend>Questions from</legend>
+          <div class="create-test-source-options">
+            ${allowedSources
+      .map((value) => `
+              <label class="create-test-source-pill">
+                <input type="radio" name="source" value="${value}" data-role="create-test-source" ${state.createTestSource === value ? "checked" : ""} ${value === "all" || sourceCounts[value] ? "" : "disabled"} />
+                <span>${escapeHtml(sourceLabelMap[value])}</span>
+                <span class="create-test-source-count" data-source-count="${value}">${Number(sourceCounts[value]) || 0}</span>
+              </label>
+            `)
+      .join("")}
+          </div>
+        </fieldset>
+
         <div class="create-test-setup-grid">
           <label class="create-test-setup-field">Number of questions
-            <input name="count" type="number" min="0" max="${defaultQuestionCount}" step="1" value="${defaultQuestionCount}" />
+            <span class="create-test-count-field">
+              <input name="count" type="number" min="0" max="${defaultQuestionCount}" step="1" value="${defaultQuestionCount}" inputmode="numeric" />
+              <span class="create-test-count-max" id="create-test-count-max">of ${defaultQuestionCount}</span>
+            </span>
           </label>
-          <label class="create-test-setup-field">Test name (optional)
+          <label class="create-test-setup-field" id="create-test-duration-field" hidden>Timer (minutes)
+            <input name="duration" id="create-test-duration-input" type="number" min="5" max="180" value="20" inputmode="numeric" disabled />
+          </label>
+          <label class="create-test-setup-field"><span>Test name <span class="create-test-optional">(optional)</span></span>
             <input
               name="testName"
               type="text"
@@ -28033,43 +28076,76 @@ function renderCreateTest() {
               value="${escapeHtml(state.createTestNameDraft)}"
             />
           </label>
-          <label class="create-test-setup-field">Mode
-            <select name="mode" id="create-test-mode-select">
-              <option value="tutor">Tutor</option>
-              <option value="timed">Timed</option>
-            </select>
-          </label>
-          <label class="create-test-setup-field">Question source
-            <select name="source" id="create-test-source-select">
-              <option value="all" ${state.createTestSource === "all" ? "selected" : ""}>All matching</option>
-              <option value="unused" ${state.createTestSource === "unused" ? "selected" : ""}>Unused only</option>
-              <option value="incorrect" ${state.createTestSource === "incorrect" ? "selected" : ""}>Wrong only</option>
-              <option value="flagged" ${state.createTestSource === "flagged" ? "selected" : ""}>Flagged only</option>
-            </select>
-          </label>
-          <label class="create-test-setup-field">Timer (minutes, timed mode)
-            <input name="duration" id="create-test-duration-input" type="number" min="5" max="180" value="20" disabled />
-          </label>
         </div>
 
         <label class="create-test-randomize">
           <input type="checkbox" name="randomize" />
           <span class="create-test-randomize-switch" aria-hidden="true"></span>
           <span class="create-test-randomize-copy">
-            <b>Randomize questions</b>
-            <small>Shuffle question order before starting the test.</small>
+            <b>Shuffle questions</b>
+            <small>Mix up the order before you start.</small>
           </span>
         </label>
-
-        <small id="create-test-filter-summary">Current filter: <b>${escapeHtml(selectedCourse)}</b> • Source: <b>${escapeHtml(selectedSourceLabel)}</b> • ${escapeHtml(selectedTopicLabel)} • Question source: <b>${escapeHtml(sourceLabelMap[state.createTestSource])}</b> (${sourceFiltered.length} questions)</small>
-        <small id="create-test-start-help" class="subtle create-test-start-help" aria-live="polite" ${startHelpMessage ? "" : "hidden"}>${escapeHtml(startHelpMessage)}</small>
         ${noMatchingQuestionsNotice ? `<p class="subtle">${escapeHtml(noMatchingQuestionsNotice)}</p>` : ""}
-        <div class="stack">
-          <button type="submit" class="btn" aria-describedby="create-test-filter-summary create-test-start-help" ${canStartTest ? "" : "disabled"}>Start test</button>
-        </div>
       </form>
     </section>
+
+    <div class="create-test-startbar" role="region" aria-label="Start test">
+      <div class="create-test-startbar-copy">
+        <b id="create-test-startbar-title">${escapeHtml(startBarCopy.title)}</b>
+        <small id="create-test-filter-summary" class="${startHelpMessage ? "is-help" : ""}" aria-live="polite">${escapeHtml(startBarCopy.meta)}</small>
+      </div>
+      <button type="submit" form="create-test-block-form" class="btn create-test-start-btn" aria-describedby="create-test-filter-summary" ${canStartTest ? "" : "disabled"}>Start test</button>
+    </div>
+    </div>
   `;
+}
+
+function getCreateTestStartBarCopy(options = {}) {
+  const questionCount = Math.max(0, Number(options.questionCount) || 0);
+  const topicCount = Math.max(0, Number(options.topicCount) || 0);
+  const helpMessage = String(options.helpMessage || "").trim();
+  const title = topicCount
+    ? `${questionCount} question${questionCount === 1 ? "" : "s"} ready`
+    : "No topics selected";
+  if (helpMessage) {
+    return { title, meta: helpMessage };
+  }
+  const topicLabel = options.allTopicsSelected
+    ? "All topics"
+    : `${topicCount} topic${topicCount === 1 ? "" : "s"}`;
+  const modeLabel = String(options.mode || "tutor") === "timed" ? "Timed" : "Tutor";
+  return { title, meta: [topicLabel, modeLabel, String(options.sourceLabel || "")].filter(Boolean).join(" · ") };
+}
+
+// One pass over the bank: how many questions sit under each listed topic.
+function getCreateTestTopicQuestionCounts(course, questions, topicOptions) {
+  const counts = new Map((topicOptions || []).map((topic) => [topic, 0]));
+  const resolvedByRawTopic = new Map();
+  (questions || []).forEach((question) => {
+    const meta = getQbankCourseTopicMeta(question);
+    if (!meta.topic || !doCourseNamesMatch(meta.course, course)) {
+      return;
+    }
+    if (!resolvedByRawTopic.has(meta.topic)) {
+      resolvedByRawTopic.set(meta.topic, findMatchingTopicNameInList(topicOptions, meta.topic));
+    }
+    const option = resolvedByRawTopic.get(meta.topic);
+    if (option && counts.has(option)) {
+      counts.set(option, counts.get(option) + 1);
+    }
+  });
+  return counts;
+}
+
+function getCreateTestSourceCounts(questions, userId) {
+  const pool = Array.isArray(questions) ? questions : [];
+  return {
+    all: pool.length,
+    unused: applySourceFilter(pool, "unused", userId).length,
+    incorrect: applySourceFilter(pool, "incorrect", userId).length,
+    flagged: applySourceFilter(pool, "flagged", userId).length,
+  };
 }
 
 function wireCreateTest() {
@@ -28077,7 +28153,7 @@ function wireCreateTest() {
 
   const courseSelect = document.getElementById("create-test-course-select");
   const topicSourceSelect = document.getElementById("create-test-topic-source-select");
-  const sourceSelect = document.getElementById("create-test-source-select");
+  const sourceInputs = Array.from(document.querySelectorAll("input[data-role='create-test-source']"));
   const endActiveBlockBtn = appEl.querySelector("[data-action='end-active-block']");
   const topicInputs = Array.from(document.querySelectorAll("input[data-role='create-test-topic']"));
   const selectAllTopicsBtn = appEl.querySelector("[data-action='create-test-select-all-topics']");
@@ -28088,22 +28164,39 @@ function wireCreateTest() {
   const getTopicSearchQuery = () => String(topicSearchInput?.value || "").trim().toLowerCase();
   const isTopicInputVisible = (entry) => !entry.closest("label")?.hidden;
   const summaryEl = document.getElementById("create-test-filter-summary");
-  const startHelpEl = document.getElementById("create-test-start-help");
+  const startBarTitleEl = document.getElementById("create-test-startbar-title");
   const blockForm = document.getElementById("create-test-block-form");
   const countInput = blockForm?.querySelector("input[name='count']");
+  const countMaxEl = document.getElementById("create-test-count-max");
   const nameInput = blockForm?.querySelector("input[name='testName']");
-  const submitButton = blockForm?.querySelector("button[type='submit']");
-  const modeSelect = document.getElementById("create-test-mode-select");
+  const submitButton = appEl.querySelector(".create-test-start-btn");
+  const modeInputs = Array.from(document.querySelectorAll("input[data-role='create-test-mode']"));
   const durationInput = document.getElementById("create-test-duration-input");
+  const durationField = document.getElementById("create-test-duration-field");
+  const topicScrollEl = document.getElementById("create-test-topic-scroll");
+  const getSelectedMode = () => modeInputs.find((entry) => entry.checked)?.value || "tutor";
 
   const syncDurationInputState = () => {
-    if (!(modeSelect instanceof HTMLSelectElement) || !(durationInput instanceof HTMLInputElement)) {
-      return;
+    const isTimed = getSelectedMode() === "timed";
+    if (durationInput instanceof HTMLInputElement) {
+      durationInput.disabled = !isTimed;
     }
-    const isTimed = String(modeSelect.value || "tutor") === "timed";
-    durationInput.disabled = !isTimed;
+    if (durationField) {
+      durationField.hidden = !isTimed;
+    }
   };
   syncDurationInputState();
+
+  // Fade the bottom edge of the topic list only while more topics sit below it.
+  const syncTopicScrollFade = () => {
+    if (!topicScrollEl) {
+      return;
+    }
+    const overflow = topicScrollEl.scrollHeight - topicScrollEl.clientHeight;
+    topicScrollEl.classList.toggle("has-more", overflow > 4 && topicScrollEl.scrollTop < overflow - 4);
+  };
+  topicScrollEl?.addEventListener("scroll", syncTopicScrollFade, { passive: true });
+  requestAnimationFrame(syncTopicScrollFade);
 
   const syncTopicSelectionUi = () => {
     const selectedSet = new Set((state.qbankFilters.topics || []).map((topic) => String(topic || "").trim()));
@@ -28115,7 +28208,7 @@ function wireCreateTest() {
     const searching = Boolean(getTopicSearchQuery());
     const visibleInputs = topicInputs.filter(isTopicInputVisible);
     if (selectAllTopicsBtn) {
-      selectAllTopicsBtn.textContent = searching ? "Select matching" : "Select all topics";
+      selectAllTopicsBtn.textContent = searching ? "Select matching" : "Select all";
       selectAllTopicsBtn.disabled = searching
         ? visibleInputs.every((entry) => entry.checked)
         : totalTopics === 0 || allTopicsMode;
@@ -28151,6 +28244,7 @@ function wireCreateTest() {
       topicNoMatchEl.hidden = visibleCount > 0;
     }
     syncTopicSelectionUi();
+    syncTopicScrollFade();
   };
   topicSearchInput?.addEventListener("input", applyTopicSearch);
 
@@ -28185,16 +28279,6 @@ function wireCreateTest() {
       state.qbankFilters.topics = selectedTopics;
     }
     const allTopicsSelected = topicOptions.length > 0 && selectedTopics.length === topicOptions.length;
-    const selectedTopicLabel = hasTopicSources && !selectedTopicSource
-      ? "Choose a source first"
-      : selectedTopics.length === 0
-        ? "0 topics selected"
-        : allTopicsSelected
-          ? "All topics"
-          : formatTopicFilterSummary(selectedTopics);
-    const selectedSourceLabel = hasTopicSources
-      ? (selectedTopicSource || "No source selected")
-      : "Direct topics";
     const filteredByCourseTopic = applyQbankFilters(questions, {
       course: selectedCourse,
       topics: selectedTopics,
@@ -28215,29 +28299,47 @@ function wireCreateTest() {
     if (filteredByCourseTopic.length && !filtered.length && state.createTestSource !== "all") {
       state.createTestSource = "all";
       filtered = filteredByCourseTopic;
-      if (sourceSelect) {
-        sourceSelect.value = "all";
+    }
+    const sourceCounts = getCreateTestSourceCounts(filteredByCourseTopic, user.id);
+    sourceInputs.forEach((entry) => {
+      const value = String(entry.value || "");
+      entry.checked = value === state.createTestSource;
+      entry.disabled = value !== "all" && !sourceCounts[value];
+      const countEl = entry.closest("label")?.querySelector("[data-source-count]");
+      if (countEl) {
+        countEl.textContent = String(Number(sourceCounts[value]) || 0);
       }
-    }
+    });
     syncTopicSelectionUi();
-    if (summaryEl) {
-      summaryEl.innerHTML = `Current filter: <b>${escapeHtml(selectedCourse)}</b> • Source: <b>${escapeHtml(selectedSourceLabel)}</b> • ${escapeHtml(selectedTopicLabel)} • Question source: <b>${escapeHtml(sourceLabelMap[state.createTestSource])}</b> (${filtered.length} questions)`;
+    const startHelpMessage = getCreateTestStartHelpMessage({
+      selectedTopics,
+      sourceFiltered: filtered,
+      hasTopicSources,
+      selectedTopicSource,
+      topicOptions,
+    });
+    const startBarCopy = getCreateTestStartBarCopy({
+      questionCount: filtered.length,
+      topicCount: selectedTopics.length,
+      allTopicsSelected,
+      mode: getSelectedMode(),
+      sourceLabel: sourceLabelMap[state.createTestSource],
+      helpMessage: startHelpMessage,
+    });
+    if (startBarTitleEl) {
+      startBarTitleEl.textContent = startBarCopy.title;
     }
-    if (startHelpEl) {
-      const startHelpMessage = getCreateTestStartHelpMessage({
-        selectedTopics,
-        sourceFiltered: filtered,
-        hasTopicSources,
-        selectedTopicSource,
-        topicOptions,
-      });
-      startHelpEl.textContent = startHelpMessage;
-      startHelpEl.hidden = !startHelpMessage;
+    if (summaryEl) {
+      summaryEl.textContent = startBarCopy.meta;
+      summaryEl.classList.toggle("is-help", Boolean(startHelpMessage));
     }
     if (countInput) {
       const suggestedCount = Math.max(0, filtered.length || 0);
       countInput.max = String(suggestedCount);
       countInput.value = String(suggestedCount);
+      if (countMaxEl) {
+        countMaxEl.textContent = `of ${suggestedCount}`;
+      }
     }
     if (submitButton) {
       submitButton.disabled = !(selectedTopics.length && filtered.length > 0 && (!hasTopicSources || selectedTopicSource));
@@ -28287,13 +28389,21 @@ function wireCreateTest() {
     updateCreateTestSummary();
   });
 
-  sourceSelect?.addEventListener("change", () => {
-    state.createTestSource = String(sourceSelect.value || "all");
-    updateCreateTestSummary();
+  sourceInputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!input.checked) {
+        return;
+      }
+      state.createTestSource = String(input.value || "all");
+      updateCreateTestSummary();
+    });
   });
 
-  modeSelect?.addEventListener("change", () => {
-    syncDurationInputState();
+  modeInputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      syncDurationInputState();
+      updateCreateTestSummary();
+    });
   });
 
   nameInput?.addEventListener("input", () => {

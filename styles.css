@@ -24075,3 +24075,485 @@ body.theme-dark .vc-switch:has(input:checked) { border-color: var(--line-strong)
     margin-top: 0;
   }
 }
+
+/* ── Create-test page: numbered steps, per-topic counts, tap-friendly setup,
+   sticky start bar (2026-10-13). Overrides the picker block above. ── */
+.create-test-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.create-test-page > .panel {
+  margin: 0;
+}
+
+.create-test-heading .title {
+  margin-bottom: 0.2rem;
+}
+
+.create-test-heading .subtle {
+  margin: 0;
+}
+
+.create-test-page .create-test-filter-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.35rem;
+  margin-top: 1.1rem;
+}
+
+.create-test-step-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.7rem;
+}
+
+.create-test-step-num {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.create-test-step-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.create-test-step-head .create-test-topic-count {
+  margin-left: auto;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 0.78rem;
+}
+
+.create-test-page .create-test-primary-filters {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 360px));
+}
+
+.create-test-page .create-test-topics-group {
+  gap: 0.6rem;
+}
+
+.create-test-page .create-test-topic-toolbar {
+  gap: 0.5rem;
+}
+
+.create-test-page .create-test-topic-actions {
+  flex: none;
+}
+
+/* Topic list: a soft box with a bottom fade while more topics sit below. */
+.create-test-page .create-test-topic-scroll {
+  max-height: min(440px, 58vh);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 0.4rem;
+  background: var(--surface-soft);
+}
+
+.create-test-page .create-test-topic-scroll.has-more {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
+}
+
+.create-test-page .create-test-topic-list,
+.create-test-page .create-test-topic-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.15rem 0.4rem;
+}
+
+.create-test-page .admin-course-check.create-test-topic-chip,
+.create-test-page .admin-course-check.create-test-topic-chip.is-list-item {
+  align-items: center;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  color: var(--ink);
+  font-weight: 500;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.create-test-page .create-test-topic-chip input[type="checkbox"] {
+  margin-top: 0;
+  accent-color: var(--brand);
+}
+
+.create-test-page .create-test-topic-new-dot {
+  margin-left: 0;
+}
+
+.create-test-topic-qcount {
+  flex: none;
+  min-width: 1.9rem;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.create-test-page .admin-course-check.create-test-topic-chip:has(input:checked) {
+  border-color: color-mix(in srgb, var(--brand) 35%, transparent);
+  font-weight: 600;
+}
+
+.create-test-topic-chip:has(input:checked) .create-test-topic-qcount {
+  background: var(--brand);
+  color: #fff;
+}
+
+.create-test-page .create-test-topic-chip.is-empty {
+  opacity: 0.55;
+}
+
+/* Step 3: mode cards + source pills instead of dropdowns. */
+.create-test-page .create-test-setup-form {
+  margin-top: 0;
+  gap: 1.1rem;
+}
+
+.create-test-choice-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.create-test-choice-group legend {
+  padding: 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.87rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.create-test-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.create-test-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.85rem 1rem;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.create-test-mode-option input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0.15rem 0 0;
+  accent-color: var(--brand);
+}
+
+.create-test-mode-option:hover {
+  border-color: var(--line-strong);
+}
+
+.create-test-mode-option:has(input:checked) {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+.create-test-mode-copy {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.create-test-mode-copy b {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.create-test-mode-copy small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.create-test-source-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.create-test-source-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.6rem 0.45rem 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.create-test-source-pill input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.create-test-source-count {
+  min-width: 1.6rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.create-test-source-pill:hover {
+  border-color: var(--brand);
+}
+
+.create-test-source-pill:has(input:checked) {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.create-test-source-pill:has(input:checked) .create-test-source-count {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.create-test-source-pill:has(input:focus-visible) {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.create-test-source-pill:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.create-test-page .create-test-setup-grid {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.create-test-count-field {
+  position: relative;
+  display: block;
+}
+
+.create-test-count-field input {
+  width: 100%;
+  padding-right: 3.6rem;
+}
+
+.create-test-count-max {
+  position: absolute;
+  right: 0.85rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.create-test-optional {
+  font-weight: 400;
+}
+
+.create-test-page .create-test-setup-field {
+  align-content: start;
+}
+
+.create-test-setup-field[hidden] {
+  display: none;
+}
+
+/* Active test reminder. */
+.create-test-page .create-test-active-block {
+  margin-top: 1rem;
+  flex-wrap: nowrap;
+  gap: 0.85rem;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-strong));
+}
+
+.create-test-active-block-icon {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.create-test-active-block-icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 54%;
+  transform: translate(-50%, -50%);
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 11px solid #c2410c;
+}
+
+.create-test-active-block-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+}
+
+/* Sticky start bar: always reachable while picking topics. */
+.create-test-startbar {
+  position: sticky;
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0.75rem 0.7rem 1.15rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-strong) 90%, transparent);
+  -webkit-backdrop-filter: saturate(1.6) blur(16px);
+  backdrop-filter: saturate(1.6) blur(16px);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+}
+
+.create-test-startbar-copy {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.create-test-startbar-copy b {
+  color: var(--ink);
+  font-family: var(--font-heading);
+  font-size: 1.02rem;
+}
+
+.create-test-startbar-copy small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.create-test-startbar-copy small.is-help {
+  color: #b45309;
+}
+
+.create-test-start-btn {
+  flex: none;
+  min-width: 150px;
+  min-height: 46px;
+  border-radius: 12px;
+  font-size: 1rem;
+}
+
+.create-test-start-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+body.theme-dark .create-test-step-num,
+body.theme-dark .create-test-topic-chip:has(input:checked) .create-test-topic-qcount,
+body.theme-dark .create-test-source-pill:has(input:checked) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface-strong);
+}
+
+body.theme-dark .create-test-source-pill:has(input:checked) .create-test-source-count {
+  background: rgba(0, 0, 0, 0.14);
+}
+
+body.theme-dark .create-test-mode-option:has(input:checked) {
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+
+body.theme-dark .create-test-step-head .create-test-topic-count {
+  color: var(--ink);
+}
+
+body.theme-dark .create-test-startbar-copy small.is-help {
+  color: #f4a259;
+}
+
+@media (max-width: 640px) {
+  .create-test-page .create-test-primary-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .create-test-page .create-test-topic-toolbar .create-test-topic-search {
+    flex-basis: 100%;
+  }
+
+  .create-test-page .create-test-topic-list,
+  .create-test-page .create-test-topic-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .create-test-mode-option {
+    padding: 0.75rem 0.8rem;
+  }
+
+  .create-test-page .create-test-active-block {
+    flex-wrap: wrap;
+  }
+
+  .create-test-page .create-test-active-block-actions {
+    width: 100%;
+  }
+
+  .create-test-page .create-test-active-block-actions .btn {
+    flex: 1 1 0;
+  }
+
+  .create-test-startbar {
+    gap: 0.7rem;
+    padding: 0.6rem 0.6rem 0.6rem 0.9rem;
+  }
+
+  body.has-mobile-tabbar .create-test-startbar {
+    bottom: calc(4.9rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .create-test-start-btn {
+    min-width: 0;
+    padding-inline: 1.1rem;
+  }
+}

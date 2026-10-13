@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Create a Test: question counts, start bar, tap-friendly setup
+- Every topic shows how many questions it holds; empty topics are dimmed.
+- Page is three numbered steps (Course → Topics → Test setup). Mode is two
+  cards (Tutor / Timed) and "Questions from" is a row of pills with live counts
+  (pills with 0 questions are disabled) instead of dropdowns. The timer field
+  only appears in Timed mode.
+- A sticky start bar ("53 questions ready · 3 topics · Tutor") keeps Start test
+  in reach while picking topics; it sits above the mobile tab bar.
+- The topic list fades at the bottom while more topics are below, so a cut-off
+  last row no longer looks broken. Active test banner reworded.
+
 ### 2026-10-13 — Compact, searchable topic picker on Create a Test
 - Courses with 40+ topics (Gyn 504) rendered as tall bordered pills in two
   columns beside a mostly empty Course card. Course/source now sit in one row
