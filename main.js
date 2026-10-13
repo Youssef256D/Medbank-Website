@@ -30,6 +30,7 @@ const STORAGE_KEYS = {
   pendingAdminActions: "mcq_pending_admin_actions",
   pendingQuestionDeletions: "mcq_pending_question_deletions",
   pendingCourseDeletions: "mcq_pending_course_deletions",
+  pendingCourseRenames: "mcq_pending_course_renames",
   pendingCourseTopicDeletions: "mcq_pending_course_topic_deletions",
   courseVideoResume: "mcq_course_video_resume",
   coursePlatformCache: "mcq_course_platform_cache",
@@ -16762,7 +16763,37 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
   }
   let allCourses = Array.isArray(allCoursesResult.data) ? allCoursesResult.data : [];
 
-  const courseRowMatchesDesired = (existingCourse, desiredCourse) => (
+  const pendingCourseRenames = getPendingCourseRenames();
+  if (pendingCourseRenames.length) {
+    const findCourseRow = (courseName, year, semester) => allCourses.find((course) => (
+      course.course_name === courseName
+      && Number(course.academic_year) === year
+      && Number(course.academic_semester) === semester
+    ));
+    for (const rename of pendingCourseRenames) {
+      const sourceRow = findCourseRow(rename.fromName, rename.academicYear, rename.academicSemester);
+      const targetRow = findCourseRow(rename.toName, rename.academicYear, rename.academicSemester);
+      if (sourceRow && !targetRow && isUuidValue(sourceRow.id)) {
+        const nextCode = extractCourseCode(rename.toName);
+        await runRelationalQueryWithTimeout(
+          client
+            .from("courses")
+            .update({ course_name: rename.toName, course_code: nextCode, is_active: true })
+            .eq("id", sourceRow.id),
+          "Course rename sync timed out.",
+        );
+        sourceRow.course_name = rename.toName;
+        sourceRow.course_code = nextCode;
+        sourceRow.is_active = true;
+      } else if (sourceRow && targetRow) {
+        // Target name already has a row: fall back to retiring the old one.
+        queuePendingCourseDeletion(rename.fromName, rename.academicYear, rename.academicSemester);
+      }
+    }
+    clearPendingCourseRenames(pendingCourseRenames.length);
+  }
+
+  const courseRowMatchesDesired =(existingCourse, desiredCourse) => (
     existingCourse
     && String(existingCourse.course_code || "") === String(desiredCourse.course_code || "")
     && Number(existingCourse.academic_year) === Number(desiredCourse.academic_year)
@@ -39504,7 +39535,7 @@ function wireAdmin() {
 
       const nextCurriculum = deepClone(MEDBANK_CURRICULUM);
       nextCurriculum[year][semester][index] = newName;
-      queuePendingCourseDeletion(oldName, year, semester);
+      queuePendingCourseRename(oldName, newName, year, semester);
       applyCurriculumUpdate(nextCurriculum, { renamedFrom: oldName, renamedTo: newName });
       if (state.adminCourseFocus === oldName) {
         state.adminCourseFocus = newName;
@@ -43262,6 +43293,35 @@ function queuePendingCourseDeletion(courseName, academicYear, academicSemester) 
   }
   savePendingCourseDeletions([...getPendingCourseDeletions(), nextEntry]);
   return true;
+}
+
+// A course rename must update the existing courses row in place: questions,
+// topics and enrollments hang off courses.id, so a new row would orphan them.
+function getPendingCourseRenames() {
+  const raw = load(STORAGE_KEYS.pendingCourseRenames, []);
+  return (Array.isArray(raw) ? raw : [])
+    .map((entry) => {
+      const fromName = String(entry?.fromName || "").trim();
+      const toName = String(entry?.toName || "").trim();
+      const academicYear = sanitizeAcademicYear(entry?.academicYear);
+      const academicSemester = sanitizeAcademicSemester(entry?.academicSemester);
+      if (!fromName || !toName || fromName === toName) {
+        return null;
+      }
+      return { fromName, toName, academicYear, academicSemester };
+    })
+    .filter(Boolean);
+}
+
+function queuePendingCourseRename(fromName, toName, academicYear, academicSemester) {
+  saveLocalOnly(STORAGE_KEYS.pendingCourseRenames, [
+    ...getPendingCourseRenames(),
+    { fromName, toName, academicYear, academicSemester },
+  ]);
+}
+
+function clearPendingCourseRenames(count) {
+  saveLocalOnly(STORAGE_KEYS.pendingCourseRenames, getPendingCourseRenames().slice(count));
 }
 
 function clearPendingCourseDeletions(entries) {
