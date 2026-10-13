@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Lock MCQ modules per student or for everyone
+- Admins can lock an MCQ module for all students (Subjects → Course tools →
+  "Lock for all students") and unlock or lock it per student (Users → row menu
+  → "Module locks").
+- Students still see a locked module, with a lock and a "contact the admin"
+  message, on the website (Dashboard, Create a Test) and in the app (Subjects,
+  Create Test). Its questions are hidden by the database, not just the UI.
+- Needs migration `20261013180000_user_course_locks` applied to the hosted DB.
+
 ### 2026-10-13 — Create a Test: question counts, start bar, tap-friendly setup
 - Every topic shows how many questions it holds; empty topics are dimmed.
 - Page is three numbered steps (Course → Topics → Test setup). Mode is two

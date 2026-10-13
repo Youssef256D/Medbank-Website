@@ -24557,3 +24557,106 @@ body.theme-dark .create-test-startbar-copy small.is-help {
     padding-inline: 1.1rem;
   }
 }
+
+/* Admin-locked MCQ modules (user_course_locks / course_locks). */
+.student-locked-courses {
+  margin-top: 0.9rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.student-locked-courses-title {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-heading);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.student-locked-courses-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.student-locked-course {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.student-locked-course-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.student-locked-course-text {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.student-locked-course-text strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.student-locked-course-text span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.admin-module-lock-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.admin-module-lock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.admin-module-lock-row.is-locked {
+  background: var(--surface-soft);
+}
+
+.admin-module-lock-name {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.admin-module-lock-name strong {
+  overflow-wrap: anywhere;
+}
+
+.admin-module-lock-name small {
+  color: var(--muted);
+}
+
+.admin-module-lock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
