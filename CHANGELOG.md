@@ -9,6 +9,24 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Deleted courses no longer come back from the old cloud backup
+- **Bug:** deleting or renaming a Y2 S1 course (CVS, GIT & Liver, RES, SOB)
+  worked, then the courses came back active. Cause:
+  `restoreAdminContentFromSupabaseBackupIfNeeded()` (runs on admin data
+  refresh) union-merged the `g:mcq_curriculum` / `g:mcq_course_topics` /
+  `g:mcq_questions` app_state blobs into the local cache whenever the merge
+  "added" anything or the DB had fewer rows, then saved and synced it. Those
+  blobs stopped being written on 2026-06-13 when the keys became relational,
+  so they still list everything deleted since (the questions blob holds 572
+  questions no longer in the DB). Every delete was undone on the next refresh.
+- The restore now only runs for a key when the DB read **succeeded and returned
+  zero rows** (`isRelationalContentConfirmedEmpty`). `fetchRelationalContentCountsForRestore`
+  returns `null` on any read error instead of counting it as 0.
+  Removed the now-unused `countCurriculumCourses` / `countCourseTopicEntries`.
+- Courses already brought back stay active until an admin deletes them again
+  (the admin's local curriculum also holds them, so a DB-only fix would be
+  re-synced).
+- Tests: `tests/admin-backup-restore.test.js`.
 ### 2026-10-13 — Answer dots centred on the option text
 - `.exam-choice`, `.exam-choice-hit`, `.exam-choice-radio-hit` and the phone
   overrides of `.exam-choice-indicator` / `.exam-choice-radio-hit` used

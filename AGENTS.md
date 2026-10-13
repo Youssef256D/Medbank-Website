@@ -196,6 +196,9 @@ route, or file you are touching; add your own entry at the top when you finish.
 
 ### Load-bearing traps (details in the log)
 
+- **Never let the `g:mcq_curriculum` / `g:mcq_course_topics` / `g:mcq_questions`
+  app_state blobs merge back into live data** unless the DB is confirmed empty;
+  they are stale since 2026-06-13 and resurrect deleted content (2026-10-13).
 - **Topic renames must not set `deleteQuestions`** on the pending topic-deletion
   queue; only real deletes do. The flag makes the sync hard-delete every DB
   question still on that topic (2026-10-13).
