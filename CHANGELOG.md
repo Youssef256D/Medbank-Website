@@ -9,6 +9,18 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Compact, searchable topic picker on Create a Test
+- Courses with 40+ topics (Gyn 504) rendered as tall bordered pills in two
+  columns beside a mostly empty Course card. Course/source now sit in one row
+  above a full-width topic checklist; rows are compact, multi-column, and the
+  list scrolls inside `.create-test-topic-scroll` (max ~420px / 55vh).
+- New `#create-test-topic-search` hides non-matching rows client-side (no
+  re-render). While searching, "Select all topics" becomes "Select matching"
+  and adds only the visible topics to the current selection.
+  `#create-test-topic-count` shows "N of M selected".
+- CSS is one block at the end of `styles.css`, scoped to
+  `.create-test-topics-group`; it overrides the older pill rules.
+
 ### 2026-10-13 — Search on Admin > Questions
 - New search box in the Questions filter bar (`#admin-question-search`,
   `state.adminQuestionSearch`). It narrows the selected subject/topic list;
