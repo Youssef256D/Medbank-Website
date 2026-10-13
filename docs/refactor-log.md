@@ -27,6 +27,7 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   `lockedMcqSubjectsProvider`, `LockedSubjectCard`. The catalog `accessKey`
   excludes locked subject ids — **keep it that way**: the change feed does not
   report questions that only became hidden, so a lock must force a full refetch.
+
 ### 2026-10-13 — Course rename updates the row in place
 - Bug: `curriculum-rename` queued the old name on `pendingCourseDeletions`, so
   the name-keyed `syncCoursesTopicsToRelational` upserted a NEW `courses` row
