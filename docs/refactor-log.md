@@ -2,6 +2,16 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-13 — Search on Admin > Questions
+- New search box in the Questions filter bar (`#admin-question-search`,
+  `state.adminQuestionSearch`). It narrows the selected subject/topic list;
+  every word must appear in the stem, an option, the explanation or the ID
+  (`filterAdminQuestionsBySearch`). Reset clears it with the topic.
+- `getVisibleAdminQuestions()` applies the same filter, so select-all and the
+  bulk draft/publish/delete only touch the matching rows.
+- Drag/swipe reordering is off while a search is active (rows are
+  `draggable="false"`, hint hidden) so a partial list can't be reordered.
+- Tests: `tests/admin-question-search.test.js`.
 ### 2026-10-13 — Answer dots centred on the option text
 - `.exam-choice`, `.exam-choice-hit`, `.exam-choice-radio-hit` and the phone
   overrides of `.exam-choice-indicator` / `.exam-choice-radio-hit` used
