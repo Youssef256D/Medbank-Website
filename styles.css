@@ -23955,3 +23955,123 @@ body.theme-dark .vc-course-avatar { background: rgba(255, 255, 255, 0.1); color:
 body.theme-dark .vc-tab-badge { background: #f4a259; color: #3a2108; }
 body.theme-dark .vc-choice:has(input:checked),
 body.theme-dark .vc-switch:has(input:checked) { border-color: var(--line-strong); }
+
+/* ── Create-test topic picker: compact, searchable, scroll-capped (2026-10-13) ──
+   Long courses (50+ topics) used to render as tall bordered pills in two
+   columns next to a mostly empty Course card. Course/source now sit in a row
+   above a full-width topic checklist that scrolls inside its own box. */
+.create-test-filter-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.create-test-primary-filters {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.create-test-topic-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.create-test-topics-group .create-test-topic-search {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+}
+
+.create-test-topic-count {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.create-test-topic-scroll {
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.35rem 0.1rem;
+}
+
+.create-test-topics-group .create-test-topic-list,
+.create-test-topics-group .create-test-topic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.1rem 0.5rem;
+}
+
+.create-test-topics-group .create-test-topic-section {
+  padding: 0.5rem 0.4rem;
+  gap: 0.3rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.create-test-topics-group .admin-course-check.create-test-topic-chip,
+.create-test-topics-group .admin-course-check.create-test-topic-chip.is-list-item {
+  width: 100%;
+  min-height: 0;
+  justify-self: stretch;
+  align-items: flex-start;
+  gap: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0.34rem 0.5rem;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.create-test-topics-group .create-test-topic-chip input[type="checkbox"] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin-top: 0.1rem;
+}
+
+.create-test-topics-group .admin-course-check.create-test-topic-chip:hover {
+  background: var(--brand-soft);
+}
+
+.create-test-topics-group .admin-course-check.create-test-topic-chip:has(input:checked) {
+  background: var(--brand-soft);
+  border-color: var(--line);
+  font-weight: 600;
+}
+
+.create-test-topics-group .admin-course-check.create-test-topic-chip[hidden],
+.create-test-topics-group .create-test-topic-section[hidden] {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .create-test-topic-scroll {
+    max-height: 60vh;
+  }
+
+  .create-test-topics-group .create-test-topic-list,
+  .create-test-topics-group .create-test-topic-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .create-test-topics-group .admin-course-check.create-test-topic-chip,
+  .create-test-topics-group .admin-course-check.create-test-topic-chip.is-list-item {
+    min-height: 40px;
+    align-items: center;
+    font-size: 0.9rem;
+  }
+
+  .create-test-topics-group .create-test-topic-chip input[type="checkbox"] {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    min-height: 0;
+    margin-top: 0;
+  }
+}

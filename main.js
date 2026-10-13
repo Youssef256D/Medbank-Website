@@ -27937,6 +27937,17 @@ function renderCreateTest() {
       ? '<p class="subtle create-test-topic-empty">Choose a source to see the topics inside it.</p>'
       : topicSections.length
       ? `
+              <div class="create-test-topic-toolbar">
+                <input
+                  type="search"
+                  id="create-test-topic-search"
+                  class="create-test-topic-search"
+                  placeholder="Search ${topicOptions.length} topics"
+                  aria-label="Search topics"
+                  autocomplete="off"
+                />
+                <span id="create-test-topic-count" class="create-test-topic-count" aria-live="polite">${selectedTopics.length} of ${topicOptions.length} selected</span>
+              </div>
               <div class="create-test-topic-actions">
                 <button
                   type="button"
@@ -27955,6 +27966,8 @@ function renderCreateTest() {
                   Clear
                 </button>
               </div>
+              <p id="create-test-topic-no-match" class="subtle create-test-topic-empty" hidden>No topics match your search.</p>
+              <div class="create-test-topic-scroll">
               ${singleFlatTopicSection
       ? `
                   <div class="create-test-topic-list">
@@ -27997,6 +28010,7 @@ function renderCreateTest() {
         .join("")}
                   </div>
                 `}
+              </div>
             `
       : `<p class="subtle create-test-topic-empty">${escapeHtml(emptyTopicMessage)}</p>`}
         </div>
@@ -28068,6 +28082,11 @@ function wireCreateTest() {
   const topicInputs = Array.from(document.querySelectorAll("input[data-role='create-test-topic']"));
   const selectAllTopicsBtn = appEl.querySelector("[data-action='create-test-select-all-topics']");
   const clearTopicsBtn = appEl.querySelector("[data-action='create-test-clear-topic-selection']");
+  const topicSearchInput = document.getElementById("create-test-topic-search");
+  const topicCountEl = document.getElementById("create-test-topic-count");
+  const topicNoMatchEl = document.getElementById("create-test-topic-no-match");
+  const getTopicSearchQuery = () => String(topicSearchInput?.value || "").trim().toLowerCase();
+  const isTopicInputVisible = (entry) => !entry.closest("label")?.hidden;
   const summaryEl = document.getElementById("create-test-filter-summary");
   const startHelpEl = document.getElementById("create-test-start-help");
   const blockForm = document.getElementById("create-test-block-form");
@@ -28093,14 +28112,47 @@ function wireCreateTest() {
     topicInputs.forEach((entry) => {
       entry.checked = allTopicsMode || selectedSet.has(String(entry.value || "").trim());
     });
+    const searching = Boolean(getTopicSearchQuery());
+    const visibleInputs = topicInputs.filter(isTopicInputVisible);
     if (selectAllTopicsBtn) {
-      selectAllTopicsBtn.disabled = totalTopics === 0 || allTopicsMode;
+      selectAllTopicsBtn.textContent = searching ? "Select matching" : "Select all topics";
+      selectAllTopicsBtn.disabled = searching
+        ? visibleInputs.every((entry) => entry.checked)
+        : totalTopics === 0 || allTopicsMode;
     }
     if (clearTopicsBtn) {
       clearTopicsBtn.disabled = selectedSet.size === 0;
     }
+    if (topicCountEl) {
+      const selectedCount = allTopicsMode ? totalTopics : topicInputs.filter((entry) => entry.checked).length;
+      topicCountEl.textContent = `${selectedCount} of ${totalTopics} selected`;
+    }
   };
   syncTopicSelectionUi();
+
+  const applyTopicSearch = () => {
+    const query = getTopicSearchQuery();
+    let visibleCount = 0;
+    topicInputs.forEach((entry) => {
+      const label = entry.closest("label");
+      if (!label) {
+        return;
+      }
+      const matches = !query || String(entry.value || "").toLowerCase().includes(query);
+      label.hidden = !matches;
+      if (matches) {
+        visibleCount += 1;
+      }
+    });
+    appEl.querySelectorAll(".create-test-topic-section").forEach((section) => {
+      section.hidden = !Array.from(section.querySelectorAll("label")).some((label) => !label.hidden);
+    });
+    if (topicNoMatchEl) {
+      topicNoMatchEl.hidden = visibleCount > 0;
+    }
+    syncTopicSelectionUi();
+  };
+  topicSearchInput?.addEventListener("input", applyTopicSearch);
 
   const updateCreateTestSummary = () => {
     const user = getCurrentUser();
@@ -28222,7 +28274,11 @@ function wireCreateTest() {
   });
 
   selectAllTopicsBtn?.addEventListener("click", () => {
-    state.qbankFilters.topics = topicInputs.map((entry) => String(entry.value || "").trim()).filter(Boolean);
+    // While searching, add only the matching topics to the current selection.
+    const targetInputs = getTopicSearchQuery()
+      ? topicInputs.filter((entry) => entry.checked || isTopicInputVisible(entry))
+      : topicInputs;
+    state.qbankFilters.topics = targetInputs.map((entry) => String(entry.value || "").trim()).filter(Boolean);
     updateCreateTestSummary();
   });
 
