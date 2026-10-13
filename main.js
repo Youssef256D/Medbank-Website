@@ -13736,17 +13736,6 @@ async function fetchSupabaseBackupPayloads(storageKeys, scope = "") {
   return payloads;
 }
 
-function countCurriculumCourses(curriculum) {
-  const normalized = normalizeCurriculum(curriculum || DEFAULT_MEDBANK_CURRICULUM);
-  let count = 0;
-  for (let year = 1; year <= 5; year += 1) {
-    for (let semester = 1; semester <= 2; semester += 1) {
-      count += sanitizeCurriculumCourseList(normalized?.[year]?.[semester] || []).length;
-    }
-  }
-  return count;
-}
-
 function mergeCurriculumWithBackup(localCurriculum, backupCurriculum) {
   const local = normalizeCurriculum(localCurriculum || DEFAULT_MEDBANK_CURRICULUM);
   const backup = normalizeCurriculum(backupCurriculum || DEFAULT_MEDBANK_CURRICULUM);
@@ -13794,11 +13783,6 @@ function hasCurriculumAdditions(baseCurriculum, nextCurriculum) {
     }
   }
   return false;
-}
-
-function countCourseTopicEntries(courseTopicMap) {
-  return Object.values(normalizeCourseTopicMap(courseTopicMap || {}))
-    .reduce((sum, topics) => sum + normalizeCourseTopicList(topics || [], "").length, 0);
 }
 
 function mergeCourseTopicMapWithBackup(localTopicMap, backupTopicMap) {
@@ -13871,6 +13855,9 @@ async function fetchRelationalContentCountsForRestore() {
           .range(from, to)
       )),
     ]);
+    if ([coursesResult, topicsResult, questionsResult].some((result) => result?.error || !Array.isArray(result?.data))) {
+      return null;
+    }
     return {
       courseCount: Array.isArray(coursesResult?.data) ? coursesResult.data.length : 0,
       topicCount: Array.isArray(topicsResult?.data) ? topicsResult.data.length : 0,
@@ -13879,6 +13866,16 @@ async function fetchRelationalContentCountsForRestore() {
   } catch {
     return null;
   }
+}
+
+// The app_state backups of curriculum/topics/questions stopped being written
+// once those keys moved to the relational tables (g:mcq_* last written
+// 2026-06-13), so they still hold courses, topics and questions admins have
+// since deleted. Merging them back whenever the DB had "fewer" rows undid
+// every delete. Only use them as disaster recovery: when the DB read
+// succeeded and returned no rows at all. A failed read is not an empty one.
+function isRelationalContentConfirmedEmpty(relationalContentCounts, countKey) {
+  return Boolean(relationalContentCounts) && Number(relationalContentCounts[countKey]) === 0;
 }
 
 async function restoreAdminContentFromSupabaseBackupIfNeeded(options = {}) {
@@ -13910,11 +13907,8 @@ async function restoreAdminContentFromSupabaseBackupIfNeeded(options = {}) {
   if (backupCurriculum && typeof backupCurriculum === "object") {
     const mergedCurriculum = mergeCurriculumWithBackup(currentCurriculum, backupCurriculum);
     if (
-      hasCurriculumAdditions(currentCurriculum, mergedCurriculum)
-      || (
-        relationalContentCounts
-        && relationalContentCounts.courseCount < countCurriculumCourses(mergedCurriculum)
-      )
+      isRelationalContentConfirmedEmpty(relationalContentCounts, "courseCount")
+      && hasCurriculumAdditions(currentCurriculum, mergedCurriculum)
     ) {
       saveLocalOnly(STORAGE_KEYS.curriculum, mergedCurriculum, { audit: false });
       restoredKeys.push(STORAGE_KEYS.curriculum);
@@ -13927,11 +13921,8 @@ async function restoreAdminContentFromSupabaseBackupIfNeeded(options = {}) {
   if (backupTopicMap && typeof backupTopicMap === "object") {
     const mergedTopicMap = mergeCourseTopicMapWithBackup(currentTopicMap, backupTopicMap);
     if (
-      hasCourseTopicAdditions(currentTopicMap, mergedTopicMap)
-      || (
-        relationalContentCounts
-        && relationalContentCounts.topicCount < countCourseTopicEntries(mergedTopicMap)
-      )
+      isRelationalContentConfirmedEmpty(relationalContentCounts, "topicCount")
+      && hasCourseTopicAdditions(currentTopicMap, mergedTopicMap)
     ) {
       saveLocalOnly(STORAGE_KEYS.courseTopics, mergedTopicMap, { audit: false });
       restoredKeys.push(STORAGE_KEYS.courseTopics);
@@ -13946,11 +13937,8 @@ async function restoreAdminContentFromSupabaseBackupIfNeeded(options = {}) {
   if (backupQuestions.length) {
     const mergedQuestions = dedupeQuestions([...backupQuestions, ...currentQuestions]);
     if (
-      mergedQuestions.length > currentQuestions.length
-      || (
-        relationalContentCounts
-        && relationalContentCounts.questionCount < mergedQuestions.length
-      )
+      isRelationalContentConfirmedEmpty(relationalContentCounts, "questionCount")
+      && mergedQuestions.length > currentQuestions.length
     ) {
       saveLocalOnly(STORAGE_KEYS.questions, mergedQuestions, { audit: false });
       restoredKeys.push(STORAGE_KEYS.questions);
