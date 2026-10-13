@@ -16,7 +16,7 @@ hosted Supabase is the source of truth.
 - Students still see a locked module, with a lock and a "contact the admin"
   message, on the website (Dashboard, Create a Test) and in the app (Subjects,
   Create Test). Its questions are hidden by the database, not just the UI.
-- Needs migration `20261013190634_user_course_locks` applied to the hosted DB.
+- Migration `20261013190634_user_course_locks` applied to the hosted DB on 2026-10-13.
 
 ### 2026-10-13 — Create a Test: question counts, start bar, tap-friendly setup
 - Every topic shows how many questions it holds; empty topics are dimmed.
