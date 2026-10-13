@@ -27979,6 +27979,7 @@ function renderCreateTest() {
             <span class="create-test-step-num" aria-hidden="true">1</span>
             <h3 class="create-test-step-title">Course</h3>
           </div>
+          <div class="create-test-course-row">
           <div class="create-test-primary-filters">
             <select name="course" id="create-test-course-select" aria-label="Course">
               ${unlockedCourses
@@ -28000,6 +28001,7 @@ function renderCreateTest() {
       : ""}
           </div>
           ${lockedCoursesNotice}
+          </div>
         </div>
         <div class="create-test-step create-test-topics-group">
           <div class="create-test-step-head">
@@ -49383,25 +49385,19 @@ function renderStudentLockedCoursesNotice(user, lockedCourses) {
   }
   const items = lockedCourses
     .map((course) => {
-      const note = getStudentCourseLock(user, course)?.note || STUDENT_COURSE_LOCK_DEFAULT_MESSAGE;
-      return `
-        <li class="student-locked-course">
-          <span class="student-locked-course-icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
-          </span>
-          <span class="student-locked-course-text">
-            <strong>${escapeHtml(course)}</strong>
-            <span>${escapeHtml(note)}</span>
-          </span>
-        </li>
-      `;
+      const note = getStudentCourseLock(user, course)?.note || "";
+      return `<li${note ? ` title="${escapeHtml(note)}"` : ""}>${escapeHtml(course)}</li>`;
     })
     .join("");
   return `
-    <div class="student-locked-courses" role="note">
-      <p class="student-locked-courses-title">Locked module${lockedCourses.length === 1 ? "" : "s"}</p>
+    <aside class="student-locked-courses" aria-label="Locked module access">
+      <p class="student-locked-courses-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+        Locked module access
+      </p>
       <ul class="student-locked-courses-list">${items}</ul>
-    </div>
+      <p class="student-locked-courses-hint">Contact the admin to unlock.</p>
+    </aside>
   `;
 }
 

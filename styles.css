@@ -24558,23 +24558,43 @@ body.theme-dark .create-test-startbar-copy small.is-help {
   }
 }
 
-/* Admin-locked MCQ modules (user_course_locks / course_locks). */
+/* Admin-locked MCQ modules (user_course_locks / course_locks): a compact
+   side card next to the course picker; drops below it on narrow screens. */
+.create-test-course-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.75rem 1rem;
+}
+
+.create-test-course-row > .create-test-primary-filters {
+  flex: 1 1 280px;
+}
+
 .student-locked-courses {
-  margin-top: 0.9rem;
-  padding: 0.75rem 0.9rem;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-md);
+  flex: 0 1 270px;
+  margin-left: auto;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   background: var(--surface-soft);
+  font-size: 0.82rem;
+}
+
+.dash-quick-actions + .student-locked-courses {
+  margin-top: 0.75rem;
+  max-width: 270px;
 }
 
 .student-locked-courses-title {
-  margin: 0 0 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0.3rem;
   font-family: var(--font-heading);
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 700;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .student-locked-courses-list {
@@ -24582,40 +24602,25 @@ body.theme-dark .create-test-startbar-copy small.is-help {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.5rem;
-}
-
-.student-locked-course {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-}
-
-.student-locked-course-icon {
-  flex: none;
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--surface-strong);
-  color: var(--muted);
-}
-
-.student-locked-course-text {
-  display: grid;
-  gap: 0.1rem;
-  min-width: 0;
-}
-
-.student-locked-course-text strong {
+  gap: 0.15rem;
   color: var(--ink);
+}
+
+.student-locked-courses-list li {
   overflow-wrap: anywhere;
 }
 
-.student-locked-course-text span {
+.student-locked-courses-hint {
+  margin: 0.3rem 0 0;
   color: var(--muted);
-  font-size: 0.88rem;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .student-locked-courses {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
 }
 
 .admin-module-lock-list {
