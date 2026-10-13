@@ -18,6 +18,11 @@ hosted Supabase is the source of truth.
   Create Test). Its questions are hidden by the database, not just the UI.
 - Migration `20261013190634_user_course_locks` applied to the hosted DB on 2026-10-13.
 
+### 2026-10-13 — Renaming a course keeps its questions
+- Renaming a course in admin now renames the existing course instead of
+  creating an empty copy and hiding the original (which made all its
+  questions disappear).
+
 ### 2026-10-13 — Create a Test: question counts, start bar, tap-friendly setup
 - Every topic shows how many questions it holds; empty topics are dimmed.
 - Page is three numbered steps (Course → Topics → Test setup). Mode is two
