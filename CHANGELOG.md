@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Renaming a course keeps its questions
+- Renaming a course in admin now renames the existing course instead of
+  creating an empty copy and hiding the original (which made all its
+  questions disappear).
+
 ### 2026-10-13 — Create a Test: question counts, start bar, tap-friendly setup
 - Every topic shows how many questions it holds; empty topics are dimmed.
 - Page is three numbered steps (Course → Topics → Test setup). Mode is two

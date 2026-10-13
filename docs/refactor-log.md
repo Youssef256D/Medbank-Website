@@ -2,6 +2,20 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-13 — Course rename updates the row in place
+- Bug: `curriculum-rename` queued the old name on `pendingCourseDeletions`, so
+  the name-keyed `syncCoursesTopicsToRelational` upserted a NEW `courses` row
+  (fresh topics, auto-enrollments, 0 questions) and deactivated the old row,
+  which still owned every question. Hit on MBI 106 → IMB 104 (881 questions).
+- Fix: the handler calls `queuePendingCourseRename()` (storage key
+  `mcq_pending_course_renames`). The sync applies these right after the first
+  course fetch, updating `course_name`/`course_code` by id. If the target name
+  already has a row it falls back to queueing the old name for deletion.
+- **Do not** go back to delete-and-recreate for renames: questions, topics,
+  enrollments and history all hang off `courses.id`.
+- Test: `tests/course-rename-queue.test.js` slices the three queue helpers and
+  the rename handler by name.
+
 ### 2026-10-13 — Create a Test: question counts, start bar, tap-friendly setup
 - `renderCreateTest()` now wraps everything in `.create-test-page`; the Start
   button lives in `.create-test-startbar` outside the form and submits via
