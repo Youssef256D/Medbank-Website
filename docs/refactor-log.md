@@ -2,6 +2,32 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-13 — MCQ module locks (universal + per student)
+- Migration `20261013190634_user_course_locks` (rollback in
+  `supabase/rollbacks/`): `course_locks` (module locked for every student,
+  area `mcq`, action `mcq.subjects`) and `user_course_locks` (per-student
+  override, `locked` true/false, area `people`, action `users.access`).
+  Effective rule: the student's override if any, else the universal lock.
+- Enforced in `private.can_current_user_access_question` (final NOT EXISTS),
+  so `questions_select`, `choices_select` and every catalog RPC
+  (`get_accessible_question_catalog_page`, `accessible_catalog_rows`, ...) hide
+  a locked module's questions. `courses_select` and enrollments are untouched:
+  the module stays visible so the UI can show a lock.
+- Website: `ensureStudentCourseLocksFresh()` / `resolveEffectiveCourseLocks()`
+  (tested in `tests/course-locks.test.js`); `getPublishedQuestionsForUser` and
+  the Create a Test picker use `getUnlockedCoursesForUser`. Locked modules show
+  via `renderStudentLockedCoursesNotice` on Dashboard and Create a Test.
+  `getAvailableCoursesForUser` deliberately still returns locked modules (the
+  access-issue logic must not read "all locked" as "no enrollment").
+- Admin: Users row menu → "Module locks" (`openAdminUserModuleLocksDialog`,
+  body-appended like the device dialog); Subjects → Course tools → "Lock for
+  all students" (`toggleAdminCourseUniversalLock`). The per-student dialog only
+  keeps an override row where the student differs from the universal state.
+- Flutter app (`Medbank-App`, same branch name): `McqSubject.isLocked`,
+  `lockedMcqSubjectsProvider`, `LockedSubjectCard`. The catalog `accessKey`
+  excludes locked subject ids — **keep it that way**: the change feed does not
+  report questions that only became hidden, so a lock must force a full refetch.
+
 ### 2026-10-13 — Course rename updates the row in place
 - Bug: `curriculum-rename` queued the old name on `pendingCourseDeletions`, so
   the name-keyed `syncCoursesTopicsToRelational` upserted a NEW `courses` row

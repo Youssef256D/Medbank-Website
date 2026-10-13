@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Lock MCQ modules per student or for everyone
+- Admins can lock an MCQ module for all students (Subjects → Course tools →
+  "Lock for all students") and unlock or lock it per student (Users → row menu
+  → "Module locks").
+- Students still see a locked module, with a lock and a "contact the admin"
+  message, on the website (Dashboard, Create a Test) and in the app (Subjects,
+  Create Test). Its questions are hidden by the database, not just the UI.
+- Migration `20261013190634_user_course_locks` applied to the hosted DB on 2026-10-13.
+
 ### 2026-10-13 — Renaming a course keeps its questions
 - Renaming a course in admin now renames the existing course instead of
   creating an empty copy and hiding the original (which made all its

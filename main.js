@@ -663,6 +663,10 @@ const state = {
   adminCourseSuggestionEditorOpen: false,
   adminCoursePlatformListLimits: {},
   createTestSource: "all",
+  // Admin-locked MCQ modules for the signed-in student (user_course_locks).
+  studentCourseLocks: { userId: "", locks: [], loadedAt: 0, loading: false },
+  // Universal module locks (course_locks) for the admin Subjects page.
+  adminCourseLocks: { byKey: {}, loadedAt: 0, loading: false, error: "", saving: "" },
   previousTestFilters: {
     dateKey: "",
     course: "",
@@ -26877,6 +26881,7 @@ function renderDashboard() {
       </section>
     `;
   }
+  ensureStudentCourseLocksFresh(user);
   const questions = getPublishedQuestionsForUser(user);
   if (contentReadiness.error && !questions.length) {
     logStudentContentAccessDecision(user, {
@@ -26943,6 +26948,7 @@ function renderDashboard() {
           <span class="dash-action-copy"><b>Open analytics</b><small>See trends &amp; what to study next</small></span>
         </button>
       </div>
+      ${renderStudentLockedCoursesNotice(user, getLockedCoursesForUser(user, availableCourses))}
     </section>
 
     ${renderPreviousTestsSection(user)}
@@ -27813,13 +27819,26 @@ function renderCreateTest() {
       </section>
     `;
   }
+  ensureStudentCourseLocksFresh(user);
+  const lockedCourses = getLockedCoursesForUser(user, availableCourses);
+  const unlockedCourses = getUnlockedCoursesForUser(user, availableCourses);
+  const lockedCoursesNotice = renderStudentLockedCoursesNotice(user, lockedCourses);
+  if (!unlockedCourses.length) {
+    return `
+      <section class="panel">
+        <h2 class="title">Create a Test</h2>
+        <p class="subtle">Your modules are locked right now. Contact the admin to unlock them.</p>
+        ${lockedCoursesNotice}
+      </section>
+    `;
+  }
 
   const questions = getPublishedQuestionsForUser(user);
   if (!Array.isArray(state.qbankFilters.topics)) {
     state.qbankFilters.topics = state.qbankFilters.topic ? [state.qbankFilters.topic] : [];
   }
-  if (!availableCourses.includes(state.qbankFilters.course)) {
-    state.qbankFilters.course = availableCourses[0];
+  if (!unlockedCourses.includes(state.qbankFilters.course)) {
+    state.qbankFilters.course = unlockedCourses[0];
     state.qbankFilters.topics = [];
     state.qbankFilters.topicSource = "";
   }
@@ -27962,8 +27981,11 @@ function renderCreateTest() {
           </div>
           <div class="create-test-primary-filters">
             <select name="course" id="create-test-course-select" aria-label="Course">
-              ${availableCourses
+              ${unlockedCourses
       .map((course) => `<option value="${escapeHtml(course)}" ${selectedCourse === course ? "selected" : ""}>${escapeHtml(course)}</option>`)
+      .join("")}
+              ${lockedCourses
+      .map((course) => `<option value="" disabled>🔒 ${escapeHtml(course)} (locked)</option>`)
       .join("")}
             </select>
             ${hasTopicSources
@@ -27977,6 +27999,7 @@ function renderCreateTest() {
             `
       : ""}
           </div>
+          ${lockedCoursesNotice}
         </div>
         <div class="create-test-step create-test-topics-group">
           <div class="create-test-step-head">
@@ -36118,6 +36141,9 @@ function renderAdmin() {
           menuItems.push({ label: "University", attrs: 'data-action="edit-user-university"' });
         }
         if (account.role === "student" && usersCan.access) {
+          menuItems.push({ label: "Module locks", attrs: 'data-action="edit-user-module-locks"' });
+        }
+        if (account.role === "student" && usersCan.access) {
           menuItems.push({
             label: mcqAccessEnabled ? "Turn MCQ access off" : "Turn MCQ access on",
             attrs: `data-action="toggle-user-mcq-access" data-admin-access-item="mcq"${isAdminUserMcqIneligible(account) ? ' title="Not MCQ-eligible: set a Medicine college at a university that offers the MCQ Bank first."' : ""}`,
@@ -36621,6 +36647,7 @@ function renderAdmin() {
       state.adminCourseTopicInlineCreateOpen = false;
     }
     const notebookLinksByCourse = COURSE_NOTEBOOK_LINKS;
+    ensureAdminCourseLocksLoaded();
     const courseSearchQuery = String(state.adminCourseSearch || "").trim();
     const normalizedCourseSearch = courseSearchQuery.toLowerCase();
     const topicCountByCourse = Object.fromEntries(
@@ -36649,7 +36676,7 @@ function renderAdmin() {
         const topicCount = topicCountByCourse[course] || 0;
         const questionCount = getAdminCourseQuestionCount(course, "total");
         const isActive = state.adminCourseTopicModalCourse === course;
-        const courseMeta = `${topicCount} ${topicCount === 1 ? "topic" : "topics"} · ${questionCount} ${questionCount === 1 ? "question" : "questions"}`;
+        const courseMeta = `${isAdminCourseUniversallyLocked(course, curriculumYear, curriculumSemester) ? "🔒 Locked for all · " : ""}${topicCount} ${topicCount === 1 ? "topic" : "topics"} · ${questionCount} ${questionCount === 1 ? "question" : "questions"}`;
         return `
           <li>
             <button
@@ -36716,6 +36743,7 @@ function renderAdmin() {
                       <button class="btn ghost admin-btn-sm" type="button" data-action="course-notebook-link-save">Save</button>
                     </div>
                   </label>
+                  ${renderAdminCourseUniversalLockTool(focusedCourse, curriculumYear, curriculumSemester)}
                 </section>
 
                 <section class="admin-course-workspace-panel admin-course-workspace-panel-danger">
@@ -39611,6 +39639,7 @@ function wireAdmin() {
         "course-notebook-link-save",
         "course-question-edit",
         "course-question-clear",
+        "course-universal-lock-toggle",
       ].includes(action)
     ) {
       return;
@@ -39633,6 +39662,11 @@ function wireAdmin() {
     const currentCourses = MEDBANK_CURRICULUM[year]?.[semester] || [];
     const course = currentCourses[index];
     if (!course) return;
+
+    if (action === "course-universal-lock-toggle") {
+      await toggleAdminCourseUniversalLock(course, year, semester);
+      return;
+    }
 
     if (action === "admin-focus-course" || action === "course-topic-manager-open") {
       state.adminCourseFocus = course;
@@ -41716,6 +41750,18 @@ function wireAdmin() {
         return;
       }
       openAdminUserUniversityDialog(target);
+    });
+  });
+
+  appEl.querySelectorAll("[data-action='edit-user-module-locks']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.closest("tr[data-user-id]")?.getAttribute("data-user-id");
+      const target = userId ? getUsers().find((entry) => entry.id === userId) : null;
+      if (!target) {
+        toast("Account not found.");
+        return;
+      }
+      openAdminUserModuleLocksDialog(target);
     });
   });
 
@@ -49205,8 +49251,162 @@ function getAvailableCoursesForUser(user) {
   return assigned.length ? assigned : all;
 }
 
+// Per-student module locks. A locked module stays in the student's list (with a
+// lock and a "contact admin" message) but is never offered for a test; the
+// database already hides its questions (private.can_current_user_access_question).
+const STUDENT_COURSE_LOCKS_STALE_MS = 30 * 1000;
+const STUDENT_COURSE_LOCK_DEFAULT_MESSAGE = "This module is locked for your account. Contact the admin to unlock it.";
+
+function getStudentCourseLocks(user = getCurrentUser()) {
+  if (!user || user.role !== "student") {
+    return [];
+  }
+  const cache = state.studentCourseLocks;
+  const profileId = String(getUserProfileId(user) || "").trim();
+  if (!profileId || cache?.userId !== profileId || !Array.isArray(cache.locks)) {
+    return [];
+  }
+  return cache.locks;
+}
+
+function getStudentCourseLock(user, courseName) {
+  return getStudentCourseLocks(user).find((lock) => doCourseNamesMatch(lock.courseName, courseName)) || null;
+}
+
+function isCourseLockedForUser(user, courseName) {
+  return Boolean(getStudentCourseLock(user, courseName));
+}
+
+function getUnlockedCoursesForUser(user, availableCourses = getAvailableCoursesForUser(user)) {
+  return (availableCourses || []).filter((course) => !isCourseLockedForUser(user, course));
+}
+
+function getLockedCoursesForUser(user, availableCourses = getAvailableCoursesForUser(user)) {
+  return (availableCourses || []).filter((course) => isCourseLockedForUser(user, course));
+}
+
+function ensureStudentCourseLocksFresh(user = getCurrentUser()) {
+  if (!user || user.role !== "student") {
+    return;
+  }
+  const profileId = String(getUserProfileId(user) || "").trim();
+  const cache = state.studentCourseLocks;
+  if (!isUuidValue(profileId) || cache.loading) {
+    return;
+  }
+  if (cache.userId === profileId && Date.now() - Number(cache.loadedAt || 0) < STUDENT_COURSE_LOCKS_STALE_MS) {
+    return;
+  }
+  refreshStudentCourseLocks(profileId).catch((error) => {
+    console.warn("Could not load module locks.", error?.message || error);
+  });
+}
+
+async function refreshStudentCourseLocks(profileId) {
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    return;
+  }
+  const cache = state.studentCourseLocks;
+  cache.loading = true;
+  try {
+    const [overrideResult, universalResult] = await Promise.all([
+      client
+        .from("user_course_locks")
+        .select("course_id,locked,note,courses(course_name)")
+        .eq("user_id", profileId),
+      client
+        .from("course_locks")
+        .select("course_id,note,courses(course_name)"),
+    ]);
+    // Before the migration is applied the tables do not exist: no locks.
+    [overrideResult, universalResult].forEach(({ error }) => {
+      if (error && !isMissingRelationError(error)) {
+        throw error;
+      }
+    });
+    const locks = resolveEffectiveCourseLocks(
+      Array.isArray(universalResult.data) ? universalResult.data : [],
+      Array.isArray(overrideResult.data) ? overrideResult.data : [],
+    );
+    const signature = (list) => list.map((lock) => `${lock.courseId}|${lock.note}`).sort().join(",");
+    const changed = cache.userId !== profileId || signature(cache.locks || []) !== signature(locks);
+    cache.userId = profileId;
+    cache.locks = locks;
+    cache.loadedAt = Date.now();
+    const current = getCurrentUser();
+    if (changed && String(getUserProfileId(current) || "").trim() === profileId
+      && ["dashboard", "create-test"].includes(state.route)) {
+      render();
+    }
+  } finally {
+    cache.loading = false;
+  }
+}
+
+// Effective rule (mirrors private.can_current_user_access_question): the
+// student's override if one exists, else the universal lock. Rows whose course
+// the reader cannot see (embedded course_name is null) are dropped.
+function resolveEffectiveCourseLocks(universalRows, overrideRows) {
+  const byCourseId = new Map();
+  (universalRows || []).forEach((row) => {
+    const courseId = String(row?.course_id || "").trim();
+    if (!courseId) {
+      return;
+    }
+    byCourseId.set(courseId, {
+      courseId,
+      courseName: String(row?.courses?.course_name || "").trim(),
+      locked: true,
+      note: String(row?.note || "").trim(),
+    });
+  });
+  (overrideRows || []).forEach((row) => {
+    const courseId = String(row?.course_id || "").trim();
+    if (!courseId) {
+      return;
+    }
+    const universal = byCourseId.get(courseId);
+    byCourseId.set(courseId, {
+      courseId,
+      courseName: String(row?.courses?.course_name || universal?.courseName || "").trim(),
+      locked: row?.locked !== false,
+      note: String(row?.note || "").trim() || universal?.note || "",
+    });
+  });
+  return [...byCourseId.values()].filter((lock) => lock.locked && lock.courseName);
+}
+
+function renderStudentLockedCoursesNotice(user, lockedCourses) {
+  if (!lockedCourses.length) {
+    return "";
+  }
+  const items = lockedCourses
+    .map((course) => {
+      const note = getStudentCourseLock(user, course)?.note || STUDENT_COURSE_LOCK_DEFAULT_MESSAGE;
+      return `
+        <li class="student-locked-course">
+          <span class="student-locked-course-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+          </span>
+          <span class="student-locked-course-text">
+            <strong>${escapeHtml(course)}</strong>
+            <span>${escapeHtml(note)}</span>
+          </span>
+        </li>
+      `;
+    })
+    .join("");
+  return `
+    <div class="student-locked-courses" role="note">
+      <p class="student-locked-courses-title">Locked module${lockedCourses.length === 1 ? "" : "s"}</p>
+      <ul class="student-locked-courses-list">${items}</ul>
+    </div>
+  `;
+}
+
 function getPublishedQuestionsForUser(user) {
-  const availableCourses = new Set(getAvailableCoursesForUser(user));
+  const availableCourses = new Set(getUnlockedCoursesForUser(user));
   const publishedQuestions = applyQbankFilters(
     getQuestions().filter((question) => (
       question.status === "published"
@@ -59176,6 +59376,345 @@ function openAdminUserDeviceDialog(account) {
   document.addEventListener("keydown", handleAdminUserDeviceDialogKeydown);
   wrapper.querySelector(".icon-btn")?.focus();
   loadAdminUserDeviceIntoDialog(context);
+}
+
+// Admin: lock an MCQ module for every student (course_locks). Students are
+// then unlocked one by one from Users → Module locks (user_course_locks).
+function getAdminCourseLockKey(courseName, year, semester) {
+  return `${String(courseName || "").trim().toLowerCase()}::${Number(year)}::${Number(semester)}`;
+}
+
+function isAdminCourseUniversallyLocked(courseName, year, semester) {
+  return Boolean(state.adminCourseLocks.byKey[getAdminCourseLockKey(courseName, year, semester)]);
+}
+
+function ensureAdminCourseLocksLoaded(force = false) {
+  const cache = state.adminCourseLocks;
+  if (cache.loading || (!force && cache.loadedAt && Date.now() - cache.loadedAt < 60 * 1000)) {
+    return Promise.resolve();
+  }
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    return Promise.resolve();
+  }
+  cache.loading = true;
+  return Promise.resolve(
+    client
+      .from("course_locks")
+      .select("course_id,note,courses(course_name,academic_year,academic_semester)"),
+  ).then(({ data, error }) => {
+    if (error) {
+      cache.error = isMissingRelationError(error)
+        ? "Module locks are not set up in the database yet (migration 20261013190634 is not applied)."
+        : (error.message || "Could not load module locks.");
+      return;
+    }
+    const byKey = {};
+    (Array.isArray(data) ? data : []).forEach((row) => {
+      if (!row?.courses) {
+        return;
+      }
+      byKey[getAdminCourseLockKey(row.courses.course_name, row.courses.academic_year, row.courses.academic_semester)] = {
+        courseId: String(row.course_id),
+        note: String(row?.note || "").trim(),
+      };
+    });
+    cache.byKey = byKey;
+    cache.error = "";
+  }).catch((error) => {
+    cache.error = error?.message || "Could not load module locks.";
+  }).finally(() => {
+    const firstLoad = !cache.loadedAt;
+    cache.loading = false;
+    cache.loadedAt = Date.now();
+    if (firstLoad && state.route === "admin" && state.adminPage === "mcq-subjects") {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  });
+}
+
+function renderAdminCourseUniversalLockTool(courseName, year, semester) {
+  if (!courseName) {
+    return "";
+  }
+  const cache = state.adminCourseLocks;
+  const locked = isAdminCourseUniversallyLocked(courseName, year, semester);
+  const canEdit = adminAccessCan(getCurrentAdminAccess(), "mcq.subjects");
+  const saving = cache.saving === getAdminCourseLockKey(courseName, year, semester);
+  const status = cache.error
+    ? cache.error
+    : locked
+      ? "Locked for all students. Unlock individual students from Users → Module locks."
+      : "Open to every enrolled student. Lock it to hide its questions from everyone; students still see it with a lock and a \"contact admin\" message.";
+  return `
+    <div class="admin-course-tool-field">
+      <span>Student access</span>
+      <p class="subtle" style="margin: 0.2rem 0 0.5rem;">${escapeHtml(status)}</p>
+      ${canEdit && !cache.error
+        ? `<button class="btn ${locked ? "" : "ghost"} admin-btn-sm" type="button" data-action="course-universal-lock-toggle" ${saving || !cache.loadedAt ? "disabled" : ""}>${saving ? "Saving..." : locked ? "Unlock for all students" : "🔒 Lock for all students"}</button>`
+        : ""}
+    </div>
+  `;
+}
+
+async function toggleAdminCourseUniversalLock(courseName, year, semester) {
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    toast("Sign in again to change module locks.");
+    return;
+  }
+  const cache = state.adminCourseLocks;
+  const key = getAdminCourseLockKey(courseName, year, semester);
+  const existing = cache.byKey[key];
+  if (!existing && !window.confirm(`Lock "${courseName}" for all students? They will see it with a lock until you unlock them one by one from Users → Module locks.`)) {
+    return;
+  }
+  cache.saving = key;
+  state.skipNextRouteAnimation = true;
+  render();
+  try {
+    if (existing) {
+      const { error } = await client.from("course_locks").delete().eq("course_id", existing.courseId);
+      if (error) {
+        throw error;
+      }
+      toast(`${courseName} unlocked for all students.`);
+    } else {
+      const { data: courseRow, error: courseError } = await client
+        .from("courses")
+        .select("id")
+        .eq("course_name", courseName)
+        .eq("academic_year", year)
+        .eq("academic_semester", semester)
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+      if (courseError) {
+        throw courseError;
+      }
+      if (!courseRow?.id) {
+        throw new Error("This subject is not saved in the database yet. Wait for the sync, then try again.");
+      }
+      const { error } = await client
+        .from("course_locks")
+        .upsert({ course_id: courseRow.id, locked_by: getUserProfileId(getCurrentUser()) || null }, { onConflict: "course_id" });
+      if (error) {
+        throw error;
+      }
+      toast(`${courseName} locked for all students.`);
+    }
+  } catch (error) {
+    toast(error?.message || "Could not change the module lock.");
+  } finally {
+    cache.saving = "";
+    await ensureAdminCourseLocksLoaded(true);
+    if (state.route === "admin" && state.adminPage === "mcq-subjects") {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  }
+}
+
+// Admin: lock or unlock a student's MCQ modules. Same shape as the device
+// dialog: appended to body so the Users poll cannot close it, guarded by a
+// token, and always re-read from Supabase after a write. A student's override
+// (user_course_locks) wins over the universal lock (course_locks); the buttons
+// only ever leave an override where it differs from the universal state.
+let adminUserModuleLocksDialogToken = 0;
+
+function handleAdminUserModuleLocksDialogKeydown(event) {
+  if (event.key === "Escape") {
+    closeAdminUserModuleLocksDialog();
+  }
+}
+
+function closeAdminUserModuleLocksDialog() {
+  adminUserModuleLocksDialogToken += 1;
+  document.querySelectorAll("[data-admin-user-module-locks-dialog='true']").forEach((node) => node.remove());
+  document.removeEventListener("keydown", handleAdminUserModuleLocksDialogKeydown);
+}
+
+function openAdminUserModuleLocksDialog(account) {
+  closeAdminUserModuleLocksDialog();
+  const context = {
+    profileId: String(getUserProfileId(account) || "").trim(),
+    name: String(account.name || account.email || "This student").trim(),
+  };
+  const wrapper = document.createElement("div");
+  wrapper.className = "admin-enrollment-picker-modal admin-user-device-modal";
+  wrapper.dataset.adminUserModuleLocksDialog = "true";
+  wrapper.innerHTML = `
+    <button class="admin-enrollment-picker-backdrop" type="button" data-module-locks-dialog-close aria-label="Close module locks"></button>
+    <section class="admin-enrollment-picker-card admin-user-device-card" role="dialog" aria-modal="true" aria-labelledby="admin-user-module-locks-title">
+      <div class="admin-enrollment-picker-head">
+        <div>
+          <h4 id="admin-user-module-locks-title">Module locks</h4>
+          <p class="subtle">${escapeHtml(context.name)}</p>
+        </div>
+        <button class="icon-btn" type="button" data-module-locks-dialog-close aria-label="Close module locks">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="admin-user-device-body" data-module-locks-dialog-body aria-live="polite"></div>
+    </section>
+  `;
+  wrapper.addEventListener("click", (event) => {
+    if (event.target.closest("[data-module-locks-dialog-close]")) {
+      closeAdminUserModuleLocksDialog();
+    }
+  });
+  document.body.appendChild(wrapper);
+  document.addEventListener("keydown", handleAdminUserModuleLocksDialogKeydown);
+  wrapper.querySelector(".icon-btn")?.focus();
+  loadAdminUserModuleLocksIntoDialog(context);
+}
+
+function describeAdminModuleLockState(entry) {
+  if (entry.override === true) {
+    return entry.universal ? "Locked (all students)" : "Locked for this student";
+  }
+  if (entry.override === false) {
+    return entry.universal ? "Unlocked for this student · locked for everyone else" : "Open";
+  }
+  return entry.universal ? "Locked (all students)" : "Open";
+}
+
+async function loadAdminUserModuleLocksIntoDialog(context) {
+  const token = adminUserModuleLocksDialogToken;
+  const body = document.querySelector("[data-admin-user-module-locks-dialog='true'] [data-module-locks-dialog-body]");
+  if (!body) {
+    return;
+  }
+  body.innerHTML = `<p class="subtle">Loading...</p>`;
+  const client = getSupabaseAuthClient();
+  if (!client || !isUuidValue(context.profileId)) {
+    body.innerHTML = `<p class="subtle">Module locks are only available for accounts stored in Supabase.</p>`;
+    return;
+  }
+  let entries = [];
+  let errorMessage = "";
+  try {
+    const [enrollmentResult, overrideResult, universalResult] = await Promise.all([
+      client
+        .from("user_course_enrollments")
+        .select("course_id,courses(course_name,academic_year,academic_semester,is_active)")
+        .eq("user_id", context.profileId),
+      client
+        .from("user_course_locks")
+        .select("course_id,locked")
+        .eq("user_id", context.profileId),
+      client
+        .from("course_locks")
+        .select("course_id"),
+    ]);
+    const firstError = enrollmentResult.error || overrideResult.error || universalResult.error;
+    if (firstError) {
+      errorMessage = isMissingRelationError(firstError)
+        ? "Module locks are not set up in the database yet (migration 20261013190634 is not applied)."
+        : (firstError.message || "Could not load this student's modules.");
+    } else {
+      const overrides = new Map((overrideResult.data || []).map((row) => [String(row.course_id), row.locked !== false]));
+      const universal = new Set((universalResult.data || []).map((row) => String(row.course_id)));
+      entries = (enrollmentResult.data || [])
+        .filter((row) => row?.courses && row.courses.is_active !== false)
+        .map((row) => {
+          const courseId = String(row.course_id);
+          return {
+            courseId,
+            courseName: String(row.courses.course_name || "").trim() || "Untitled module",
+            override: overrides.has(courseId) ? overrides.get(courseId) : null,
+            universal: universal.has(courseId),
+          };
+        })
+        .sort((a, b) => a.courseName.localeCompare(b.courseName));
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not load this student's modules.";
+  }
+  if (token !== adminUserModuleLocksDialogToken) {
+    return;
+  }
+  if (errorMessage) {
+    body.innerHTML = `
+      <p class="subtle">${escapeHtml(errorMessage)}</p>
+      <div class="admin-user-device-release">
+        <button class="btn ghost admin-btn-sm" type="button" data-action="retry-user-module-locks">Try again</button>
+      </div>
+    `;
+    body.querySelector("[data-action='retry-user-module-locks']")?.addEventListener("click", () => {
+      loadAdminUserModuleLocksIntoDialog(context);
+    });
+    return;
+  }
+  if (!entries.length) {
+    body.innerHTML = `<p class="subtle">This student has no MCQ modules yet. Modules come from their year and semester.</p>`;
+    return;
+  }
+  body.innerHTML = `
+    <p class="subtle">A locked module stays visible to the student with a lock and a "contact admin" message; its questions are hidden.</p>
+    <ul class="admin-module-lock-list">
+      ${entries.map((entry) => {
+        const locked = entry.override === null ? entry.universal : entry.override;
+        return `
+          <li class="admin-module-lock-row ${locked ? "is-locked" : ""}">
+            <span class="admin-module-lock-name">
+              <strong>${locked ? "🔒 " : ""}${escapeHtml(entry.courseName)}</strong>
+              <small>${escapeHtml(describeAdminModuleLockState(entry))}</small>
+            </span>
+            <span class="admin-module-lock-actions">
+              <button class="btn ${locked ? "" : "ghost"} admin-btn-sm" type="button" data-module-lock-toggle data-course-id="${escapeHtml(entry.courseId)}">${locked ? "Unlock" : "Lock"}</button>
+            </span>
+          </li>
+        `;
+      }).join("")}
+    </ul>
+  `;
+  body.querySelectorAll("[data-module-lock-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const entry = entries.find((item) => item.courseId === button.getAttribute("data-course-id"));
+      if (entry) {
+        setAdminUserModuleLock(context, entry, button);
+      }
+    });
+  });
+}
+
+async function setAdminUserModuleLock(context, entry, button) {
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    return;
+  }
+  const currentlyLocked = entry.override === null ? entry.universal : entry.override;
+  const nextLocked = !currentlyLocked;
+  button.disabled = true;
+  button.textContent = "Saving...";
+  // Keep an override only where the student differs from the universal state.
+  const query = nextLocked === entry.universal
+    ? client
+      .from("user_course_locks")
+      .delete()
+      .eq("user_id", context.profileId)
+      .eq("course_id", entry.courseId)
+    : client
+      .from("user_course_locks")
+      .upsert({
+        user_id: context.profileId,
+        course_id: entry.courseId,
+        locked: nextLocked,
+        updated_at: new Date().toISOString(),
+        updated_by: getUserProfileId(getCurrentUser()) || null,
+      }, { onConflict: "user_id,course_id" });
+  const { error } = await query;
+  if (error) {
+    toast(error.message || "Could not update the module lock.");
+  } else {
+    toast(`${entry.courseName} ${nextLocked ? "locked" : "unlocked"} for ${context.name}.`);
+  }
+  loadAdminUserModuleLocksIntoDialog(context);
 }
 
 // Admin: a student's university and college. Same shape as the device dialog
