@@ -59345,7 +59345,7 @@ function ensureAdminCourseLocksLoaded(force = false) {
   ).then(({ data, error }) => {
     if (error) {
       cache.error = isMissingRelationError(error)
-        ? "Module locks are not set up in the database yet (migration 20261013180000 is not applied)."
+        ? "Module locks are not set up in the database yet (migration 20261013190634 is not applied)."
         : (error.message || "Could not load module locks.");
       return;
     }
@@ -59554,7 +59554,7 @@ async function loadAdminUserModuleLocksIntoDialog(context) {
     const firstError = enrollmentResult.error || overrideResult.error || universalResult.error;
     if (firstError) {
       errorMessage = isMissingRelationError(firstError)
-        ? "Module locks are not set up in the database yet (migration 20261013180000 is not applied)."
+        ? "Module locks are not set up in the database yet (migration 20261013190634 is not applied)."
         : (firstError.message || "Could not load this student's modules.");
     } else {
       const overrides = new Map((overrideResult.data || []).map((row) => [String(row.course_id), row.locked !== false]));

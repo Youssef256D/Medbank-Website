@@ -19,7 +19,7 @@
 -- enrollments are deleted and re-created when a student's term changes, and
 -- both tables are rewritten by the admin sync; locks must survive that.
 --
--- Rollback: supabase/rollbacks/20261013180000_user_course_locks.down.sql
+-- Rollback: supabase/rollbacks/20261013190634_user_course_locks.down.sql
 
 create table public.course_locks (
   course_id uuid primary key references public.courses (id) on delete cascade,

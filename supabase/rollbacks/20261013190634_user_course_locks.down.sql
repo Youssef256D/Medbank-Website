@@ -1,4 +1,4 @@
--- Rollback for 20261013180000_user_course_locks.sql: restores the previous
+-- Rollback for 20261013190634_user_course_locks.sql: restores the previous
 -- private.can_current_user_access_question body and drops both lock tables.
 
 create or replace function private.can_current_user_access_question(target_course_id uuid, target_topic_id uuid)

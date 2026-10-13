@@ -3,7 +3,7 @@
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
 ### 2026-10-13 — MCQ module locks (universal + per student)
-- Migration `20261013180000_user_course_locks` (rollback in
+- Migration `20261013190634_user_course_locks` (rollback in
   `supabase/rollbacks/`): `course_locks` (module locked for every student,
   area `mcq`, action `mcq.subjects`) and `user_course_locks` (per-student
   override, `locked` true/false, area `people`, action `users.access`).
