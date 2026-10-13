@@ -508,6 +508,7 @@ const state = {
     course: "",
     topic: "",
   },
+  adminQuestionSearch: "",
   adminPage: INITIAL_ADMIN_PAGE,
   adminUserSearch: "",
   adminUserFilterYear: "",
@@ -1072,6 +1073,7 @@ let wasAdminCourseTopicGroupCreateModalOpen = false;
 let wasAdminCourseTopicInlineCreateOpen = false;
 let adminCourseSearchDebounce = null;
 let adminUserSearchDebounce = null;
+let adminQuestionSearchDebounce = null;
 // Selector of the toolbar button that opened the currently-open Users
 // dialog, so closing it (backdrop, x, Escape, Cancel/Done) can return focus
 // there. Cleared once that focus restore happens.
@@ -31023,6 +31025,29 @@ function normalizeAdminQuestionFilterToken(value) {
     .replace(/\s+/g, " ");
 }
 
+// Admin Questions page search: every word must appear somewhere in the
+// question's stem, options, explanation or ID (case-insensitive).
+function filterAdminQuestionsBySearch(questions, query) {
+  const list = Array.isArray(questions) ? questions : [];
+  const terms = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) {
+    return list;
+  }
+  return list.filter((question) => {
+    const haystack = [
+      question?.id,
+      question?.dbId,
+      question?.stem,
+      question?.explanation,
+      ...(Array.isArray(question?.choices) ? question.choices.map((choice) => choice?.text) : []),
+    ]
+      .map((value) => String(value || ""))
+      .join("\n")
+      .toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
 function resolveAdminQuestionListView(questions, allCourses, preferredCourse = "", preferredTopic = "") {
   const questionList = Array.isArray(questions) ? questions : [];
   const configuredCourses = Array.isArray(allCourses) ? allCourses.filter(Boolean) : [];
@@ -36650,8 +36675,10 @@ function renderAdmin() {
       edit: adminAccessCan(questionsAccess, "mcq.questions_edit"),
       remove: adminAccessCan(questionsAccess, "mcq.questions_delete"),
     };
-    const courseQuestions = questionView.filteredQuestions;
-    const questionsFilterKey = `${selectedCourse}::${selectedTopic}`;
+    const questionSearchQuery = String(state.adminQuestionSearch || "");
+    const questionSearchActive = Boolean(questionSearchQuery.trim());
+    const courseQuestions = filterAdminQuestionsBySearch(questionView.filteredQuestions, questionSearchQuery);
+    const questionsFilterKey = `${selectedCourse}::${selectedTopic}::${questionSearchQuery.trim().toLowerCase()}`;
     if (state.adminQuestionsFilterKey !== questionsFilterKey) {
       state.adminQuestionsFilterKey = questionsFilterKey;
       state.adminQuestionsVisibleLimit = ADMIN_QUESTION_RENDER_PAGE_SIZE;
@@ -36699,7 +36726,7 @@ function renderAdmin() {
           <tr
             class="${rowClassNames.join(" ")}"
             data-qid="${escapeHtml(questionId)}"
-            draggable="${questionOpsLocked || !questionId || !questionsCan.edit ? "false" : "true"}"
+            draggable="${questionOpsLocked || !questionId || !questionsCan.edit || questionSearchActive ? "false" : "true"}"
           >
             <td class="admin-question-select-cell">
               <input
@@ -36713,7 +36740,7 @@ function renderAdmin() {
               />
             </td>
             <td class="admin-question-order-cell">
-              <span class="admin-question-drag-handle" data-role="admin-question-drag-handle" data-qid="${escapeHtml(questionId)}" aria-hidden="true" title="${questionOpsLocked || !questionId ? "Reordering temporarily unavailable." : "Drag to reorder"}">
+              <span class="admin-question-drag-handle" data-role="admin-question-drag-handle" data-qid="${escapeHtml(questionId)}" aria-hidden="true" title="${questionSearchActive ? "Clear the search to reorder." : questionOpsLocked || !questionId ? "Reordering temporarily unavailable." : "Drag to reorder"}">
                 <span class="admin-question-drag-bars" aria-hidden="true">
                   <span></span>
                   <span></span>
@@ -36767,7 +36794,7 @@ function renderAdmin() {
     });
     const answerKey = String(editing?.correct?.[0] || "A").toUpperCase();
     const saveQuestionLabel = editing ? "Save changes" : "Save question";
-    const activeQuestionFilterCount = (selectedTopic ? 1 : 0);
+    const activeQuestionFilterCount = (selectedTopic ? 1 : 0) + (questionSearchActive ? 1 : 0);
     const questionYearGroups = buildAdminCourseYearGroups(allCourses);
     const questionYearGroup = findAdminCourseYearGroup(questionYearGroups, selectedCourse);
     const questionsHeaderActions = `
@@ -36807,6 +36834,11 @@ function renderAdmin() {
       .map((topic) => `<option value="${escapeHtml(topic)}" ${selectedTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`)
       .join("")}
         </select>
+        <label class="admin-users-toolbar-search admin-flat-toolbar-search">
+          <span class="sr-only">Search questions</span>
+          <svg class="admin-users-toolbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <input id="admin-question-search" type="search" value="${escapeHtml(questionSearchQuery)}" placeholder="Search questions" />
+        </label>
         ${activeQuestionFilterCount ? `<button class="btn ghost admin-btn-sm" type="button" id="admin-clear-filters">Reset</button>` : ""}
       </form>
     `;
@@ -36833,7 +36865,7 @@ function renderAdmin() {
           </div>`
         : ""
       }
-        ${questionsCan.edit ? `<p class="subtle admin-question-reorder-hint" style="margin-top: 0.7rem;">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>` : ""}
+        ${questionsCan.edit && !questionSearchActive ? `<p class="subtle admin-question-reorder-hint" style="margin-top: 0.7rem;">Drag and drop rows to reorder. On touch devices, swipe up/down on a row to move it.</p>` : ""}
         <div class="table-wrap" style="margin-top: 0.6rem;">
           <table>
             <thead>
@@ -36858,7 +36890,7 @@ function renderAdmin() {
               </tr>
             </thead>
             <tbody>
-              ${questionRows || `<tr><td colspan="6" class="subtle">No questions found for this course/topic.</td></tr>`}
+              ${questionRows || `<tr><td colspan="6" class="subtle">${questionSearchActive ? `No questions match “${escapeHtml(questionSearchQuery.trim())}” in this ${selectedTopic ? "topic" : "subject"}.` : "No questions found for this course/topic."}</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -41589,7 +41621,7 @@ function wireAdmin() {
       state.adminFilters.course = resolvedView.selectedCourse;
       state.adminFilters.topic = resolvedView.selectedTopic;
     }
-    return resolvedView.filteredQuestions;
+    return filterAdminQuestionsBySearch(resolvedView.filteredQuestions, state.adminQuestionSearch);
   };
   const getVisibleQuestionIds = () =>
     getVisibleAdminQuestions()
@@ -41860,9 +41892,34 @@ function wireAdmin() {
     state.skipNextRouteAnimation = true;
     render();
   });
+  const adminQuestionSearchInput = document.getElementById("admin-question-search");
+  adminQuestionSearchInput?.addEventListener("input", () => {
+    const nextValue = String(adminQuestionSearchInput.value || "");
+    state.adminQuestionSearch = nextValue;
+    if (adminQuestionSearchDebounce) {
+      window.clearTimeout(adminQuestionSearchDebounce);
+    }
+    adminQuestionSearchDebounce = window.setTimeout(() => {
+      adminQuestionSearchDebounce = null;
+      state.adminSelectedQuestionIds = [];
+      state.skipNextRouteAnimation = true;
+      render();
+      const nextSearchInput = document.getElementById("admin-question-search");
+      if (nextSearchInput instanceof HTMLInputElement) {
+        nextSearchInput.focus();
+        const cursorPos = nextValue.length;
+        nextSearchInput.setSelectionRange(cursorPos, cursorPos);
+      }
+    }, 160);
+  });
 
   adminClearFilters?.addEventListener("click", () => {
     state.adminFilters = { course: state.adminFilters.course, topic: "" };
+    state.adminQuestionSearch = "";
+    if (adminQuestionSearchDebounce) {
+      window.clearTimeout(adminQuestionSearchDebounce);
+      adminQuestionSearchDebounce = null;
+    }
     state.adminSelectedQuestionIds = [];
     state.skipNextRouteAnimation = true;
     render();
