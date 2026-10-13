@@ -189,6 +189,36 @@ can reactivate them.
 
 ## 7. Refactor log (most recent first)
 
+### 2026-10-13 — Deleting an MCQ Subject keeps its questions
+Frontend only; no schema or policy change. Cache bust `2026-10-13.01-local`.
+
+1. **Never re-label questions on a subject delete again.** `applyCurriculumUpdate`
+   used to move a removed subject's questions to the first subject of the
+   semester, and any question whose subject was not in the curriculum to
+   `CURRICULUM_COURSE_LIST[0]`. `syncQuestionsToRelationalUnsafe` upserts
+   `course_id` from that local label, so a delete moved a whole bank in
+   Supabase (reported for Musculo-Skeletal, 1,531 questions). Only a rename
+   moves questions now.
+2. **Subject delete is a soft delete, and re-adding restores it.** The delete
+   sets `courses.is_active = false` (and its topics); the courses upsert is
+   `onConflict: course_name,academic_year,academic_semester`, so adding the
+   same name in the same term reactivates the same row with its questions.
+   The add handler rebuilds the topic list from the returning questions via
+   `applyCourseTopicsUpdate`.
+3. **`isQuestionOnRemovedSubject` filters the question sync.** For a subject
+   not in `CURRICULUM_COURSE_LIST`, `getQbankCourseTopicMeta` keyword-guesses
+   or falls back to another subject, so those questions are never synced
+   while their subject is deleted: the server row stays the truth.
+4. **Topic normalisation in `applyCurriculumUpdate` only re-cases.** It used
+   `resolveDefaultTopic`, which returns the default topic when the subject's
+   list lacks the topic. A re-added subject has an empty list, so every
+   question's topic was reset to "Clinical Applications" and synced.
+5. **Verified** in the local demo: delete BOS 101 → its 8 questions keep their
+   subject and are skipped by the sync; re-add → all 8 back with their 4
+   topics, Questions page lists 8. Lint, 69 tests. Hosted DB checked
+   read-only: MSS 201 holds 1,531 questions, none elsewhere, and the student
+   catalog RPC returns them.
+
 ### 2026-09-30 — Admin pages: Dashboard, top-bar notice, Users toolbar, Universities
 Frontend only; no schema, RLS, auth or access change. Static cache bust:
 `2026-09-30.07-local` (drop `-local` before shipping).

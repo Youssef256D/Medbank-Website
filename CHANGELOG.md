@@ -9,6 +9,18 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-13 — Deleting an MCQ Subject no longer moves its questions
+- Deleting a subject used to relabel all of its questions to the first
+  remaining subject of that semester, and the question sync then wrote that
+  move to Supabase. Re-adding the subject brought nothing back.
+- Now a deleted subject keeps its questions (hidden from students while the
+  subject is inactive). Re-adding a subject with the same name in the same
+  year/semester brings them back with their topics. The delete confirm says
+  how many questions it has and how to restore them.
+- Live data (MSS 201): checked on the hosted DB — all 1,531 questions are on
+  Musculo-Skeletal System (MSS 201), with no copies elsewhere, and the Year 2
+  Sem 1 student receives them. Cache bust `2026-10-13.01-local`.
+
 ### 2026-09-30 — Bulk Import: pick the year before the subject
 - Step 1 is now Year → Subject → Topic. The Subject list shows only that
   year's subjects, grouped by semester (subjects missing from the curriculum

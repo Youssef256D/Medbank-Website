@@ -16901,6 +16901,11 @@ async function syncQuestionsToRelationalUnsafe(questionsPayload) {
     questions = promotedInlineImages.questions;
     saveLocalOnly(STORAGE_KEYS.questions, questions, { audit: false });
   }
+  // A question whose subject was deleted stays on that (now inactive) subject
+  // in Supabase. getQbankCourseTopicMeta would guess another subject for it,
+  // so never sync it: the server row is the truth until the subject returns.
+  const activeCourseMap = buildActiveCurriculumCourseMap();
+  questions = questions.filter((question) => !isQuestionOnRemovedSubject(question, activeCourseMap));
   const payloadExternalIds = [...new Set(
     questions
       .map((question) => String(question?.id || "").trim())
@@ -37245,10 +37250,20 @@ function wireAdmin() {
     const nextCurriculum = deepClone(MEDBANK_CURRICULUM);
     nextCurriculum[year][semester].push(newCourseName);
     applyCurriculumUpdate(nextCurriculum);
+    // Re-adding a deleted subject: its questions were kept, so rebuild its
+    // topic list from them (applyCourseTopicsUpdate merges question topics).
+    // The sync then reactivates those topics along with the subject row.
+    const returningQuestionCount = getQuestions()
+      .filter((question) => String(question.qbankCourse || question.course || "").trim() === newCourseName).length;
+    if (returningQuestionCount) {
+      applyCourseTopicsUpdate(newCourseName, QBANK_COURSE_TOPICS[newCourseName] || []);
+    }
     state.adminCourseSearch = "";
     state.adminCourseFocus = newCourseName;
     state.adminCourseAddDialogOpen = false;
-    toast("Course added.");
+    toast(returningQuestionCount
+      ? `Course added. Its ${returningQuestionCount} existing question${returningQuestionCount === 1 ? " is" : "s are"} back.`
+      : "Course added.");
     state.skipNextRouteAnimation = true;
     render();
     flushPendingSyncInBackground();
@@ -37352,7 +37367,12 @@ function wireAdmin() {
         toast("Each semester must keep at least one course.");
         return;
       }
-      if (!window.confirm(`Delete course "${removedCourse}"?`)) {
+      const removedQuestionCount = getQuestions()
+        .filter((question) => getQbankCourseTopicMeta(question).course === removedCourse).length;
+      const confirmMessage = removedQuestionCount
+        ? `Delete "${removedCourse}"?\n\nIts ${removedQuestionCount} question${removedQuestionCount === 1 ? "" : "s"} will be hidden from students but NOT deleted. To bring them back, add a subject with exactly the same name to Year ${year} · Semester ${semester}.`
+        : `Delete "${removedCourse}"?`;
+      if (!window.confirm(confirmMessage)) {
         return;
       }
 
@@ -37360,7 +37380,7 @@ function wireAdmin() {
       nextCurriculum[year][semester].splice(index, 1);
       queuePendingCourseDeletion(removedCourse, year, semester);
       const replacementCourse = nextCurriculum[year][semester][0] || CURRICULUM_COURSE_LIST[0] || removedCourse;
-      applyCurriculumUpdate(nextCurriculum, { removedCourse, replacementCourse });
+      applyCurriculumUpdate(nextCurriculum, { removedCourse });
       if (state.adminCourseFocus === removedCourse) {
         state.adminCourseFocus = replacementCourse;
       }
@@ -45394,6 +45414,17 @@ function getRecoveryNeedlesForProfile(profileKey, extraNeedles = []) {
   return [...merged];
 }
 
+// True when the question names a subject that is not in the live curriculum
+// (a deleted subject). Pass a prebuilt map when checking many questions.
+function isQuestionOnRemovedSubject(question, activeCourseMap = buildActiveCurriculumCourseMap()) {
+  const explicitCourse = String(question?.qbankCourse || question?.course || "").trim();
+  return Boolean(explicitCourse) && !resolveMatchingCourseKeyInMap(explicitCourse, activeCourseMap);
+}
+
+function buildActiveCurriculumCourseMap() {
+  return Object.fromEntries(CURRICULUM_COURSE_LIST.map((course) => [course, true]));
+}
+
 function getQbankCourseTopicMeta(question) {
   const explicitCourse = String(question.qbankCourse || question.course || "").trim();
   const explicitTopic = String(question.qbankTopic || question.topic || "").trim();
@@ -46464,7 +46495,7 @@ function syncUsersWithCurriculum() {
 }
 
 function applyCurriculumUpdate(nextCurriculum, options = {}) {
-  const { renamedFrom = "", renamedTo = "", removedCourse = "", replacementCourse = "" } = options;
+  const { renamedFrom = "", renamedTo = "", removedCourse = "" } = options;
 
   if (renamedFrom && renamedTo && COURSE_TOPIC_OVERRIDES[renamedFrom]) {
     COURSE_TOPIC_OVERRIDES[renamedTo] = normalizeCourseTopicList(
@@ -46498,16 +46529,16 @@ function applyCurriculumUpdate(nextCurriculum, options = {}) {
   const questions = getQuestions();
   let questionsChanged = false;
 
+  // Only a rename moves questions. A deleted subject keeps its questions: the
+  // subject is soft-deleted (is_active = false), so they stay attached to it,
+  // are hidden while it is inactive, and come back when a subject with the
+  // same name is added to the same year/semester (the courses upsert
+  // reactivates that row). Re-labelling them to another subject here used to
+  // be synced to Supabase by the question sync, silently moving a whole bank.
   questions.forEach((question) => {
     let nextCourse = question.qbankCourse;
     if (renamedFrom && renamedTo && nextCourse === renamedFrom) {
       nextCourse = renamedTo;
-    }
-    if (removedCourse && replacementCourse && nextCourse === removedCourse) {
-      nextCourse = replacementCourse;
-    }
-    if (nextCourse && !QBANK_COURSE_TOPICS[nextCourse]) {
-      nextCourse = CURRICULUM_COURSE_LIST[0] || nextCourse;
     }
 
     if (nextCourse && question.qbankCourse !== nextCourse) {
@@ -46516,8 +46547,17 @@ function applyCurriculumUpdate(nextCurriculum, options = {}) {
       questionsChanged = true;
     }
 
-    if (question.qbankCourse) {
-      const normalizedTopic = resolveDefaultTopic(question.qbankCourse, question.qbankTopic);
+    // Leave the topic alone for a subject that is not in the curriculum right
+    // now; resolving it would reset every topic to the default.
+    if (question.qbankCourse && CURRICULUM_COURSE_LIST.includes(question.qbankCourse)) {
+      // Re-case a topic to the subject's spelling, but never swap a real topic
+      // for the default: a re-added subject starts with no topic list, and
+      // the swap would be synced to Supabase for every one of its questions.
+      const currentTopic = String(question.qbankTopic || "").trim();
+      const canonicalTopic = findMatchingTopicNameInList(QBANK_COURSE_TOPICS[question.qbankCourse] || [], currentTopic);
+      const normalizedTopic = currentTopic && !isRemovedTopicName(currentTopic)
+        ? (canonicalTopic || currentTopic)
+        : resolveDefaultTopic(question.qbankCourse, currentTopic);
       if (question.qbankTopic !== normalizedTopic) {
         question.qbankTopic = normalizedTopic;
         question.topic = normalizedTopic;
