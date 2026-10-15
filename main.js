@@ -33,6 +33,7 @@ const STORAGE_KEYS = {
   pendingCourseRenames: "mcq_pending_course_renames",
   pendingCourseAdditions: "mcq_pending_course_additions",
   pendingCourseTopicDeletions: "mcq_pending_course_topic_deletions",
+  courseTopicDbSnapshot: "mcq_course_topic_db_snapshot",
   courseVideoResume: "mcq_course_video_resume",
   coursePlatformCache: "mcq_course_platform_cache",
 };
@@ -10732,6 +10733,10 @@ async function hydrateRelationalCoursesAndTopics() {
   const pendingLocalTopics = relationalSync.pendingWrites.has(STORAGE_KEYS.courseTopics)
     ? COURSE_TOPIC_OVERRIDES
     : null;
+  // Topics this browser saw in the DB before that are gone now were deleted
+  // elsewhere; they are not pending additions (2026-10-15).
+  const previousTopicSnapshot = getCourseTopicDbSnapshot();
+  const topicsDeletedElsewhereKeys = [];
   MEDBANK_CURRICULUM = normalizeCurriculum(curriculum);
   COURSE_TOPIC_OVERRIDES = normalizeCourseTopicMap(courseTopicOverrides);
   if (pendingLocalTopics && typeof pendingLocalTopics === "object") {
@@ -10743,7 +10748,15 @@ async function hydrateRelationalCoursesAndTopics() {
       const existingKeys = new Set(existing.map((t) => String(t || "").trim().toLowerCase()));
       const additions = localTopics.filter((t) => {
         const key = String(t || "").trim().toLowerCase();
-        return key && !existingKeys.has(key);
+        if (!key || existingKeys.has(key)) {
+          return false;
+        }
+        const snapshotKey = courseTopicSnapshotKey(courseName, t);
+        if (previousTopicSnapshot?.has(snapshotKey)) {
+          topicsDeletedElsewhereKeys.push(snapshotKey);
+          return false;
+        }
+        return true;
       });
       if (additions.length) {
         COURSE_TOPIC_OVERRIDES[courseName] = [...existing, ...additions];
@@ -10754,6 +10767,7 @@ async function hydrateRelationalCoursesAndTopics() {
   saveLocalOnly(STORAGE_KEYS.curriculum, MEDBANK_CURRICULUM, { audit: false });
   saveLocalOnly(STORAGE_KEYS.courseTopics, COURSE_TOPIC_OVERRIDES, { audit: false });
   saveLocalOnly(STORAGE_KEYS.courseNotebookLinks, COURSE_NOTEBOOK_LINKS, { audit: false });
+  saveCourseTopicDbSnapshot(courses, topics, topicsDeletedElsewhereKeys);
   syncUsersWithCurriculum();
   const currentUser = getCurrentUser();
   if (currentUser?.role === "admin") {
@@ -16875,15 +16889,18 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
     }
   });
 
-  const topicRowMatchesDesired = (existingTopic, desiredTopic) => (
-    existingTopic
-    && Number(existingTopic.sort_order || 0) === Number(desiredTopic.sort_order || 0)
-    && Boolean(existingTopic.is_active) === Boolean(desiredTopic.is_active)
-  );
-  const topicsNeedingUpsert = desiredTopicRows.filter((topic) => {
-    const topicKey = `${topic.course_id}::${topic.topic_name}`;
-    return !topicRowMatchesDesired(currentTopicsByCourseAndName[topicKey], topic);
+  // A topic deleted elsewhere stays deleted: only topics this browser never
+  // saw in the DB (added here) may create or reactivate a row (2026-10-15).
+  const courseNameById = {};
+  (allCourses || []).forEach((course) => {
+    courseNameById[course.id] = String(course.course_name || "").trim();
   });
+  const { upserts: topicsNeedingUpsert, deletedElsewhere: topicsDeletedElsewhere } = selectTopicsNeedingUpsert(
+    desiredTopicRows,
+    currentTopicsByCourseAndName,
+    courseNameById,
+    getCourseTopicDbSnapshot(),
+  );
 
   if (desiredTopicRows.length) {
     for (const topicBatch of splitIntoBatches(topicsNeedingUpsert, RELATIONAL_UPSERT_BATCH_SIZE)) {
@@ -17010,6 +17027,24 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
       );
     }
     clearPendingCourseTopicDeletions(processedTopicDeletions);
+    const deactivatedTopicIdSet = new Set(deactivateTopicIds);
+    allTopics = (allTopics || []).map((topic) => (
+      deactivatedTopicIdSet.has(topic.id) ? { ...topic, is_active: false } : topic
+    ));
+  }
+
+  const deactivatedCourseIdSet = new Set(
+    pendingCourseDeletions
+      .map((entry) => courseRowsByCompositeKey[`${entry.courseName}::${entry.academicYear}::${entry.academicSemester}`]?.id)
+      .filter(Boolean),
+  );
+  saveCourseTopicDbSnapshot(
+    (allCourses || []).filter((course) => !deactivatedCourseIdSet.has(course.id)),
+    allTopics,
+    topicsDeletedElsewhere.map((entry) => courseTopicSnapshotKey(entry.courseName, entry.topicName)),
+  );
+  if (topicsDeletedElsewhere.length) {
+    removeLocalCourseTopicsDeletedElsewhere(topicsDeletedElsewhere);
   }
 }
 
@@ -17977,6 +18012,7 @@ function seedData() {
   }
   const savedCourseTopics = load(STORAGE_KEYS.courseTopics, null);
   COURSE_TOPIC_OVERRIDES = savedCourseTopics && typeof savedCourseTopics === "object" ? savedCourseTopics : {};
+  seedCourseTopicDbSnapshotFromLocal(savedCourseTopics);
   const savedCourseTopicGroups = load(STORAGE_KEYS.courseTopicGroups, null);
   COURSE_TOPIC_GROUPS = savedCourseTopicGroups && typeof savedCourseTopicGroups === "object" ? savedCourseTopicGroups : {};
   const savedCourseNotebookLinks = load(STORAGE_KEYS.courseNotebookLinks, null);
@@ -43384,8 +43420,111 @@ function clearPendingCourseAdditions(keys) {
   saveLocalOnly(STORAGE_KEYS.pendingCourseAdditions, getPendingCourseAdditions().filter((key) => !done.has(key)));
 }
 
-// Desired courses that need an upsert. A course whose only DB row is inactive
-// is left alone unless its key is in reactivateKeys.
+// Topics this browser last saw active in the DB, as "course::topic" keys
+// (null = never recorded). A local topic that is missing or inactive in the DB
+// but is in this snapshot was deleted elsewhere: a stale tab must not re-create
+// it (2026-10-15, Gyn 504 got 13 deleted topics back from an old iPad tab).
+function courseTopicSnapshotKey(courseName, topicName) {
+  return `${String(courseName || "").trim()}::${normalizeTopicKey(topicName)}`;
+}
+
+function getCourseTopicDbSnapshot() {
+  const raw = load(STORAGE_KEYS.courseTopicDbSnapshot, null);
+  return Array.isArray(raw) ? new Set(raw.map((key) => String(key || "")).filter(Boolean)) : null;
+}
+
+// Records the active topics of active courses. extraKeys keeps topics the sync
+// refused to re-create, so a later sync from an old payload still refuses them.
+function saveCourseTopicDbSnapshot(courseRows, topicRows, extraKeys = []) {
+  const courseNameById = {};
+  (courseRows || []).forEach((course) => {
+    if (course?.is_active && course.id) {
+      courseNameById[course.id] = String(course.course_name || "").trim();
+    }
+  });
+  const keys = new Set(extraKeys || []);
+  (topicRows || []).forEach((topic) => {
+    const courseName = courseNameById[topic?.course_id];
+    if (topic?.is_active && courseName && String(topic.topic_name || "").trim()) {
+      keys.add(courseTopicSnapshotKey(courseName, topic.topic_name));
+    }
+  });
+  saveLocalOnly(STORAGE_KEYS.courseTopicDbSnapshot, [...keys]);
+}
+
+// First run of the snapshot code: the saved local topics came from an earlier
+// DB read, so count them as seen. Otherwise this browser's old list (re-saved
+// by seedData on every load) would re-create everything deleted since.
+function seedCourseTopicDbSnapshotFromLocal(savedTopicMap) {
+  if (getCourseTopicDbSnapshot() || !savedTopicMap || typeof savedTopicMap !== "object") {
+    return;
+  }
+  const keys = [];
+  Object.entries(savedTopicMap).forEach(([courseName, topics]) => {
+    (Array.isArray(topics) ? topics : []).forEach((topic) => {
+      if (String(topic || "").trim()) {
+        keys.push(courseTopicSnapshotKey(courseName, topic));
+      }
+    });
+  });
+  saveLocalOnly(STORAGE_KEYS.courseTopicDbSnapshot, keys);
+}
+
+// Splits desired topic rows into the ones to upsert and the ones deleted
+// elsewhere. A topic whose row is missing or inactive is only (re)created when
+// this browser never saw it in the DB, i.e. it was added here. Without a
+// snapshot, an inactive row is still treated as deleted.
+function selectTopicsNeedingUpsert(desiredTopicRows, existingTopicsByKey, courseNameById, snapshot) {
+  const upserts = [];
+  const deletedElsewhere = [];
+  (desiredTopicRows || []).forEach((topic) => {
+    const existing = existingTopicsByKey?.[`${topic.course_id}::${topic.topic_name}`];
+    if (existing?.is_active) {
+      if (Number(existing.sort_order || 0) !== Number(topic.sort_order || 0)) {
+        upserts.push(topic);
+      }
+      return;
+    }
+    const courseName = courseNameById?.[topic.course_id] || "";
+    const wasSeenInDb = snapshot instanceof Set
+      ? snapshot.has(courseTopicSnapshotKey(courseName, topic.topic_name))
+      : Boolean(existing);
+    if (wasSeenInDb) {
+      deletedElsewhere.push({ courseName, topicName: topic.topic_name });
+      return;
+    }
+    upserts.push(topic);
+  });
+  return { upserts, deletedElsewhere };
+}
+
+// Drops topics deleted elsewhere from the local topic map so this browser
+// stops offering them. Not synced back: the DB already has them off.
+function removeLocalCourseTopicsDeletedElsewhere(entries) {
+  const removeKeys = new Set((entries || []).map((entry) => courseTopicSnapshotKey(entry.courseName, entry.topicName)));
+  if (!removeKeys.size) {
+    return false;
+  }
+  let changed = false;
+  Object.keys(COURSE_TOPIC_OVERRIDES || {}).forEach((courseName) => {
+    const topics = Array.isArray(COURSE_TOPIC_OVERRIDES[courseName]) ? COURSE_TOPIC_OVERRIDES[courseName] : [];
+    const kept = topics.filter((topic) => !removeKeys.has(courseTopicSnapshotKey(courseName, topic)));
+    if (kept.length !== topics.length) {
+      COURSE_TOPIC_OVERRIDES[courseName] = normalizeCourseTopicList(kept, courseName);
+      changed = true;
+    }
+  });
+  if (changed) {
+    rebuildCurriculumCatalog();
+    saveLocalOnly(STORAGE_KEYS.courseTopics, COURSE_TOPIC_OVERRIDES, { audit: false });
+  }
+  return changed;
+}
+
+// Desired courses that need an upsert. A course with no DB row, or whose only
+// row is inactive, is left alone unless its key is in reactivateKeys: a stale
+// tab still listing a renamed course's old name must not re-create it
+// (2026-10-15, MBI 106 came back as a new empty row).
 function selectCoursesNeedingUpsert(desiredCourses, existingCourses, reactivateKeys) {
   const allowed = reactivateKeys instanceof Set ? reactivateKeys : new Set(reactivateKeys || []);
   const existingByKey = {};
@@ -43399,7 +43538,7 @@ function selectCoursesNeedingUpsert(desiredCourses, existingCourses, reactivateK
     const key = courseCompositeKey(course.course_name, course.academic_year, course.academic_semester);
     const existing = existingByKey[key];
     if (!existing) {
-      return true;
+      return allowed.has(key);
     }
     if (!existing.is_active && !allowed.has(key)) {
       return false;

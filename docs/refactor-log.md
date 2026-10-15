@@ -2,6 +2,30 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-15 — A stale admin tab can no longer bring deleted topics back
+- **Bug:** 12 deleted Gyn 504 topics (Basic Gynecology, Clinical Applications,
+  Infertility, ...) and the old MBI 106 course name were re-created as new rows
+  on 2026-10-14 21:28 UTC by the same stale tab as the course entry below. The
+  topic upsert wrote every topic in the browser's local map, and a course with
+  no DB row was always inserted.
+- Topics: new local snapshot `mcq_course_topic_db_snapshot` (keys
+  `course::lowercased topic`) of what this browser last saw active in the DB.
+  Saved by `hydrateRelationalCoursesAndTopics` and at the end of
+  `syncCoursesTopicsToRelational`; seeded from the saved local map on first run
+  (`seedCourseTopicDbSnapshotFromLocal` in `seedData`), because `seedData`
+  re-saves the old local map on every load. `selectTopicsNeedingUpsert` only
+  creates or reactivates a topic that is NOT in the snapshot (= added here);
+  the rest are dropped from the local map (`removeLocalCourseTopicsDeletedElsewhere`)
+  and kept in the snapshot as tombstones. The hydrate merge of pending local
+  topics skips snapshot topics too.
+- Courses: `selectCoursesNeedingUpsert` now also needs a queued addition
+  (`queuePendingCourseAddition`, Add course form) to insert a course with no row.
+- **Do not** let the local topic map create rows on its own again; deletes are
+  soft and every stale browser would undo them. Question sync can still
+  auto-create a topic a question points at (`missingTopics`), by design.
+- Tests: `tests/course-topic-sync-deleted-elsewhere.test.js`,
+  `tests/course-sync-reactivation.test.js`.
+
 ### 2026-10-15 — A stale admin tab can no longer bring deleted courses back
 - **Bug:** CVS 202, GIL 203, RES 201 and SOB 204 (Y2 S1) came back active again
   on 2026-10-14 21:28 UTC, after the 2026-10-13 backup fix. Edge logs: a second

@@ -67,14 +67,28 @@ test('an explicitly added course may reactivate its inactive row', () => {
   assert.strictEqual(ctx.getPendingCourseAdditions().length, 0);
 });
 
-test('new courses are inserted and changed codes are updated', () => {
+test('changed codes are updated', () => {
   const ctx = harness();
   const result = ctx.selectCoursesNeedingUpsert(
-    [desired('New', 'NEW 1'), desired('Code', 'COD 2'), desired('Same', 'SAM 1')],
+    [desired('Code', 'COD 2'), desired('Same', 'SAM 1')],
     [row('Code', 'COD 1', true), row('Same', 'SAM 1', true)],
     new Set(),
   );
-  assert.deepStrictEqual(names(result), ['New', 'Code']);
+  assert.deepStrictEqual(names(result), ['Code']);
+});
+
+test('a course with no row is only inserted when added in this browser', () => {
+  // 2026-10-15: a stale tab re-created MBI 106 (renamed to IMB 104) as a new row.
+  const ctx = harness();
+  const stale = ctx.selectCoursesNeedingUpsert([desired('MBI', 'MBI 106')], [], new Set());
+  assert.deepStrictEqual(names(stale), []);
+  ctx.queuePendingCourseAddition('New', 2, 1);
+  const added = ctx.selectCoursesNeedingUpsert(
+    [desired('New', 'NEW 1'), desired('MBI', 'MBI 106')],
+    [],
+    new Set(ctx.getPendingCourseAdditions()),
+  );
+  assert.deepStrictEqual(names(added), ['New']);
 });
 
 test('an active duplicate row wins over an inactive one', () => {
