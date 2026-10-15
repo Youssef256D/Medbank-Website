@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-15 — Deleted topics stay deleted
+- An admin tab left open from before a delete could re-create deleted topics
+  (Gyn 504 got 12 empty topics back) and an old course name (MBI 106). The
+  sync now only creates a topic or course that was added in that browser;
+  anything another admin removed is dropped from the stale tab instead.
+
 ### 2026-10-15 — Deleted courses stay deleted
 - An admin tab left open from before a delete could switch deleted courses
   back on when it next synced. The sync now only re-enables a deleted course
