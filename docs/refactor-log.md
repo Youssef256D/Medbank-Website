@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-15 — A stale admin tab can no longer bring deleted courses back
+- **Bug:** CVS 202, GIL 203, RES 201 and SOB 204 (Y2 S1) came back active again
+  on 2026-10-14 21:28 UTC, after the 2026-10-13 backup fix. Edge logs: a second
+  admin's long-open iPad tab woke up, refreshed its token and synced its local
+  curriculum. `syncCoursesTopicsToRelational` upserted every course in the
+  browser's local curriculum with `is_active: true`, so any stale copy switched
+  deleted rows back on (and their topics, via the inactive-row fallback).
+- Fix: `selectCoursesNeedingUpsert()` skips a desired course whose only DB row
+  is inactive, unless its key is in `mcq_pending_course_additions`
+  (`queuePendingCourseAddition`, written by the Add course form) or it is the
+  target of a rename that fell back to retiring the old row. New courses (no
+  row) are still inserted. Topic upserts now only target active courses.
+- **Do not** go back to "local curriculum is truth" for `is_active`: deletes are
+  soft, so every stale browser would undo them.
+- Tests: `tests/course-sync-reactivation.test.js`.
+
 ### 2026-10-13 — MCQ module locks (universal + per student)
 - Migration `20261013190634_user_course_locks` (rollback in
   `supabase/rollbacks/`): `course_locks` (module locked for every student,
