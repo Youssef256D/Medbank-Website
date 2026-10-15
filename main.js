@@ -31,6 +31,7 @@ const STORAGE_KEYS = {
   pendingQuestionDeletions: "mcq_pending_question_deletions",
   pendingCourseDeletions: "mcq_pending_course_deletions",
   pendingCourseRenames: "mcq_pending_course_renames",
+  pendingCourseAdditions: "mcq_pending_course_additions",
   pendingCourseTopicDeletions: "mcq_pending_course_topic_deletions",
   courseVideoResume: "mcq_course_video_resume",
   coursePlatformCache: "mcq_course_platform_cache",
@@ -16767,6 +16768,8 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
   }
   let allCourses = Array.isArray(allCoursesResult.data) ? allCoursesResult.data : [];
 
+  const pendingCourseAdditions = getPendingCourseAdditions();
+  const reactivateCourseKeys = new Set(pendingCourseAdditions);
   const pendingCourseRenames = getPendingCourseRenames();
   if (pendingCourseRenames.length) {
     const findCourseRow = (courseName, year, semester) => allCourses.find((course) => (
@@ -16792,31 +16795,15 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
       } else if (sourceRow && targetRow) {
         // Target name already has a row: fall back to retiring the old one.
         queuePendingCourseDeletion(rename.fromName, rename.academicYear, rename.academicSemester);
+        reactivateCourseKeys.add(courseCompositeKey(rename.toName, rename.academicYear, rename.academicSemester));
       }
     }
     clearPendingCourseRenames(pendingCourseRenames.length);
   }
 
-  const courseRowMatchesDesired =(existingCourse, desiredCourse) => (
-    existingCourse
-    && String(existingCourse.course_code || "") === String(desiredCourse.course_code || "")
-    && Number(existingCourse.academic_year) === Number(desiredCourse.academic_year)
-    && Number(existingCourse.academic_semester) === Number(desiredCourse.academic_semester)
-    && Boolean(existingCourse.is_active) === Boolean(desiredCourse.is_active)
-  );
-
-  const currentCoursesByCompositeKey = {};
-  (allCourses || []).forEach((course) => {
-    const compositeKey = `${course.course_name}::${course.academic_year}::${course.academic_semester}`;
-    if (!currentCoursesByCompositeKey[compositeKey] || course.is_active) {
-      currentCoursesByCompositeKey[compositeKey] = course;
-    }
-  });
-
-  const coursesNeedingUpsert = desiredCourses.filter((course) => {
-    const compositeKey = `${course.course_name}::${course.academic_year}::${course.academic_semester}`;
-    return !courseRowMatchesDesired(currentCoursesByCompositeKey[compositeKey], course);
-  });
+  // A course deleted elsewhere stays deleted: only courses added in this
+  // browser may switch an inactive row back on (2026-10-15).
+  const coursesNeedingUpsert = selectCoursesNeedingUpsert(desiredCourses, allCourses, reactivateCourseKeys);
 
   if (coursesNeedingUpsert.length) {
     for (const courseBatch of splitIntoBatches(coursesNeedingUpsert, RELATIONAL_UPSERT_BATCH_SIZE)) {
@@ -16833,17 +16820,16 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
     }
     allCourses = Array.isArray(allCoursesResult.data) ? allCoursesResult.data : [];
   }
+  if (pendingCourseAdditions.length) {
+    clearPendingCourseAdditions(pendingCourseAdditions);
+  }
 
-  const courseRowsByName = {};
   const courseRowsListByName = {};
   const courseRowsByCompositeKey = {};
   (allCourses || []).forEach((course) => {
     const compositeKey = `${course.course_name}::${course.academic_year}::${course.academic_semester}`;
     if (!courseRowsByCompositeKey[compositeKey] || course.is_active) {
       courseRowsByCompositeKey[compositeKey] = course;
-    }
-    if (!courseRowsByName[course.course_name] || course.is_active) {
-      courseRowsByName[course.course_name] = course;
     }
     if (course?.is_active) {
       const courseName = String(course.course_name || "").trim();
@@ -16858,7 +16844,8 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
 
   const desiredTopicRows = [];
   Object.entries(topicsByCourseName || {}).forEach(([courseName, topics]) => {
-    const matchingCourses = courseRowsListByName[courseName] || (courseRowsByName[courseName] ? [courseRowsByName[courseName]] : []);
+    // Active courses only: topics of a deleted course must stay off too.
+    const matchingCourses = courseRowsListByName[courseName] || [];
     if (!matchingCourses.length) {
       return;
     }
@@ -39488,6 +39475,7 @@ function wireAdmin() {
 
     const nextCurriculum = deepClone(MEDBANK_CURRICULUM);
     nextCurriculum[year][semester].push(newCourseName);
+    queuePendingCourseAddition(newCourseName, year, semester);
     applyCurriculumUpdate(nextCurriculum);
     state.adminCourseSearch = "";
     state.adminCourseFocus = newCourseName;
@@ -43370,6 +43358,57 @@ function queuePendingCourseRename(fromName, toName, academicYear, academicSemest
 
 function clearPendingCourseRenames(count) {
   saveLocalOnly(STORAGE_KEYS.pendingCourseRenames, getPendingCourseRenames().slice(count));
+}
+
+// Courses an admin added in this browser. Only these may switch an inactive
+// (deleted) courses row back on; any other name in a stale local curriculum
+// must not resurrect a course another admin deleted (2026-10-15).
+function courseCompositeKey(courseName, academicYear, academicSemester) {
+  return `${String(courseName || "").trim()}::${Number(academicYear)}::${Number(academicSemester)}`;
+}
+
+function getPendingCourseAdditions() {
+  const raw = load(STORAGE_KEYS.pendingCourseAdditions, []);
+  return [...new Set((Array.isArray(raw) ? raw : []).map((key) => String(key || "")).filter(Boolean))];
+}
+
+function queuePendingCourseAddition(courseName, academicYear, academicSemester) {
+  saveLocalOnly(STORAGE_KEYS.pendingCourseAdditions, [
+    ...getPendingCourseAdditions(),
+    courseCompositeKey(courseName, sanitizeAcademicYear(academicYear), sanitizeAcademicSemester(academicSemester)),
+  ]);
+}
+
+function clearPendingCourseAdditions(keys) {
+  const done = new Set(keys || []);
+  saveLocalOnly(STORAGE_KEYS.pendingCourseAdditions, getPendingCourseAdditions().filter((key) => !done.has(key)));
+}
+
+// Desired courses that need an upsert. A course whose only DB row is inactive
+// is left alone unless its key is in reactivateKeys.
+function selectCoursesNeedingUpsert(desiredCourses, existingCourses, reactivateKeys) {
+  const allowed = reactivateKeys instanceof Set ? reactivateKeys : new Set(reactivateKeys || []);
+  const existingByKey = {};
+  (existingCourses || []).forEach((course) => {
+    const key = courseCompositeKey(course.course_name, course.academic_year, course.academic_semester);
+    if (!existingByKey[key] || course.is_active) {
+      existingByKey[key] = course;
+    }
+  });
+  return (desiredCourses || []).filter((course) => {
+    const key = courseCompositeKey(course.course_name, course.academic_year, course.academic_semester);
+    const existing = existingByKey[key];
+    if (!existing) {
+      return true;
+    }
+    if (!existing.is_active && !allowed.has(key)) {
+      return false;
+    }
+    return !(
+      String(existing.course_code || "") === String(course.course_code || "")
+      && Boolean(existing.is_active) === Boolean(course.is_active)
+    );
+  });
 }
 
 function clearPendingCourseDeletions(entries) {

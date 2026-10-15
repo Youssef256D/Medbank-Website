@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-15 — Deleted courses stay deleted
+- An admin tab left open from before a delete could switch deleted courses
+  back on when it next synced. The sync now only re-enables a deleted course
+  when an admin adds it again from the Courses page.
+
 ### 2026-10-13 — Lock MCQ modules per student or for everyone
 - Admins can lock an MCQ module for all students (Subjects → Course tools →
   "Lock for all students") and unlock or lock it per student (Users → row menu
