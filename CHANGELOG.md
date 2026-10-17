@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-17 — Course cards show the right question count
+- A new course could show the question count of an old, deleted course with a
+  similar name (new "Obstetric" showed the 574 questions of the removed
+  "Obstetric (Obs 501)"). Counts now only match the exact course name.
+
 ### 2026-10-15 — Deleted topics stay deleted
 - An admin tab left open from before a delete could re-create deleted topics
   (Gyn 504 got 12 empty topics back) and an old course name (MBI 106). The
@@ -44,6 +49,11 @@ hosted Supabase is the source of truth.
   in reach while picking topics; it sits above the mobile tab bar.
 - The topic list fades at the bottom while more topics are below, so a cut-off
   last row no longer looks broken. Active test banner reworded.
+
+### 2026-10-13 — Codex skills
+- Imported the five MedBank Claude workflow skills and the OpenCode delegation
+  skill into `.agents/skills/`. Updated hard-coded Claude skill paths in the
+  poster and multi-source import guides.
 
 ### 2026-10-13 — Compact, searchable topic picker on Create a Test
 - Courses with 40+ topics (Gyn 504) rendered as tall bordered pills in two

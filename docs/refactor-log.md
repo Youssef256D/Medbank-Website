@@ -2,6 +2,21 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-17 — Admin course cards no longer show another course's question count
+- **Bug:** the new "Obstetric" course (0 questions) showed "574 questions":
+  the count of the deactivated "Obstetric (Obs 501)". `get_admin_question_count_summary`
+  groups by `course_name` only, and `getAdminCourseQuestionCount` matched rows
+  with `doCourseNamesMatch`, which drops the "(code)" part and also matches
+  on a shared code (e.g. "Endocrinology (SM 406)" vs "Surgery Medical 406 (SM 406)").
+- Fix: exact name match first, then a case-insensitive one; the fuzzy
+  `doCourseNamesMatch` is used only for the local (non-DB) fallback snapshot.
+- **Do not** go back to fuzzy matching on remote snapshots. A real fix would
+  group the RPC by `course_id`.
+- Data (owner-approved, hosted DB): hard-deleted the 574 questions of the
+  inactive "Obstetric (Obs 501)" course (`c24ef8a8-...`) with their choices,
+  plus the 40 `test_blocks` (14 students, items + responses) that used them.
+  `test_block_items.question_id` is ON DELETE RESTRICT, so blocks go first.
+
 ### 2026-10-15 — A stale admin tab can no longer bring deleted topics back
 - **Bug:** 12 deleted Gyn 504 topics (Basic Gynecology, Clinical Applications,
   Infertility, ...) and the old MBI 106 course name were re-created as new rows
@@ -96,6 +111,13 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   resolution) and `getCreateTestSourceCounts()` (calls `applySourceFilter` for
   each source; recomputed on every topic change).
 - Styles: block at the end of `styles.css` scoped to `.create-test-page`.
+
+### 2026-10-13 — Import Claude workflows for Codex
+- Added the five MedBank-specific Claude skills and `opencode-delegate` to
+  `.agents/skills/`, the repo-local skill directory Codex can load.
+- Updated MedBank poster/import skill script references to use these repo-local
+  copies. Existing GSAP, design, and Supabase skills were already shared with
+  Codex and were not duplicated.
 
 ### 2026-10-13 — Compact, searchable topic picker on Create a Test
 - Courses with 40+ topics (Gyn 504) rendered as tall bordered pills in two
