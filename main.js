@@ -300,6 +300,10 @@ const SUPABASE_FLUSH_DEBOUNCE_MS = 1200;
 const SUPABASE_RETRY_FLUSH_MS = 1200;
 const SUPABASE_BACKUP_RETRY_MAX_MS = 60000;
 const SESSION_SYNC_FLUSH_MS = 600;
+// Submitting a block waits at most this long for the cloud write before it
+// opens the review; a slow or stuck sync keeps going in the background
+// instead of leaving the submit buttons looking dead.
+const SESSION_SUBMIT_SYNC_WAIT_MS = 5000;
 // The exam clock ticks every second and each tick rewrites the whole
 // mcq_sessions app_state blob (30 KB to 1 MB+). Clock-only changes go to the
 // cloud at most this often; answers, flags, pause, submit, hiding the tab and
@@ -1469,6 +1473,7 @@ let questionSyncInFlightPromise = null;
 let queuedQuestionSyncPayload = null;
 let syncStatusUiRefreshHandle = null;
 let pendingSyncBackgroundPromise = null;
+let sessionSubmitInFlight = false;
 let lifecycleResumeHandle = null;
 let studentBootRefreshPromise = null;
 let studentBootRefreshKey = "";
@@ -30051,6 +30056,9 @@ async function handleSessionClick(event) {
   }
 
   if (action === "submit-session") {
+    if (sessionSubmitInFlight) {
+      return;
+    }
     const unansweredQuestionNumbers = session.questionIds
       .map((qid, index) => {
         const resolvedQuestionId = resolveSessionQuestionId(qid, questionStore);
@@ -30070,6 +30078,12 @@ async function handleSessionClick(event) {
       }
     }
 
+    sessionSubmitInFlight = true;
+    appEl.querySelectorAll('[data-action="submit-session"]').forEach((button) => {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.textContent = "Submitting…";
+    });
     session.questionIds.forEach((qid) => {
       const resolvedQuestionId = resolveSessionQuestionId(qid, questionStore);
       const response = session.responses[qid] || session.responses[resolvedQuestionId];
@@ -30077,13 +30091,32 @@ async function handleSessionClick(event) {
         response.submitted = true;
       }
     });
-    finalizeSession(session.id, { questionStore });
+    try {
+      finalizeSession(session.id, { questionStore });
+    } catch (error) {
+      sessionSubmitInFlight = false;
+      console.error("Could not finalize block.", error);
+      toast("Could not submit this block. Please try again.");
+      render();
+      return;
+    }
     let syncWarning = "";
     try {
-      await flushPendingSyncNow({ throwOnRelationalFailure: true });
+      let syncWaitTimer = null;
+      const syncOutcome = await Promise.race([
+        flushPendingSyncNow({ throwOnRelationalFailure: true }).then(() => "synced"),
+        new Promise((resolve) => {
+          syncWaitTimer = window.setTimeout(() => resolve("timeout"), SESSION_SUBMIT_SYNC_WAIT_MS);
+        }),
+      ]).finally(() => window.clearTimeout(syncWaitTimer));
+      if (syncOutcome === "timeout") {
+        syncWarning = "Block submitted locally, but cloud sync is still running. Keep this tab open until sync completes.";
+      }
     } catch (error) {
       console.warn("Could not persist completed block before opening review.", error?.message || error);
       syncWarning = "Block submitted locally, but cloud sync has not finished yet. Keep this tab open until sync completes.";
+    } finally {
+      sessionSubmitInFlight = false;
     }
     if (!syncWarning && hasUnresolvedSessionCloudSync(session.id)) {
       syncWarning = "Block submitted locally, but cloud sync is still pending. Keep this tab open until sync completes.";

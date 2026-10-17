@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-17 — Submitting a block no longer looks stuck
+- "Submit all and finish" and "Finish and submit" waited for the cloud save
+  with no time limit, so a slow or stuck sync made both buttons look dead.
+  They now show "Submitting…", ignore extra clicks, and open the review after
+  at most 5 seconds while the save carries on in the background.
+
 ### 2026-10-17 — Course cards show the right question count
 - A new course could show the question count of an old, deleted course with a
   similar name (new "Obstetric" showed the 574 questions of the removed
