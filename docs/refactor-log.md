@@ -2,6 +2,18 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-17 — Block submit no longer hangs on the cloud flush
+- **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit
+  all and finish" and last-question "Finish and submit") went through
+  `handleSessionClick`, which awaited `flushPendingSyncNow` with no timeout
+  before `navigate("review")`. A slow/stuck relational flush left the student
+  on the session page with no feedback, and repeat clicks re-ran the flow.
+- Fix: the wait is raced against `SESSION_SUBMIT_SYNC_WAIT_MS` (5 s); on timeout
+  the review opens with the existing "keep this tab open" warning and the flush
+  keeps running. `sessionSubmitInFlight` blocks re-entry and the buttons show
+  "Submitting…". A throw from `finalizeSession` now toasts instead of failing silently.
+- Do not put the submit back behind an unbounded network await.
+
 ### 2026-10-17 — Admin course cards no longer show another course's question count
 - **Bug:** the new "Obstetric" course (0 questions) showed "574 questions":
   the count of the deactivated "Obstetric (Obs 501)". `get_admin_question_count_summary`
