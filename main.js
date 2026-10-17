@@ -14860,7 +14860,17 @@ function getAdminCourseQuestionCount(course, metric = "total") {
   const normalizedMetric = ["total", "published", "publishedUsable", "publishedUnusable", "draft", "archived"].includes(metric)
     ? metric
     : "total";
-  const entry = (snapshot?.byCourse || []).find((row) => doCourseNamesMatch(row.courseName, course));
+  const rows = Array.isArray(snapshot?.byCourse) ? snapshot.byCourse : [];
+  const target = String(course || "").trim();
+  // Remote snapshots are keyed by the real DB course_name, so only an exact
+  // (case-insensitive) match is safe. The fuzzy doCourseNamesMatch would map a
+  // new "Obstetric" course onto a deactivated "Obstetric (Obs 501)" (or two
+  // courses sharing a code like "SM 406") and show the other course's count.
+  let entry = rows.find((row) => String(row?.courseName || "").trim() === target)
+    || rows.find((row) => String(row?.courseName || "").trim().toLowerCase() === target.toLowerCase());
+  if (!entry && snapshot?.source === "local") {
+    entry = rows.find((row) => doCourseNamesMatch(row.courseName, course));
+  }
   return toAdminCountNumber(entry?.[normalizedMetric]);
 }
 
