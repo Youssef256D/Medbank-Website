@@ -36628,6 +36628,10 @@ function renderAdmin() {
       const editCourses = editIsStudent ? getAdminVisibleCoursesForUser(editDisplay, allCourses) : [];
       const editSaveMode = getAdminUserEnrollmentSaveMode(editId);
       const editMissing = isUserAccessApproved(editUserAccount) ? [] : describeMissingStudentApprovalFields(editUserAccount);
+      const editCurrentEmail = String(editUserAccount.email || "").trim().toLowerCase();
+      // Only a real Supabase account can have its sign-in email moved, and only
+      // by an admin holding the users.edit action (the Edge Function re-checks).
+      const editCanChangeEmail = isUuidValue(getUserProfileId(editUserAccount)) && usersCan.edit;
       const editBody = `
         <div class="admin-user-edit" data-user-edit-root data-user-id="${escapeHtml(editId)}">
           <div class="form-row">
@@ -36638,6 +36642,12 @@ function renderAdmin() {
               <input id="admin-user-edit-phone" type="tel" data-field="phone" value="${escapeHtml(String(editDisplay.phone ?? ""))}" inputmode="tel" autocomplete="off" maxlength="20" placeholder="+20 10 0000 0000" />
             </label>
           </div>
+          ${editCanChangeEmail
+        ? `<label>Sign-in email
+              <input id="admin-user-edit-email" type="email" data-original-email="${escapeHtml(editCurrentEmail)}" value="${escapeHtml(editCurrentEmail)}" autocomplete="off" maxlength="254" spellcheck="false" />
+              <small class="subtle">Changing it changes how they sign in. The new address is marked confirmed.</small>
+            </label>`
+        : ""}
           ${editIsStudent
         ? `<div class="form-row">
               <label>Year
@@ -41416,6 +41426,34 @@ function wireAdmin() {
     button.addEventListener("click", async () => {
       const row = button.closest("tr[data-user-id], [data-user-edit-root][data-user-id]");
       clearEnrollmentAutoSaveTimer(row);
+      const emailInput = row?.querySelector("#admin-user-edit-email");
+      const nextEmail = String(emailInput?.value || "").trim().toLowerCase();
+      const originalEmail = String(emailInput?.getAttribute("data-original-email") || "").trim().toLowerCase();
+      if (emailInput && nextEmail !== originalEmail) {
+        const userId = String(row.getAttribute("data-user-id") || "").trim();
+        const account = getUsers().find((entry) => String(entry?.id || "").trim() === userId);
+        button.disabled = true;
+        const emailResult = await updateSupabaseAuthUserEmailAsAdmin(getUserProfileId(account), nextEmail);
+        button.disabled = false;
+        if (!emailResult.ok) {
+          toast(`Email not changed: ${emailResult.message}`);
+          emailInput.focus();
+          return;
+        }
+        // The function already wrote profiles.email; mirror it locally so the
+        // next sync does not write the old address back.
+        const users = getUsers();
+        const idx = users.findIndex((entry) => String(entry?.id || "").trim() === userId);
+        if (idx !== -1) {
+          users[idx].email = emailResult.email;
+          save(STORAGE_KEYS.users, users, {
+            userSyncScope: USER_RELATIONAL_SYNC_SCOPE_ADMIN,
+            profileSyncIds: [getUserProfileId(users[idx])],
+          });
+        }
+        emailInput.setAttribute("data-original-email", emailResult.email);
+        appendSystemLog("admin.user_email_changed", "Changed a user's sign-in email.", { userId });
+      }
       const saved = await saveUserEnrollmentFromRow(row, { mode: "manual", syncNow: true });
       if (saved && row?.hasAttribute("data-user-edit-root")) {
         closeAdminUserEditDialog({ discardDraft: false });
@@ -46298,6 +46336,60 @@ async function setSupabaseAuthUserPasswordAsAdmin(targetAuthId, password) {
     return { ok: false, message: "Could not update Supabase user password." };
   } catch (error) {
     return { ok: false, message: error?.message || "Unexpected error during Supabase password update." };
+  }
+}
+
+// Changes a user's sign-in email (auth.users) and the profile's copy, through
+// the same `admin-update-user-email` Edge Function the MedBank app uses. Auth
+// owns the address, so a plain profiles write would leave sign-in unchanged.
+// The function checks the `users.edit` admin action itself.
+async function updateSupabaseAuthUserEmailAsAdmin(targetAuthId, email) {
+  const safeTargetAuthId = String(targetAuthId || "").trim();
+  const nextEmail = String(email || "").trim().toLowerCase();
+  if (!isUuidValue(safeTargetAuthId)) {
+    return { ok: false, message: "This account has no sign-in record to update." };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail) || nextEmail.length > 254) {
+    return { ok: false, message: "Enter a valid email address." };
+  }
+  const authClient = getSupabaseAuthClient();
+  if (!authClient || !SUPABASE_CONFIG.url || !SUPABASE_CONFIG.legacyAnonKey) {
+    return { ok: false, message: "Supabase is not available. Try again in a moment." };
+  }
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const tokenResult = await getValidSupabaseAccessToken(authClient);
+      if (!tokenResult.ok) {
+        return { ok: false, message: tokenResult.message || "Could not verify Supabase session." };
+      }
+      const response = await fetchWithTimeout(`${SUPABASE_CONFIG.url}/functions/v1/admin-update-user-email`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${tokenResult.token}`,
+          apikey: SUPABASE_CONFIG.legacyAnonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ targetAuthId: safeTargetAuthId, email: nextEmail }),
+      });
+      const payload = await readJsonResponseSafe(response);
+      const details = await getResponseDetails(response, payload);
+      if (response.ok && payload?.ok !== false) {
+        return { ok: true, email: nextEmail };
+      }
+      if ((response.status === 401 || response.status === 403) && attempt === 0 && (!details || isInvalidJwtMessage(details))) {
+        await runSupabaseAuthRequestWithTimeout(
+          authClient,
+          () => authClient.auth.refreshSession({ refresh_token: tokenResult.refreshToken || undefined }).catch(() => { }),
+          SUPABASE_SESSION_TIMEOUT_MS,
+          "Supabase session refresh timed out.",
+        );
+        continue;
+      }
+      return { ok: false, message: details || `Email update failed (${response.status}).` };
+    }
+    return { ok: false, message: "Could not update the email." };
+  } catch (error) {
+    return { ok: false, message: getErrorMessage(error, "Could not update the email.") };
   }
 }
 
@@ -59414,6 +59506,48 @@ function renderAdminUserDeviceExemption(exemption) {
   `;
 }
 
+// Google Play Integrity, mirroring the MedBank app's user page. Verdicts are
+// written only by the `verify-play-integrity` Edge Function; admins can read
+// them and exempt a real phone that Google fails (device_integrity_exemptions).
+const ADMIN_DEVICE_INTEGRITY_OUTCOME_LABELS = {
+  pass: "Passed",
+  fail: "Failed",
+  unavailable: "Couldn't check",
+  invalid: "Invalid check",
+};
+
+function renderAdminUserDeviceIntegrity(integrity) {
+  if (!integrity) {
+    return "";
+  }
+  if (integrity.error) {
+    return `
+      <h5 class="admin-user-device-subtitle">Google Play device check</h5>
+      <p class="subtle">The device check is unavailable: ${escapeHtml(integrity.error)}</p>
+    `;
+  }
+  const outcome = String(integrity.outcome || "").trim();
+  const fields = [
+    ["Latest result", ADMIN_DEVICE_INTEGRITY_OUTCOME_LABELS[outcome] || (outcome ? outcome : "Not checked yet")],
+    integrity.checkedAt ? ["Checked", formatReportDateTime(integrity.checkedAt)] : null,
+    integrity.hints.length ? ["Signals", integrity.hints.join(", ")] : null,
+  ].filter(Boolean);
+  return `
+    <h5 class="admin-user-device-subtitle">Google Play device check</h5>
+    <dl class="admin-user-device-fields">
+      ${fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+    </dl>
+    <div class="admin-user-device-release admin-user-device-exemption">
+      <button class="btn ghost admin-btn-sm" type="button" data-action="toggle-user-integrity-exemption">
+        ${integrity.exempt ? "Remove device check exemption" : "Exempt from device check"}
+      </button>
+      <p class="subtle">${integrity.exempt
+        ? "Exempt: this student is never refused by the device check."
+        : "For a real phone that Google fails. This student is never refused by the device check. Takes effect within 30 seconds."}</p>
+    </div>
+  `;
+}
+
 function renderAdminUserDeviceDetails(device, exemption) {
   if (exemption.exempt) {
     return `
@@ -59463,9 +59597,10 @@ async function loadAdminUserDeviceIntoDialog(context) {
   }
   let device = null;
   const exemption = { exempt: false, error: "" };
+  const integrity = { outcome: "", checkedAt: "", hints: [], exempt: false, error: "" };
   let errorMessage = "";
   try {
-    const [deviceResult, exemptionResult] = await Promise.all([
+    const [deviceResult, exemptionResult, verdictResult, integrityExemptionResult] = await Promise.all([
       client
         .from("user_devices")
         .select("device_name, platform, registered_at, last_seen_at")
@@ -59475,8 +59610,32 @@ async function loadAdminUserDeviceIntoDialog(context) {
         .from("user_device_exemptions")
         .select("user_id")
         .eq("user_id", context.profileId)
+        .maybeSingle(),
+      client
+        .from("device_integrity_verdicts")
+        .select("outcome, created_at, signal_hints")
+        .eq("user_id", context.profileId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      client
+        .from("device_integrity_exemptions")
+        .select("user_id")
+        .eq("user_id", context.profileId)
         .maybeSingle()
     ]);
+    // Same rule as the device-limit exemption: an unread state is shown as
+    // unavailable, never as "not exempt".
+    if (verdictResult.error || integrityExemptionResult.error) {
+      integrity.error = (verdictResult.error || integrityExemptionResult.error).message || "Could not load the device check.";
+    } else {
+      integrity.outcome = String(verdictResult.data?.outcome || "").trim();
+      integrity.checkedAt = verdictResult.data?.created_at || "";
+      integrity.hints = (Array.isArray(verdictResult.data?.signal_hints) ? verdictResult.data.signal_hints : [])
+        .map((hint) => String(hint || "").trim())
+        .filter(Boolean);
+      integrity.exempt = Boolean(integrityExemptionResult.data);
+    }
     if (deviceResult.error) {
       errorMessage = deviceResult.error.message || "Could not load the registered device.";
     } else {
@@ -59507,7 +59666,11 @@ async function loadAdminUserDeviceIntoDialog(context) {
     });
     return;
   }
-  body.innerHTML = renderAdminUserDeviceDetails(device, exemption);
+  body.innerHTML = renderAdminUserDeviceDetails(device, exemption) + renderAdminUserDeviceIntegrity(integrity);
+  const integrityButton = body.querySelector("[data-action='toggle-user-integrity-exemption']");
+  integrityButton?.addEventListener("click", () => {
+    toggleAdminUserIntegrityExemption(context, integrity.exempt, integrityButton);
+  });
   const releaseButton = body.querySelector("[data-action='release-user-device']");
   releaseButton?.addEventListener("click", () => {
     releaseAdminUserDevice(context, device, releaseButton);
@@ -59557,6 +59720,50 @@ async function toggleAdminUserDeviceExemption(context, currentlyExempt, button) 
     return;
   }
   toast(currentlyExempt ? "Exemption removed." : "Student exempted from the device limit.");
+  if (token === adminUserDeviceDialogToken) {
+    loadAdminUserDeviceIntoDialog(context);
+  }
+}
+
+async function toggleAdminUserIntegrityExemption(context, currentlyExempt, button) {
+  const confirmed = window.confirm(
+    currentlyExempt
+      ? `Remove the device check exemption?\n\n${context.name}'s phone will be checked by Google Play again.`
+      : `Exempt from the device check?\n\n${context.name} will never be refused by the Google Play device check until you remove the exemption.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    toast("Supabase is not connected.");
+    return;
+  }
+  const token = adminUserDeviceDialogToken;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  let errorMessage = "";
+  try {
+    const table = client.from("device_integrity_exemptions");
+    const { error } = currentlyExempt
+      ? await table.delete().eq("user_id", context.profileId)
+      : await table.insert({ user_id: context.profileId });
+    // 23505: already exempt - the goal holds.
+    if (error && error.code !== "23505") {
+      errorMessage = error.message || "Could not update the device check exemption.";
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not update the device check exemption.";
+  }
+  if (errorMessage) {
+    toast(errorMessage);
+    if (token === adminUserDeviceDialogToken) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+    }
+    return;
+  }
+  toast(currentlyExempt ? "Device check exemption removed." : "Student exempted from the device check.");
   if (token === adminUserDeviceDialogToken) {
     loadAdminUserDeviceIntoDialog(context);
   }

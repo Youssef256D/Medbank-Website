@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Admin matches the MedBank app
+- Admins can change a user's sign-in email from Users → Edit details.
+- The Registered device dialog shows the Google Play device check result and
+  can exempt a student's phone from it, as in the app.
+
+### 2026-10-19 — Signup shows current course names
+- The signup and complete-profile forms now load the active course list from
+  Supabase, so renamed courses no longer appear under their old names.
+
 ### 2026-10-19 — Pop-ups by organization or university
 - Admins can now send a pop-up to the members of one organization, the
   students of one university, or both together. Uses migration

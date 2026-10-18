@@ -21272,6 +21272,16 @@ small.admin-account-approval-gap {
   border-top: 1px solid var(--line);
 }
 
+/* Google Play device check, under the registered device. */
+.admin-user-device-subtitle {
+  margin: 0.4rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
 /* Syllabus outline: draft lessons/modules are hidden from students, so they
    carry a visible one-click publish control instead of a buried checkbox. */
 .outline-publish-pill {
