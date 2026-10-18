@@ -105,8 +105,9 @@ rest of this section dates from 2026-06-30.
   `dispatch-notification-pushes` cron job) is deployed with **no source in the
   repo** — recover it before changing anything in that path.
 - **Course Platform (LMS):** live — 9 platform tables, 1 published course.
-- **Hermes AI agent:** live/used — `admin-agent-tool` active, ~4,103 action-log
-  entries.
+- **Hermes AI agent:** removed 2026-10-19 (owner decision) — page, the
+  `admin-agent-tool` Edge Function and the four `admin_agent*` tables
+  (migration `20261019200000_drop_hermes_admin_agent`). Do not rebuild it.
 - **Cloudflare Stream:** parked (`cloudflareStreamEnabled: false`, pending
   billing); Edge Functions deployed, app falls back to Supabase Storage video.
 - `framer-motion` in `package.json` is unused — safe to remove. See

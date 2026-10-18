@@ -41,7 +41,7 @@ deploy path — the committed `index.html`, `main.js`, `bootstrap.js`,
 | `supabase.config.js` | `window.__SUPABASE_CONFIG`: hosted URL, anon key, feature flags (`cloudflareStreamEnabled`, `serverApiBaseUrl`). **No secrets.** |
 | `sw.js` | Service worker: precache app shell, versioned cache, offline fallback. |
 | `supabase/migrations/` | **Canonical schema source of truth** (52 timestamped `.sql` migrations). Apply to hosted project only. |
-| `supabase/functions/` | Edge Functions (canonical privileged path): `admin-delete-user`, `admin-set-user-access`, `admin-set-user-password`, `admin-agent-tool` (Hermes), `cloudflare-stream-token`, `cloudflare-stream-tus-upload`. |
+| `supabase/functions/` | Edge Functions (canonical privileged path): `admin-delete-user`, `admin-set-user-access`, `admin-set-user-password`, `cloudflare-stream-token`, `cloudflare-stream-tus-upload`. |
 | `supabase/optional_migrations/`, `rollbacks/` | Selective perf indexes / reverse SQL. |
 | `api/` | **DEPRECATED** Node serverless mirrors of the admin Edge Functions. Unused in the GitHub Pages deploy (`serverApiBaseUrl` is empty). Do not extend. |
 | `database/` | Historical/reference SQL snapshots. `schema.sql` here is **stale** — not authoritative. |
@@ -70,10 +70,10 @@ deploy path — the committed `index.html`, `main.js`, `bootstrap.js`,
   `platform_course_enrollment_requests`, `platform_course_suggestions`) with 1
   active published course. Schema is in the in-repo migrations (hosted ledger
   matches all 52). *(Verified against hosted DB 2026-06-30.)*
-- **Hermes AI admin assistant** — live / historically used. `admin-agent-tool`
-  Edge Function deployed and active, 1 active `admin_agents` row,
-  `admin_agent_action_log` has ~4,103 entries (latest 2026-06-11). An external
-  client may not be running *today*, but the system is configured and was used.
+- **Hermes AI admin assistant** — **removed 2026-10-19** (owner decision).
+  Last used 2026-06-11. The page, the `admin-agent-tool` Edge Function and
+  the `admin_agent*` tables are gone
+  (`20261019200000_drop_hermes_admin_agent`).
 
 ### Parked (deployed but disabled)
 - **Cloudflare Stream video** — Edge Functions deployed and active, but

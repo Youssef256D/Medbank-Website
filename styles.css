@@ -5643,67 +5643,6 @@ body.theme-comfort .maintenance-badge {
   padding: 0.95rem;
 }
 
-.admin-agent-section {
-  display: grid;
-  gap: 1rem;
-}
-
-.admin-agent-setup-card {
-  display: grid;
-  gap: 0.8rem;
-  padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface-soft);
-}
-
-.admin-agent-setup-card h4,
-.admin-agent-section h4 {
-  margin: 0;
-}
-
-.admin-agent-token-card {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid rgba(23, 126, 137, 0.34);
-  border-radius: 16px;
-  background: var(--brand-soft);
-}
-
-.admin-agent-token-card p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.admin-agent-token-card code {
-  overflow-wrap: anywhere;
-  padding: 0.7rem;
-  border-radius: 10px;
-  background: var(--surface-strong);
-  color: var(--ink);
-}
-
-.admin-agent-token-card .btn {
-  justify-self: start;
-}
-
-.admin-agent-detail {
-  display: block;
-  margin-top: 0.25rem;
-}
-
-.admin-agent-review-grid {
-  display: grid;
-  gap: 1rem;
-}
-
-@media (min-width: 1100px) {
-  .admin-agent-review-grid {
-    grid-template-columns: minmax(340px, 1fr) minmax(340px, 1fr);
-  }
-}
-
 .admin-users-table {
   table-layout: fixed;
 }
@@ -21272,6 +21211,16 @@ small.admin-account-approval-gap {
   border-top: 1px solid var(--line);
 }
 
+/* Google Play device check, under the registered device. */
+.admin-user-device-subtitle {
+  margin: 0.4rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
 /* Syllabus outline: draft lessons/modules are hidden from students, so they
    carry a visible one-click publish control instead of a buried checkbox. */
 .outline-publish-pill {
@@ -22334,15 +22283,62 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
 .admin-site-maintenance-preview-details .admin-site-maintenance-preview {
   margin: 0;
 }
-.admin-agent-approval-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
 @media (max-width: 640px) {
   .admin-logs-show-more .btn {
     width: 100%;
     min-height: 44px;
+  }
+}
+
+/* Numbered pages for long admin lists (renderAdminPager) */
+.admin-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  margin-top: 0.9rem;
+}
+.admin-pager-btn {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.admin-pager-btn:hover:not(:disabled):not(.is-active) {
+  border-color: var(--line-strong);
+  background: var(--brand-soft);
+}
+.admin-pager-btn.is-active {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+  cursor: default;
+}
+.admin-pager-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.admin-pager-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.admin-pager-gap {
+  padding: 0 0.2rem;
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .admin-pager-btn {
+    min-width: 40px;
+    min-height: 40px;
   }
 }
 
