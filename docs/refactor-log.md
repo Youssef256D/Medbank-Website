@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-19 — Hermes AI admin assistant removed (website, DB, Edge Function)
+- Owner decision. Last agent activity was 2026-06-11. Removed: the
+  `ai-agents` admin page and all its code/state/CSS, the `admin-agent-tool`
+  Edge Function (source, `config.toml` entry, and the deployed function via
+  `supabase functions delete`), and the four tables `admin_agents`,
+  `admin_agent_permissions`, `admin_agent_approval_requests`,
+  `admin_agent_action_log` (migration `20261019200000_drop_hermes_admin_agent`).
+- **No backup** of the 4,103 action-log rows, by the owner's choice.
+- The app's admin Logs page read `admin_agent_action_log` only, so it was
+  removed on the app branch `claude/admin-parity-with-web`; `/admin/logs`
+  redirects to Activity. App builds already installed show an error on that
+  page until updated. The website's Logs page is unrelated (local system
+  logs) and stays.
+- `set_updated_at()` is shared and was kept. No RLS policy on any other table
+  changed.
+
 ### 2026-10-19 — Admin parity with the MedBank app (web side)
 - Audited every admin page against the Flutter admin (`Medbank-App`,
   `lib/features/admin`). The backends were already shared; only two app

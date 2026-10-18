@@ -5643,67 +5643,6 @@ body.theme-comfort .maintenance-badge {
   padding: 0.95rem;
 }
 
-.admin-agent-section {
-  display: grid;
-  gap: 1rem;
-}
-
-.admin-agent-setup-card {
-  display: grid;
-  gap: 0.8rem;
-  padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface-soft);
-}
-
-.admin-agent-setup-card h4,
-.admin-agent-section h4 {
-  margin: 0;
-}
-
-.admin-agent-token-card {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid rgba(23, 126, 137, 0.34);
-  border-radius: 16px;
-  background: var(--brand-soft);
-}
-
-.admin-agent-token-card p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.admin-agent-token-card code {
-  overflow-wrap: anywhere;
-  padding: 0.7rem;
-  border-radius: 10px;
-  background: var(--surface-strong);
-  color: var(--ink);
-}
-
-.admin-agent-token-card .btn {
-  justify-self: start;
-}
-
-.admin-agent-detail {
-  display: block;
-  margin-top: 0.25rem;
-}
-
-.admin-agent-review-grid {
-  display: grid;
-  gap: 1rem;
-}
-
-@media (min-width: 1100px) {
-  .admin-agent-review-grid {
-    grid-template-columns: minmax(340px, 1fr) minmax(340px, 1fr);
-  }
-}
-
 .admin-users-table {
   table-layout: fixed;
 }
@@ -22343,11 +22282,6 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
 }
 .admin-site-maintenance-preview-details .admin-site-maintenance-preview {
   margin: 0;
-}
-.admin-agent-approval-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
 }
 @media (max-width: 640px) {
   .admin-logs-show-more .btn {

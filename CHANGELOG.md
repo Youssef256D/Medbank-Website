@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Hermes assistant removed
+- The Hermes AI admin assistant is gone: its admin page, its Edge Function and
+  its database tables (with their history). Migration
+  `20261019200000_drop_hermes_admin_agent`.
+
 ### 2026-10-19 — Admin matches the MedBank app
 - Admins can change a user's sign-in email from Users → Edit details.
 - The Registered device dialog shows the Google Play device check result and
