@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Admin matches the MedBank app
+- Admins can change a user's sign-in email from Users → Edit details.
+- The Registered device dialog shows the Google Play device check result and
+  can exempt a student's phone from it, as in the app.
+
 ### 2026-10-17 — Submitting a block no longer looks stuck
 - "Submit all and finish" and "Finish and submit" waited for the cloud save
   with no time limit, so a slow or stuck sync made both buttons look dead.

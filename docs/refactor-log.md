@@ -2,6 +2,25 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-19 — Admin parity with the MedBank app (web side)
+- Audited every admin page against the Flutter admin (`Medbank-App`,
+  `lib/features/admin`). The backends were already shared; only two app
+  features were missing here:
+  - **Sign-in email edit** in Users → Edit details. Goes through the
+    deployed `admin-update-user-email` Edge Function
+    (`updateSupabaseAuthUserEmailAsAdmin`), never a plain `profiles` write:
+    Auth owns the address. The email changes first; a refused address stops
+    the save. Field shows only with `users.edit`.
+  - **Google Play device check** in the Registered device dialog: latest
+    `device_integrity_verdicts` row and the `device_integrity_exemptions`
+    toggle, same wording as the app. An unread state shows as unavailable,
+    never "not exempt".
+- The app got the web-only pieces on branch `claude/admin-parity-with-web`
+  (MCQ subject locks, question CSV export, upload history). Still web-only on
+  purpose: Hermes assistant console, local system-log clear/export, "force
+  student refresh" (app_state). Still app-only: admin inbox, appearance.
+- No migration, RLS or Edge Function change.
+
 ### 2026-10-17 — Block submit no longer hangs on the cloud flush
 - **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit
   all and finish" and last-question "Finish and submit") went through
