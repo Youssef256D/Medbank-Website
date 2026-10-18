@@ -1584,18 +1584,17 @@ const SYSTEM_LOG_AUDITED_STORAGE_KEYS = new Set([
   STORAGE_KEYS.flashcards,
 ]);
 
+// Offline/first-paint fallback only; the live list comes from `courses`
+// (signup: get_signup_course_catalog). Mirrors the active rows on 2026-10-19.
 const DEFAULT_MEDBANK_CURRICULUM = {
   1: {
     1: [
-      "Introduction for All Students (Intro 100)",
-      "Introduction to Body Structure (BOS 101)",
-      "Gross & Microscopic Aspects of Diseases (GMD 102)",
-      "Introduction to Microbial and Parasitic Agents (MIP 103)",
-      "Introduction to Drug Therapy (DRG 104)",
-      "Medical Terminology (MET 105)",
+      "Introduction to Body Function (IBF 102)",
+      "INTRODUCTION TO BODY STRUCTURE ( IBS )",
+      "Introduction to Heamato-Immunology (IHI 103)",
+      "Introduction to Molecular Biology (IMB 104)",
     ],
     2: [
-      "Molecular Biology (MBI 106)",
       "Musculoskeletal (MUS 107)",
       "Hemopoetic System, Immunity & Defense Mechanism (HID 108)",
       "Clinical Toxicology (CTX 109)",
@@ -1604,10 +1603,10 @@ const DEFAULT_MEDBANK_CURRICULUM = {
   },
   2: {
     1: [
-      "Respiratory System (RES 201)",
-      "Cardiovascular System (CVS 202)",
-      "GIT & Liver (GIL 203)",
-      "Social & Behavioral Science (SOB 204)",
+      "Musculo-Skeletal System (MSS 201)",
+      "Nervous System (NRS 202)",
+      "Endocrinal & Reproductive Systems (ERS 203)",
+      "Elective 3",
     ],
     2: [
       "Metabolism & Nutrition (MEN 205)",
@@ -1636,7 +1635,7 @@ const DEFAULT_MEDBANK_CURRICULUM = {
   4: {
     1: [
       "Pediatric 401 (Ped 401)",
-      "Surgery Medical 402 (SM 402)",
+      "Cardiology",
       "Surgery Medical 403 (SM 403)",
       "Surgery Medical 404 (SM 404)",
     ],
@@ -1648,9 +1647,9 @@ const DEFAULT_MEDBANK_CURRICULUM = {
   },
   5: {
     1: [
-      "Obstetric (Obs 501)",
+      "Obstetric",
       "Nephrology (SM 502)",
-      "GIT (SM 503)",
+      "Gastroentrology (SM 503)",
     ],
     2: [
       "Gynecology (Gyn 504)",
@@ -25805,6 +25804,7 @@ function wireAuth(mode) {
     renderSignupCourseOptions(preferredCourses, {
       explicitSelection: Array.isArray(savedDraft?.selectedCourses),
     });
+    refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "signupCourses", renderSignupCourseOptions);
     wireUniversityCollegeFields(form, {
       onChange: ({ ineligible }) => {
         syncMcqSubjectFieldsForEligibility(form, ineligible);
@@ -26512,6 +26512,7 @@ function wireCompleteProfile() {
   renderCompleteProfileCourseOptions(preferredCourses, {
     explicitSelection: Array.isArray(savedDraft?.selectedCourses),
   });
+  refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "completeProfileCourses", renderCompleteProfileCourseOptions);
   wireUniversityCollegeFields(form, {
     onChange: ({ ineligible }) => {
       syncMcqSubjectFieldsForEligibility(form, ineligible);
@@ -49346,6 +49347,70 @@ function getCurriculumCourses(year, semester) {
   const yearMap = MEDBANK_CURRICULUM[normalizedYear] || {};
   const courses = yearMap[normalizedSemester] || [];
   return sanitizeCourseAssignments(courses);
+}
+
+// Signed-out visitors cannot read `courses` (RLS), so signup used to show the
+// hardcoded/cached curriculum with pre-rename names. This pulls the active
+// course names per term from `get_signup_course_catalog()` (2026-10-19).
+// Returns true when the curriculum changed.
+async function refreshSignupCourseCatalog() {
+  const client = getRelationalClient();
+  if (!client || typeof client.rpc !== "function") {
+    return false;
+  }
+  if (getCurrentUser()?.role === "admin"
+    || isRelationalStorageKeyBusy(STORAGE_KEYS.curriculum)
+    || isRelationalStorageKeyBusy(STORAGE_KEYS.courseTopics)) {
+    return false;
+  }
+  const { data, error } = await client.rpc("get_signup_course_catalog");
+  if (error || !Array.isArray(data) || !data.length) {
+    if (error) {
+      console.warn("Could not load the signup course catalog.", error?.message || error);
+    }
+    return false;
+  }
+  const curriculum = {};
+  for (let year = 1; year <= 5; year += 1) {
+    curriculum[year] = { 1: [], 2: [] };
+  }
+  data.forEach((row) => {
+    const year = normalizeAcademicYearOrNull(row?.academic_year);
+    const semester = normalizeAcademicSemesterOrNull(row?.academic_semester);
+    const courseName = String(row?.course_name || "").trim();
+    if (year === null || semester === null || !courseName) {
+      return;
+    }
+    if (!curriculum[year][semester].includes(courseName)) {
+      curriculum[year][semester].push(courseName);
+    }
+  });
+  const nextCurriculum = normalizeCurriculum(curriculum);
+  if (JSON.stringify(nextCurriculum) === JSON.stringify(MEDBANK_CURRICULUM)) {
+    return false;
+  }
+  MEDBANK_CURRICULUM = nextCurriculum;
+  rebuildCurriculumCatalog();
+  saveLocalOnly(STORAGE_KEYS.curriculum, MEDBANK_CURRICULUM, { audit: false });
+  return true;
+}
+
+// Re-renders a signup-style course checklist after the live catalog loads,
+// keeping the student's picks; an untouched all-checked list stays all-checked.
+function refreshCourseOptionsFromSignupCatalog(courseOptionsEl, inputName, renderOptions) {
+  refreshSignupCourseCatalog()
+    .then((changed) => {
+      if (!changed || !courseOptionsEl?.isConnected) {
+        return;
+      }
+      const inputs = Array.from(courseOptionsEl.querySelectorAll(`input[name='${inputName}']`));
+      const checked = inputs.filter((input) => input.checked).map((input) => input.value);
+      const untouched = !inputs.length || checked.length === inputs.length;
+      renderOptions(untouched ? [] : checked, { explicitSelection: !untouched });
+    })
+    .catch((error) => {
+      console.warn("Could not refresh signup course options.", error?.message || error);
+    });
 }
 
 function inferAcademicTermFromCourses(courses) {

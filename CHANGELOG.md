@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Signup shows current course names
+- The signup and complete-profile forms now load the active course list from
+  Supabase, so renamed courses no longer appear under their old names.
+
+
 ### 2026-10-17 — Submitting a block no longer looks stuck
 - "Submit all and finish" and "Finish and submit" waited for the cloud save
   with no time limit, so a slow or stuck sync made both buttons look dead.

@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-19 — Signup shows the live course names (renamed courses)
+- Bug: signed-out visitors cannot read `courses` (RLS `courses_select` is
+  admin/enrolled only), so the signup and complete-profile course checklists
+  used the hardcoded `DEFAULT_MEDBANK_CURRICULUM` or a cached copy, showing
+  pre-rename names (BOS 101, MBI 106, the old Year 2 S1 list...).
+- Fix: `public.get_signup_course_catalog()` (migration `20261019150000`,
+  security definer, granted to anon) returns only name + year + semester of
+  ACTIVE courses. `refreshSignupCourseCatalog()` loads it and
+  `refreshCourseOptionsFromSignupCatalog()` re-renders the checklist, keeping
+  the student's picks. Skipped for admins and while course writes are pending.
+  `DEFAULT_MEDBANK_CURRICULUM` now mirrors the active rows (fallback only).
+- Enrollment itself was never affected: the profile term trigger enrolls by
+  year/semester on the server. No RLS policy was changed.
+- Applied to the hosted project via SQL with the ledger row inserted by hand
+  (so `db push` would not re-run it).
+
 ### 2026-10-17 — Block submit no longer hangs on the cloud flush
 - **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit
   all and finish" and last-question "Finish and submit") went through
