@@ -53,6 +53,22 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   student refresh" (app_state). Still app-only: admin inbox, appearance.
 - No migration, RLS or Edge Function change.
 
+### 2026-10-19 — Signup shows the live course names (renamed courses)
+- Bug: signed-out visitors cannot read `courses` (RLS `courses_select` is
+  admin/enrolled only), so the signup and complete-profile course checklists
+  used the hardcoded `DEFAULT_MEDBANK_CURRICULUM` or a cached copy, showing
+  pre-rename names (BOS 101, MBI 106, the old Year 2 S1 list...).
+- Fix: `public.get_signup_course_catalog()` (migration `20261019150000`,
+  security definer, granted to anon) returns only name + year + semester of
+  ACTIVE courses. `refreshSignupCourseCatalog()` loads it and
+  `refreshCourseOptionsFromSignupCatalog()` re-renders the checklist, keeping
+  the student's picks. Skipped for admins and while course writes are pending.
+  `DEFAULT_MEDBANK_CURRICULUM` now mirrors the active rows (fallback only).
+- Enrollment itself was never affected: the profile term trigger enrolls by
+  year/semester on the server. No RLS policy was changed.
+- Applied to the hosted project via SQL with the ledger row inserted by hand
+  (the popup migration is applied as `20261018222954`).
+
 ### 2026-10-19 — Pop-ups can target an organization and/or a university
 - New columns `app_popups.university_audience` ('everyone' | 'university')
   and `target_university_id` (FK `universities`, on delete set null), same
@@ -68,6 +84,21 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   list's Audience column names them. `validatePopupCampaign` checks pairing.
 - The Flutter admin console does not know the university columns yet; its
   updates leave them untouched.
+
+### 2026-10-18 — IBS answer key fixes (data only, hosted DB)
+- Owner-approved content fix for course "INTRODUCTION TO BODY STRUCTURE ( IBS )"
+  (`9e435020-...`): 25 questions had the wrong `question_choices.is_correct`
+  (or 2 correct options). Fixed answers and explanations, and reworded options
+  on 6 of them (left lung, 3× primary cartilaginous joint, spinal segments,
+  joints rotation) plus one stem ("morula" → "blastocyst").
+- Source: `IBS Final Book .docx`. **The book's own key is wrong in several
+  places**, so do not bulk re-sync answers from it. Review list:
+  `reports/ibs-answer-review-2026-10-18.md`. Old values:
+  `reports/ibs-answer-fix-backup-2026-10-18.json`.
+- No code changes; `content_versions` bumped itself through the choices trigger.
+- 2026-10-19 follow-up: 6 more questions fixed (the "your call" section of the
+  review). The stems of the lysosome, most-cranial-part and cilium questions
+  were reworded. Old values: `reports/ibs-answer-fix-backup-2-2026-10-19.json`.
 
 ### 2026-10-17 — Block submit no longer hangs on the cloud flush
 - **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit

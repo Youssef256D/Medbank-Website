@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Signup shows the current course names
+- The signup and complete-profile course lists now load the live, active
+  course names from the database instead of an old built-in list, so renamed
+  courses show correctly. Migration `20261019150000` (read-only function).
+
 ### 2026-10-19 — Page numbers on long admin lists
 - The admin Users list showed only the first 80 users. It now has page
   numbers (Prev, 1, 2, 3 … Next) so every user can be reached; the MCQ
