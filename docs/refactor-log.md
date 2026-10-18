@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-19 — Numbered pages for long admin lists
+- The Users list was hard-capped at `ADMIN_USER_RENDER_LIMIT` (80) rows with
+  no way to reach the rest. Users, MCQ questions, sent notifications and
+  organization members now use numbered pages (Prev · 1 2 3 … · Next).
+- Shared helpers: `getAdminListPage(items, pageSize, page)` (1-based, clamps
+  to the last page), `getAdminPagerSlots`, `renderAdminPager(name, info)` and
+  `wireAdminPager(name, onPage)`; styles under `.admin-pager`.
+- State: `adminUsersPage` (+ `adminUsersFilterKey`, which resets to page 1
+  when search/filters change), `adminQuestionsPage` (replaces
+  `adminQuestionsVisibleLimit`), `adminNotificationsPage` (replaces
+  `adminNotificationsVisibleCount`; the 200-row `ADMIN_NOTIFICATION_RENDER_CAP`
+  still applies), `adminOrganizationMemberPage` (replaces
+  `adminOrganizationMemberLimit`). The `admin-questions-show-more` and
+  `admin-notifications-show-more` actions are gone.
+- Changing page clears the bulk selection (select-all covers only the page shown).
+
 ### 2026-10-19 — Hermes AI admin assistant removed (website, DB, Edge Function)
 - Owner decision. Last agent activity was 2026-06-11. Removed: the
   `ai-agents` admin page and all its code/state/CSS, the `admin-agent-tool`

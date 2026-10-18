@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Page numbers on long admin lists
+- The admin Users list showed only the first 80 users. It now has page
+  numbers (Prev, 1, 2, 3 … Next) so every user can be reached; the MCQ
+  questions, sent notifications and organization members lists use the same
+  page buttons instead of "Show more".
+
 ### 2026-10-19 — Hermes assistant removed
 - The Hermes AI admin assistant is gone: its admin page, its Edge Function and
   its database tables (with their history). Migration

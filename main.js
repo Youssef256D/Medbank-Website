@@ -535,7 +535,9 @@ const state = {
   adminQuestionModalOpen: false,
   adminQuestionsFiltersOpen: false,
   adminQuestionsFilterKey: "",
-  adminQuestionsVisibleLimit: 0,
+  adminUsersPage: 1,
+  adminUsersFilterKey: "",
+  adminQuestionsPage: 1,
   qbankFilters: {
     course: "",
     topics: [],
@@ -601,7 +603,7 @@ const state = {
   adminOrganizationDetailLoading: false,
   adminOrganizationDetailError: "",
   adminOrganizationMemberSearch: "",
-  adminOrganizationMemberLimit: 50,
+  adminOrganizationMemberPage: 1,
   adminOrganizationDraft: null,
   adminOrganizationCodeDraft: null,
   adminOrganizationAddMemberOpen: false,
@@ -776,7 +778,7 @@ const state = {
   adminNotificationBody: "",
   adminNotificationSending: false,
   adminNotificationComposeOpen: false,
-  adminNotificationsVisibleCount: ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+  adminNotificationsPage: 1,
   studentDataRefreshing: false,
   studentDataLastSyncAt: 0,
   studentDataLastFullSyncAt: 0,
@@ -6223,6 +6225,70 @@ function normalizeAdminUserIdList(ids, allowedSet = null) {
       .map((id) => String(id || "").trim())
       .filter((id) => id && (!allowed || allowed.has(id))),
   )];
+}
+
+// Numbered pages for long admin lists. `page` is 1-based; it is clamped to
+// the last page so a shrinking list never lands on an empty page.
+function getAdminListPage(items, pageSize, page) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Number(pageSize) || 1);
+  const totalPages = Math.max(1, Math.ceil(list.length / size));
+  const current = Math.min(totalPages, Math.max(1, Math.floor(Number(page) || 1)));
+  const start = (current - 1) * size;
+  return {
+    items: list.slice(start, start + size),
+    page: current,
+    totalPages,
+    start,
+    end: Math.min(list.length, start + size),
+    total: list.length,
+  };
+}
+
+function getAdminPagerSlots(page, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+  const slots = [1];
+  const from = Math.max(2, Math.min(page - 1, totalPages - 4));
+  const to = Math.min(totalPages - 1, Math.max(page + 1, 5));
+  if (from > 2) slots.push("gap");
+  for (let value = from; value <= to; value += 1) slots.push(value);
+  if (to < totalPages - 1) slots.push("gap");
+  slots.push(totalPages);
+  return slots;
+}
+
+function renderAdminPager(name, pageInfo, label = "Pages") {
+  if (!pageInfo || pageInfo.totalPages <= 1) {
+    return "";
+  }
+  const { page, totalPages } = pageInfo;
+  const safeName = escapeHtml(String(name || ""));
+  const buttons = getAdminPagerSlots(page, totalPages).map((slot) => (
+    slot === "gap"
+      ? `<span class="admin-pager-gap" aria-hidden="true">…</span>`
+      : `<button class="admin-pager-btn${slot === page ? " is-active" : ""}" type="button" data-page="${String(slot)}" ${slot === page ? `aria-current="page"` : ""} aria-label="Page ${String(slot)}">${String(slot)}</button>`
+  )).join("");
+  return `
+    <nav class="admin-pager" data-admin-pager="${safeName}" aria-label="${escapeHtml(label)}">
+      <button class="admin-pager-btn admin-pager-step" type="button" data-page="${String(page - 1)}" ${page <= 1 ? "disabled" : ""} aria-label="Previous page">‹ Prev</button>
+      ${buttons}
+      <button class="admin-pager-btn admin-pager-step" type="button" data-page="${String(page + 1)}" ${page >= totalPages ? "disabled" : ""} aria-label="Next page">Next ›</button>
+    </nav>
+  `;
+}
+
+function wireAdminPager(name, onPage) {
+  appEl.querySelectorAll(`[data-admin-pager="${name}"] [data-page]`).forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextPage = Math.max(1, Number(button.getAttribute("data-page")) || 1);
+      onPage(nextPage);
+      state.skipNextRouteAnimation = true;
+      render();
+      appEl.querySelector(`[data-admin-pager="${name}"]`)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  });
 }
 
 function canBulkSelectAdminUser(account, actorUser = null) {
@@ -34193,7 +34259,7 @@ function openAdminOrganization(organizationId) {
   state.adminOrganizationDetail = null;
   state.adminOrganizationDetailError = "";
   state.adminOrganizationMemberSearch = "";
-  state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+  state.adminOrganizationMemberPage = 1;
   const loading = loadAdminOrganizationDetail(state.adminOrganizationSelectedId);
   refreshAdminOrganizationsView();
   loading.then(refreshAdminOrganizationsView);
@@ -34346,7 +34412,9 @@ function renderAdminOrganizationDetail(organization) {
   const members = detail?.members || [];
   const removals = detail && state.adminOrganizationRemovals?.organizationId === organization.id ? state.adminOrganizationRemovals : null;
   const filteredMembers = filterOrganizationMembers(members, state.adminOrganizationMemberSearch);
-  const visibleMembers = filteredMembers.slice(0, Math.max(ORGANIZATION_MEMBERS_PAGE_SIZE, Number(state.adminOrganizationMemberLimit) || 0));
+  const membersPageInfo = getAdminListPage(filteredMembers, ORGANIZATION_MEMBERS_PAGE_SIZE, state.adminOrganizationMemberPage);
+  state.adminOrganizationMemberPage = membersPageInfo.page;
+  const visibleMembers = membersPageInfo.items;
   const busy = Boolean(state.adminOrganizationSaving);
   const loadingNote = `<p class="subtle">Loading…</p>`;
   const pageHeader = renderAdminPageHeader({
@@ -34397,7 +34465,7 @@ function renderAdminOrganizationDetail(organization) {
       <div class="course-builder-list">
         ${loading ? loadingNote : visibleMembers.length ? visibleMembers.map(renderAdminOrganizationMemberRow).join("") : `<p class="subtle">${members.length ? "No members match your search." : "No members yet."}</p>`}
       </div>
-      ${filteredMembers.length > visibleMembers.length ? `<p class="subtle">Showing ${escapeHtml(String(visibleMembers.length))} of ${escapeHtml(String(filteredMembers.length))}. <button class="btn ghost admin-btn-sm" type="button" data-org-member-more>Show more</button></p>` : ""}
+      ${membersPageInfo.totalPages > 1 ? `<p class="subtle">Showing ${String(membersPageInfo.start + 1)}–${String(membersPageInfo.end)} of ${String(filteredMembers.length)}</p>${renderAdminPager("org-members", membersPageInfo, "Member pages")}` : ""}
     </div>
 
     <div class="admin-org-detail-section">
@@ -34737,17 +34805,17 @@ function wireAdminOrganizations() {
   const memberSearch = section.querySelector("#admin-org-member-search");
   memberSearch?.addEventListener("input", (event) => {
     state.adminOrganizationMemberSearch = String(event.target?.value || "");
-    state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+    state.adminOrganizationMemberPage = 1;
     const caret = event.target.selectionStart;
     refreshAdminOrganizationsView();
     const next = appEl.querySelector("#admin-org-member-search");
     next?.focus();
     if (next && Number.isFinite(caret)) next.setSelectionRange(caret, caret);
   });
-  section.querySelector("[data-org-member-more]")?.addEventListener("click", () => {
-    state.adminOrganizationMemberLimit = (Number(state.adminOrganizationMemberLimit) || ORGANIZATION_MEMBERS_PAGE_SIZE) + ORGANIZATION_MEMBERS_PAGE_SIZE;
+  section.querySelectorAll("[data-admin-pager='org-members'] [data-page]").forEach((button) => button.addEventListener("click", () => {
+    state.adminOrganizationMemberPage = Math.max(1, Number(button.getAttribute("data-page")) || 1);
     refreshAdminOrganizationsView();
-  });
+  }));
   section.querySelectorAll("[data-org-member-remove]").forEach((button) => button.addEventListener("click", () => {
     const userId = button.getAttribute("data-org-member-remove");
     const name = button.getAttribute("data-org-member-name") || "this member";
@@ -35767,8 +35835,17 @@ function renderAdmin() {
       }
       return acc;
     }, { google: 0, email: 0 });
-    const renderedUsers = filteredUsers.slice(0, ADMIN_USER_RENDER_LIMIT);
-    const hiddenFilteredUserCount = Math.max(0, filteredUsers.length - renderedUsers.length);
+    const usersFilterKey = JSON.stringify([
+      userSearchQuery.trim().toLowerCase(), userFilterYear, userFilterSemester,
+      userFilterApproval, userFilterProvider, userFilterRole, userFilterMcqHeld,
+    ]);
+    if (state.adminUsersFilterKey !== usersFilterKey) {
+      state.adminUsersFilterKey = usersFilterKey;
+      state.adminUsersPage = 1;
+    }
+    const usersPageInfo = getAdminListPage(filteredUsers, ADMIN_USER_RENDER_LIMIT, state.adminUsersPage);
+    state.adminUsersPage = usersPageInfo.page;
+    const renderedUsers = usersPageInfo.items;
     const visibleSelectableUserIds = renderedUsers
       .filter((account) => canBulkSelectAdminUser(account, user))
       .map((account) => String(account.id || "").trim())
@@ -36324,11 +36401,7 @@ function renderAdmin() {
             <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning ? "disabled" : ""}>Clear</button>
           </div>`
         : ""}
-        <p class="admin-users-showing">Showing ${String(renderedUsers.length)} of ${String(filteredUsers.length)}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}</p>
-        ${hiddenFilteredUserCount
-        ? `<p class="subtle" style="margin: 0.4rem 0 0;">Showing the first ${ADMIN_USER_RENDER_LIMIT} matching users to keep this screen responsive. Use search or filters to reach the others.</p>`
-        : ""
-      }
+        <p class="admin-users-showing">${filteredUsers.length ? `Showing ${String(usersPageInfo.start + 1)}–${String(usersPageInfo.end)} of ${String(filteredUsers.length)}` : "Showing 0"}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}${usersPageInfo.totalPages > 1 ? ` · Page ${String(usersPageInfo.page)} of ${String(usersPageInfo.totalPages)}` : ""}</p>
 
         <div class="table-wrap admin-users-table-wrap" style="margin-top: 0.9rem;">
           <table class="admin-users-table">
@@ -36364,6 +36437,7 @@ function renderAdmin() {
             <tbody>${accountRows || `<tr><td colspan="6" class="subtle">No users match the current search and filters.</td></tr>`}</tbody>
           </table>
         </div>
+        ${renderAdminPager("users", usersPageInfo, "User pages")}
       </section>
     `;
   }
@@ -36637,11 +36711,11 @@ function renderAdmin() {
     const questionsFilterKey = `${selectedCourse}::${selectedTopic}::${questionSearchQuery.trim().toLowerCase()}`;
     if (state.adminQuestionsFilterKey !== questionsFilterKey) {
       state.adminQuestionsFilterKey = questionsFilterKey;
-      state.adminQuestionsVisibleLimit = ADMIN_QUESTION_RENDER_PAGE_SIZE;
+      state.adminQuestionsPage = 1;
     }
-    const questionsVisibleLimit = Math.max(ADMIN_QUESTION_RENDER_PAGE_SIZE, Number(state.adminQuestionsVisibleLimit) || 0);
-    const renderedCourseQuestions = courseQuestions.slice(0, questionsVisibleLimit);
-    const hiddenFilteredQuestionCount = Math.max(0, courseQuestions.length - renderedCourseQuestions.length);
+    const questionsPageInfo = getAdminListPage(courseQuestions, ADMIN_QUESTION_RENDER_PAGE_SIZE, state.adminQuestionsPage);
+    state.adminQuestionsPage = questionsPageInfo.page;
+    const renderedCourseQuestions = questionsPageInfo.items;
     const visibleQuestionIds = renderedCourseQuestions
       .map((question) => String(question.id || "").trim())
       .filter(Boolean);
@@ -36850,10 +36924,7 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
-        ${hiddenFilteredQuestionCount
-        ? `<p class="admin-question-show-more"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-questions-show-more">Show more (${hiddenFilteredQuestionCount})</button></p>`
-        : ""
-      }
+        ${renderAdminPager("questions", questionsPageInfo, "Question pages")}
       </section>
 
       ${state.adminQuestionModalOpen
@@ -37022,12 +37093,13 @@ function renderAdmin() {
     const targetVideoCourseId = String(state.adminNotificationTargetVideoCourseId || "").trim();
     const notificationSending = Boolean(state.adminNotificationSending);
     const allNotifications = getNotifications();
-    const notificationVisibleCount = Math.min(
-      Math.max(ADMIN_NOTIFICATION_RENDER_PAGE_SIZE, Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE),
-      ADMIN_NOTIFICATION_RENDER_CAP,
+    const notificationsPageInfo = getAdminListPage(
+      allNotifications.slice(0, ADMIN_NOTIFICATION_RENDER_CAP),
+      ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+      state.adminNotificationsPage,
     );
-    const notificationsToRender = allNotifications.slice(0, notificationVisibleCount);
-    const notificationsRemaining = Math.min(allNotifications.length, ADMIN_NOTIFICATION_RENDER_CAP) - notificationsToRender.length;
+    state.adminNotificationsPage = notificationsPageInfo.page;
+    const notificationsToRender = notificationsPageInfo.items;
     const notificationRows = notificationsToRender
       .map((notification) => {
         const targetLabel = getNotificationTargetLabel(notification, users);
@@ -37210,11 +37282,7 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
-        ${notificationsRemaining > 0 ? `
-          <div class="admin-list-show-more">
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-notifications-show-more">Show more (${notificationsRemaining})</button>
-          </div>
-        ` : ""}
+        ${renderAdminPager("notifications", notificationsPageInfo, "Notification pages")}
       </section>
     `;
 
@@ -37816,7 +37884,7 @@ function applyAdminPageTransition(previousPage, nextPage) {
   }
   if (nextPage !== "notifications") {
     state.adminNotificationComposeOpen = false;
-    state.adminNotificationsVisibleCount = ADMIN_NOTIFICATION_RENDER_PAGE_SIZE;
+    state.adminNotificationsPage = 1;
   }
   if (nextPage === "activity") {
     refreshAdminPresenceSnapshot({ force: true })
@@ -38846,13 +38914,8 @@ function wireAdmin() {
       render();
     });
 
-    appEl.querySelector("[data-action='admin-notifications-show-more']")?.addEventListener("click", () => {
-      state.adminNotificationsVisibleCount = Math.min(
-        (Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE) + ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
-        ADMIN_NOTIFICATION_RENDER_CAP,
-      );
-      state.skipNextRouteAnimation = true;
-      render();
+    wireAdminPager("notifications", (page) => {
+      state.adminNotificationsPage = page;
     });
 
     notificationForm?.addEventListener("submit", async (event) => {
@@ -39998,6 +40061,10 @@ function wireAdmin() {
   const adminUserFilterProvider = document.getElementById("admin-user-filter-provider");
   const adminUserFilterRole = document.getElementById("admin-user-filter-role");
   const adminUserFilterMcqHeld = document.getElementById("admin-user-filter-mcq-held");
+  wireAdminPager("users", (page) => {
+    state.adminUsersPage = page;
+    state.adminSelectedUserIds = [];
+  });
   const selectAllUsersInput = appEl.querySelector("[data-action='admin-select-all-users']");
   if (selectAllUsersInput instanceof HTMLInputElement) {
     selectAllUsersInput.indeterminate = selectAllUsersInput.dataset.indeterminate === "true";
@@ -41806,10 +41873,9 @@ function wireAdmin() {
     render();
   });
 
-  appEl.querySelector("[data-action='admin-questions-show-more']")?.addEventListener("click", () => {
-    state.adminQuestionsVisibleLimit = (Number(state.adminQuestionsVisibleLimit) || ADMIN_QUESTION_RENDER_PAGE_SIZE) + ADMIN_QUESTION_RENDER_PAGE_SIZE;
-    state.skipNextRouteAnimation = true;
-    render();
+  wireAdminPager("questions", (page) => {
+    state.adminQuestionsPage = page;
+    state.adminSelectedQuestionIds = [];
   });
 
   appEl.querySelector("[data-action='admin-open-editor-new']")?.addEventListener("click", () => {
