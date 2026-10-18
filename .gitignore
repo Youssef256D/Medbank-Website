@@ -17,7 +17,6 @@ ds-bundle/
 # Supabase CLI scratch space (version-check cache, project ref)
 supabase/.temp/
 
-# Answer-key reviews/backups for question banks: real questions + correct
-# answers. The repo is public and served as-is on GitHub Pages; keep local.
+# Answer-key reports hold real questions + answers; the repo is public.
 reports/*-answer-*
 reports/*-publish-drafts-*
