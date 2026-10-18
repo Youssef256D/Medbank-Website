@@ -9,10 +9,35 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Signup shows the current course names
+- The signup and complete-profile course lists now load the live, active
+  course names from the database instead of an old built-in list, so renamed
+  courses show correctly. Migration `20261019150000` (read-only function).
+
+### 2026-10-19 — Page numbers on long admin lists
+- The admin Users list showed only the first 80 users. It now has page
+  numbers (Prev, 1, 2, 3 … Next) so every user can be reached; the MCQ
+  questions, sent notifications and organization members lists use the same
+  page buttons instead of "Show more".
+
+### 2026-10-19 — Hermes assistant removed
+- The Hermes AI admin assistant is gone: its admin page, its Edge Function and
+  its database tables (with their history). Migration
+  `20261019200000_drop_hermes_admin_agent`.
+
+### 2026-10-19 — Admin matches the MedBank app
+- Admins can change a user's sign-in email from Users → Edit details.
+- The Registered device dialog shows the Google Play device check result and
+  can exempt a student's phone from it, as in the app.
+
 ### 2026-10-19 — Signup shows current course names
 - The signup and complete-profile forms now load the active course list from
   Supabase, so renamed courses no longer appear under their old names.
 
+### 2026-10-19 — Pop-ups by organization or university
+- Admins can now send a pop-up to the members of one organization, the
+  students of one university, or both together. Uses migration
+  `20261018222954_popup_university_audience` (applied to the hosted project 2026-10-19).
 
 ### 2026-10-17 — Submitting a block no longer looks stuck
 - "Submit all and finish" and "Finish and submit" waited for the cloud save
@@ -228,7 +253,7 @@ functions). The website does not call it yet.
 An organization's code now works for everyone: a student who types it joins as
 a student member, a creator as a creator member. The *New code* dialog no
 longer asks who a code is for, and every code reads "Students and creators".
-Codes made before stay valid and now work for both. Needs migration
+Codes made before stay valid and now work for both. Uses migration
 `20261011150000_one_organization_code_for_everyone` (rollback in
 `supabase/rollbacks/`). Static cache bust: `2026-10-11.03`.
 
@@ -252,7 +277,7 @@ Super admins can now choose exactly what each admin may do on the Admin access
 page: tick a whole area or single actions such as *Add new users*, *Edit
 questions* or *Send notifications*. Buttons for actions an admin does not hold
 are hidden, and the database and admin Edge Functions refuse them. Existing
-admins keep exactly what they had. Needs migration
+admins keep exactly what they had. Uses migration
 `20261009235000_admin_action_permissions` and the four admin Edge Functions
 redeployed. Static cache bust: `2026-10-09.04`.
 ### 2026-10-09 — Hide Video Courses from the website

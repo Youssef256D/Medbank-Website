@@ -203,7 +203,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "organizations", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "ai-agents", "activity", "logs", "admin-access"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "organizations", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -264,24 +264,13 @@ const ADMIN_NAV_GROUPS = [
     items: [
       { page: "admin-access", label: "Admin access" },
       { page: "site-access", label: "Site Access" },
-      { page: "ai-agents", label: "Hermes Assistant" },
       { page: "activity", label: "Activity" },
       { page: "logs", label: "Logs" },
     ],
   },
 ];
 const ADMIN_AUTO_REFRESH_PAGES = new Set(["dashboard", "users"]);
-const PRIMARY_ADMIN_ASSISTANT_NAME = "Hermes Admin Assistant";
-const PRIMARY_ADMIN_ASSISTANT_DESCRIPTION = "Single connected administrator for Hermes";
 const CORRECTED_QUESTIONS_TOPIC_NAME = "Corrected questions";
-const ADMIN_AGENT_PERMISSION_OPTIONS = [
-  ["read_dashboard", "View dashboard summary"],
-  ["draft_announcements", "Create unpublished announcement drafts"],
-  ["request_content_publish", "Request publishing approval"],
-  ["manage_content_drafts", "Manage content drafts (reserved)"],
-  ["review_enrollments", "Review enrollment queue (reserved)"],
-  ["full_admin", "Full administrator tools"],
-];
 const inMemoryStorage = new Map();
 let sessionVaultDbPromise = null;
 const storageQuotaRetryThresholds = new Map();
@@ -546,7 +535,9 @@ const state = {
   adminQuestionModalOpen: false,
   adminQuestionsFiltersOpen: false,
   adminQuestionsFilterKey: "",
-  adminQuestionsVisibleLimit: 0,
+  adminUsersPage: 1,
+  adminUsersFilterKey: "",
+  adminQuestionsPage: 1,
   qbankFilters: {
     course: "",
     topics: [],
@@ -612,7 +603,7 @@ const state = {
   adminOrganizationDetailLoading: false,
   adminOrganizationDetailError: "",
   adminOrganizationMemberSearch: "",
-  adminOrganizationMemberLimit: 50,
+  adminOrganizationMemberPage: 1,
   adminOrganizationDraft: null,
   adminOrganizationCodeDraft: null,
   adminOrganizationAddMemberOpen: false,
@@ -762,15 +753,6 @@ const state = {
   adminPopupsMissing: false,
   adminPopupDraft: null,
   adminPopupSaving: false,
-  adminAgentsLoading: false,
-  adminAgentsError: "",
-  adminAgentsLoadedAt: 0,
-  adminAgents: [],
-  adminAgentPermissions: [],
-  adminAgentActions: [],
-  adminAgentApprovals: [],
-  adminAgentNewToken: null,
-  adminAgentSaving: false,
   adminImportRunning: false,
   adminImportStatus: "",
   adminImportStatusTone: "neutral",
@@ -796,7 +778,7 @@ const state = {
   adminNotificationBody: "",
   adminNotificationSending: false,
   adminNotificationComposeOpen: false,
-  adminNotificationsVisibleCount: ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+  adminNotificationsPage: 1,
   studentDataRefreshing: false,
   studentDataLastSyncAt: 0,
   studentDataLastFullSyncAt: 0,
@@ -6242,6 +6224,70 @@ function normalizeAdminUserIdList(ids, allowedSet = null) {
       .map((id) => String(id || "").trim())
       .filter((id) => id && (!allowed || allowed.has(id))),
   )];
+}
+
+// Numbered pages for long admin lists. `page` is 1-based; it is clamped to
+// the last page so a shrinking list never lands on an empty page.
+function getAdminListPage(items, pageSize, page) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Number(pageSize) || 1);
+  const totalPages = Math.max(1, Math.ceil(list.length / size));
+  const current = Math.min(totalPages, Math.max(1, Math.floor(Number(page) || 1)));
+  const start = (current - 1) * size;
+  return {
+    items: list.slice(start, start + size),
+    page: current,
+    totalPages,
+    start,
+    end: Math.min(list.length, start + size),
+    total: list.length,
+  };
+}
+
+function getAdminPagerSlots(page, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+  const slots = [1];
+  const from = Math.max(2, Math.min(page - 1, totalPages - 4));
+  const to = Math.min(totalPages - 1, Math.max(page + 1, 5));
+  if (from > 2) slots.push("gap");
+  for (let value = from; value <= to; value += 1) slots.push(value);
+  if (to < totalPages - 1) slots.push("gap");
+  slots.push(totalPages);
+  return slots;
+}
+
+function renderAdminPager(name, pageInfo, label = "Pages") {
+  if (!pageInfo || pageInfo.totalPages <= 1) {
+    return "";
+  }
+  const { page, totalPages } = pageInfo;
+  const safeName = escapeHtml(String(name || ""));
+  const buttons = getAdminPagerSlots(page, totalPages).map((slot) => (
+    slot === "gap"
+      ? `<span class="admin-pager-gap" aria-hidden="true">…</span>`
+      : `<button class="admin-pager-btn${slot === page ? " is-active" : ""}" type="button" data-page="${String(slot)}" ${slot === page ? `aria-current="page"` : ""} aria-label="Page ${String(slot)}">${String(slot)}</button>`
+  )).join("");
+  return `
+    <nav class="admin-pager" data-admin-pager="${safeName}" aria-label="${escapeHtml(label)}">
+      <button class="admin-pager-btn admin-pager-step" type="button" data-page="${String(page - 1)}" ${page <= 1 ? "disabled" : ""} aria-label="Previous page">‹ Prev</button>
+      ${buttons}
+      <button class="admin-pager-btn admin-pager-step" type="button" data-page="${String(page + 1)}" ${page >= totalPages ? "disabled" : ""} aria-label="Next page">Next ›</button>
+    </nav>
+  `;
+}
+
+function wireAdminPager(name, onPage) {
+  appEl.querySelectorAll(`[data-admin-pager="${name}"] [data-page]`).forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextPage = Math.max(1, Number(button.getAttribute("data-page")) || 1);
+      onPage(nextPage);
+      state.skipNextRouteAnimation = true;
+      render();
+      appEl.querySelector(`[data-admin-pager="${name}"]`)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  });
 }
 
 function canBulkSelectAdminUser(account, actorUser = null) {
@@ -22723,15 +22769,6 @@ function render() {
     state.adminImportHistoryMissing = false;
     state.adminQuestionExportRunning = false;
     adminImportHistoryRequestSeq += 1;
-    state.adminAgentsLoading = false;
-    state.adminAgentsError = "";
-    state.adminAgentsLoadedAt = 0;
-    state.adminAgents = [];
-    state.adminAgentPermissions = [];
-    state.adminAgentActions = [];
-    state.adminAgentApprovals = [];
-    state.adminAgentNewToken = null;
-    state.adminAgentSaving = false;
     adminQuestionsLastHydratedAt = 0;
     clearAdminPresencePolling();
     clearAdminDashboardPolling();
@@ -32428,367 +32465,6 @@ function renderAdminAccessSwitchContent(label, enabled) {
   `;
 }
 
-function getAdminAgentPermissionLabel(permissionKey) {
-  const entry = ADMIN_AGENT_PERMISSION_OPTIONS.find(([key]) => key === String(permissionKey || "").trim());
-  return entry ? entry[1] : String(permissionKey || "").trim();
-}
-
-function getAdminAgentRowsByAgentId(rows, agentId) {
-  return (Array.isArray(rows) ? rows : []).filter((row) => String(row?.agent_id || "").trim() === String(agentId || "").trim());
-}
-
-async function loadAdminAgents(options = {}) {
-  const client = getCoursesPlatformClient();
-  if (!client) {
-    state.adminAgentsError = "No active Supabase admin session.";
-    state.adminAgentsLoadedAt = Date.now();
-    return false;
-  }
-  if (state.adminAgentsLoading && !options.force) {
-    return false;
-  }
-  state.adminAgentsLoading = true;
-  state.adminAgentsError = "";
-  try {
-    const [agents, permissions, actions, approvals] = await Promise.all([
-      runRelationalQueryWithTimeout(
-        client.from("admin_agents").select("id,name,description,status,token_hint,last_used_at,created_at,updated_at").order("created_at", { ascending: false }),
-        "Agent list query timed out.",
-      ),
-      runRelationalQueryWithTimeout(
-        client.from("admin_agent_permissions").select("agent_id,permission_key,created_at"),
-        "Agent permission query timed out.",
-      ),
-      runRelationalQueryWithTimeout(
-        client.from("admin_agent_action_log").select("id,agent_id,action_key,action_status,response_summary,created_at").order("created_at", { ascending: false }).limit(40),
-        "Agent activity query timed out.",
-      ),
-      runRelationalQueryWithTimeout(
-        client.from("admin_agent_approval_requests").select("id,agent_id,action_key,request_payload,reason,status,created_at,reviewed_at").order("created_at", { ascending: false }).limit(40),
-        "Agent approval query timed out.",
-      ),
-    ]);
-    state.adminAgents = Array.isArray(agents) ? agents : [];
-    state.adminAgentPermissions = Array.isArray(permissions) ? permissions : [];
-    state.adminAgentActions = Array.isArray(actions) ? actions : [];
-    state.adminAgentApprovals = Array.isArray(approvals) ? approvals : [];
-    state.adminAgentsLoadedAt = Date.now();
-    return true;
-  } catch (error) {
-    state.adminAgentsError = isMissingRelationError(error)
-      ? "Hermes Assistant is not installed in Supabase yet. Apply the latest database migration, then refresh."
-      : getErrorMessage(error, "Could not load Hermes Assistant.");
-    state.adminAgentsLoadedAt = Date.now();
-    return false;
-  } finally {
-    state.adminAgentsLoading = false;
-  }
-}
-
-function generateAdminAgentToken() {
-  const bytes = new Uint8Array(36);
-  window.crypto.getRandomValues(bytes);
-  const encoded = window.btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-  return `mba_${encoded}`;
-}
-
-async function hashAdminAgentToken(token) {
-  const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(token || "")));
-  return Array.from(new Uint8Array(digest))
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function getPrimaryAdminAssistant() {
-  const assistants = Array.isArray(state.adminAgents) ? state.adminAgents : [];
-  return assistants.find((assistant) => assistant.name === PRIMARY_ADMIN_ASSISTANT_NAME) || assistants[0] || null;
-}
-
-async function initializePrimaryAdminAssistant() {
-  const client = getCoursesPlatformClient();
-  const currentUserId = getCurrentCoursePlatformUserId();
-  if (!client) throw new Error("Hermes connection cannot be created.");
-  const existingRows = await runRelationalQueryWithTimeout(
-    client.from("admin_agents").select("id").limit(1),
-    "Hermes connection check timed out.",
-  );
-  if (Array.isArray(existingRows) && existingRows.length) {
-    throw new Error("Hermes is already connected. Rotate its token to issue a new credential.");
-  }
-  const permissionKeys = ["read_dashboard", "draft_announcements", "request_content_publish", "full_admin"];
-  const token = generateAdminAgentToken();
-  const tokenHash = await hashAdminAgentToken(token);
-  const rows = await runRelationalQueryWithTimeout(
-    client.from("admin_agents").insert({
-      name: PRIMARY_ADMIN_ASSISTANT_NAME,
-      description: PRIMARY_ADMIN_ASSISTANT_DESCRIPTION,
-      token_hash: tokenHash,
-      token_hint: token.slice(-8),
-      created_by: isUuidValue(currentUserId) ? currentUserId : null,
-    }).select("id,name").limit(1),
-    "Agent creation timed out.",
-  );
-  const agent = Array.isArray(rows) ? rows[0] : null;
-  if (!agent?.id) throw new Error("Hermes connection could not be created.");
-  await runRelationalQueryWithTimeout(
-    client.from("admin_agent_permissions").insert(permissionKeys.map((permissionKey) => ({
-      agent_id: agent.id,
-      permission_key: permissionKey,
-      created_by: isUuidValue(currentUserId) ? currentUserId : null,
-    }))),
-    "Agent permission save timed out.",
-  );
-  state.adminAgentNewToken = { name: PRIMARY_ADMIN_ASSISTANT_NAME, token };
-  await loadAdminAgents({ force: true });
-}
-
-async function rotateAdminAgentToken(agentId, agentName) {
-  const client = getCoursesPlatformClient();
-  if (!client || !isUuidValue(agentId)) throw new Error("Agent token cannot be rotated.");
-  const token = generateAdminAgentToken();
-  const tokenHash = await hashAdminAgentToken(token);
-  await runRelationalQueryWithTimeout(
-    client.from("admin_agents").update({ token_hash: tokenHash, token_hint: token.slice(-8) }).eq("id", agentId),
-    "Agent token rotation timed out.",
-  );
-  state.adminAgentNewToken = { name: agentName || "AI agent", token };
-  await loadAdminAgents({ force: true });
-}
-
-async function setAdminAgentStatus(agentId, status) {
-  const client = getCoursesPlatformClient();
-  const nextStatus = status === "active" ? "active" : "disabled";
-  if (!client || !isUuidValue(agentId)) throw new Error("Agent status cannot be changed.");
-  await runRelationalQueryWithTimeout(
-    client.from("admin_agents").update({ status: nextStatus }).eq("id", agentId),
-    "Agent status update timed out.",
-  );
-  await loadAdminAgents({ force: true });
-}
-
-async function setAdminAgentFullAccess(agentId, enabled) {
-  const client = getCoursesPlatformClient();
-  const currentUserId = getCurrentCoursePlatformUserId();
-  if (!client || !isUuidValue(agentId)) throw new Error("Agent permissions cannot be changed.");
-  if (enabled) {
-    await runRelationalQueryWithTimeout(
-      client.from("admin_agent_permissions").upsert({
-        agent_id: agentId,
-        permission_key: "full_admin",
-        created_by: isUuidValue(currentUserId) ? currentUserId : null,
-      }, { onConflict: "agent_id,permission_key", defaultToNull: false }),
-      "Full administrator permission update timed out.",
-    );
-  } else {
-    await runRelationalQueryWithTimeout(
-      client.from("admin_agent_permissions").delete().eq("agent_id", agentId).eq("permission_key", "full_admin"),
-      "Full administrator permission removal timed out.",
-    );
-  }
-  await loadAdminAgents({ force: true });
-}
-
-async function resolveAdminAgentApproval(approvalId, decision) {
-  const client = getCoursesPlatformClient();
-  const adminId = getCurrentCoursePlatformUserId();
-  const approval = (state.adminAgentApprovals || []).find((row) => String(row?.id || "").trim() === String(approvalId || "").trim());
-  if (!client || !approval || !isUuidValue(approvalId)) throw new Error("Approval request cannot be updated.");
-  if (String(approval.status || "").trim() !== "pending") throw new Error("This request has already been reviewed.");
-  const reviewedAt = nowISO();
-  if (decision === "approve" && approval.action_key === "request_publish_announcement") {
-    const announcementId = String(approval.request_payload?.announcementId || "").trim();
-    if (!isUuidValue(announcementId)) throw new Error("This request has no valid announcement draft.");
-    await runRelationalQueryWithTimeout(
-      client.from("platform_course_announcements").update({ is_published: true }).eq("id", announcementId),
-      "Announcement publish timed out.",
-    );
-    await runRelationalQueryWithTimeout(
-      client.from("admin_agent_approval_requests").update({
-        status: "executed",
-        reviewed_by: isUuidValue(adminId) ? adminId : null,
-        reviewed_at: reviewedAt,
-      }).eq("id", approvalId),
-      "Approval completion timed out.",
-    );
-  } else {
-    await runRelationalQueryWithTimeout(
-      client.from("admin_agent_approval_requests").update({
-        status: decision === "approve" ? "approved" : "rejected",
-        reviewed_by: isUuidValue(adminId) ? adminId : null,
-        reviewed_at: reviewedAt,
-      }).eq("id", approvalId),
-      "Approval review timed out.",
-    );
-  }
-  await loadAdminAgents({ force: true });
-}
-
-function renderAdminAgentsSection() {
-  if (!state.adminAgentsLoadedAt && !state.adminAgentsLoading) {
-    loadAdminAgents().then(() => {
-      if (state.route === "admin" && state.adminPage === "ai-agents") {
-        state.skipNextRouteAnimation = true;
-        render();
-      }
-    });
-  }
-  const tokenPanel = state.adminAgentNewToken
-    ? `
-      <article class="admin-agent-token-card" role="status">
-        <b>Token created for ${escapeHtml(state.adminAgentNewToken.name)}</b>
-        <p>Show this once to your Hermes configuration. It will not be stored in readable form.</p>
-        <code>${escapeHtml(state.adminAgentNewToken.token)}</code>
-        <button class="btn ghost admin-btn-sm" type="button" data-action="admin-agent-hide-token">Hide token</button>
-      </article>
-    `
-    : "";
-  const hasAssistant = Boolean(getPrimaryAdminAssistant());
-  const hasLoadedAssistants = Boolean(state.adminAgentsLoadedAt);
-  const agentRows = (state.adminAgents || []).map((agent) => {
-    const agentPermissions = getAdminAgentRowsByAgentId(state.adminAgentPermissions, agent.id);
-    const hasFullAccess = agentPermissions.some((entry) => entry.permission_key === "full_admin");
-    const permissions = agentPermissions
-      .map((entry) => getAdminAgentPermissionLabel(entry.permission_key))
-      .join(", ");
-    const active = agent.status === "active";
-    const rowMenu = renderAdminRowMenu({
-      id: `agent-${agent.id}`,
-      label: `Actions for ${agent.name}`,
-      items: [
-        {
-          label: hasFullAccess ? "Remove full admin" : "Grant full admin",
-          attrs: `data-action="admin-agent-set-full-access" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}" data-enable="${hasFullAccess ? "false" : "true"}"`,
-          danger: hasFullAccess,
-        },
-        {
-          label: "Rotate token",
-          attrs: `data-action="admin-agent-rotate-token" data-agent-id="${escapeHtml(agent.id)}" data-agent-name="${escapeHtml(agent.name)}"`,
-        },
-        {
-          label: active ? "Disable" : "Enable",
-          attrs: `data-action="admin-agent-set-status" data-agent-id="${escapeHtml(agent.id)}" data-next-status="${active ? "disabled" : "active"}"`,
-          danger: active,
-        },
-      ],
-    });
-    return `
-      <tr>
-        <td><b>${escapeHtml(agent.name)}</b><small class="subtle admin-agent-detail">${escapeHtml(agent.description || "No description")}</small></td>
-        <td><span class="badge ${active ? "good" : "bad"}">${active ? "Active" : "Disabled"}</span></td>
-        <td><small>${escapeHtml(permissions || "No permissions")}</small></td>
-        <td><small>Ends ...${escapeHtml(agent.token_hint || "")}</small></td>
-        <td><small>${agent.last_used_at ? escapeHtml(new Date(agent.last_used_at).toLocaleString()) : "Never"}</small></td>
-        <td>${rowMenu}</td>
-      </tr>
-    `;
-  }).join("");
-  const approvalRows = (state.adminAgentApprovals || []).map((request) => {
-    const agent = (state.adminAgents || []).find((row) => row.id === request.agent_id);
-    const pending = request.status === "pending";
-    const targetTitle = String(request.request_payload?.title || "").trim();
-    const rawTargetBody = String(request.request_payload?.body || "").trim();
-    const targetBody = rawTargetBody.length > 180 ? `${rawTargetBody.slice(0, 177)}...` : rawTargetBody;
-    const requestReason = String(request.reason || "").trim();
-    const requestDetail = [targetTitle, targetBody, requestReason].filter(Boolean).join(" - ");
-    return `
-      <tr>
-        <td>${escapeHtml(agent?.name || "Removed agent")}</td>
-        <td>
-          ${escapeHtml(request.action_key)}
-          ${requestDetail ? `<small class="subtle admin-agent-detail">${escapeHtml(requestDetail)}</small>` : ""}
-        </td>
-        <td><span class="badge ${pending ? "bad" : "good"}">${escapeHtml(request.status)}</span></td>
-        <td><small>${escapeHtml(new Date(request.created_at).toLocaleString())}</small></td>
-        <td>
-          ${pending ? `
-            <div class="admin-agent-approval-actions">
-              <button class="btn admin-btn-sm" type="button" data-action="admin-agent-approve-request" data-request-id="${escapeHtml(request.id)}">Approve</button>
-              ${renderAdminRowMenu({
-        id: `approval-${request.id}`,
-        label: `Actions for this request`,
-        items: [
-          { label: "Reject", attrs: `data-action="admin-agent-reject-request" data-request-id="${escapeHtml(request.id)}"` },
-        ],
-      })}
-            </div>
-          ` : "-"}
-        </td>
-      </tr>
-    `;
-  }).join("");
-  const actionRows = (state.adminAgentActions || []).map((action) => {
-    const agent = (state.adminAgents || []).find((row) => row.id === action.agent_id);
-    return `
-      <tr>
-        <td><small>${escapeHtml(new Date(action.created_at).toLocaleString())}</small></td>
-        <td>${escapeHtml(agent?.name || "Removed agent")}</td>
-        <td>${escapeHtml(action.action_key)}</td>
-        <td><span class="badge ${action.action_status === "success" ? "good" : "bad"}">${escapeHtml(action.action_status)}</span></td>
-      </tr>
-    `;
-  }).join("");
-  const agentsHeaderActions = renderAdminIconButton({
-    icon: "refresh",
-    label: state.adminAgentsLoading ? "Refreshing..." : "Refresh",
-    attrs: `data-action="admin-agents-refresh"`,
-    busy: Boolean(state.adminAgentsLoading),
-  });
-  const agentsHeader = renderAdminPageHeader({
-    id: "ai-agents",
-    title: "Hermes Assistant",
-    actions: agentsHeaderActions,
-    notes: [
-      "One permanent administrator connection for Hermes. Set it up once, then rotate its token or disable it when needed.",
-      "Approval requests are actions Hermes wants to take that need a human sign-off before they run.",
-      "Recent activity is a read-only log of what Hermes has already done (latest 40).",
-    ],
-  });
-  return `
-    <section class="card admin-section admin-agent-section" id="admin-agents-section">
-      ${agentsHeader}
-      ${state.adminAgentsError ? `<p class="subtle import-status is-error">${escapeHtml(state.adminAgentsError)}</p>` : ""}
-      ${tokenPanel}
-      ${hasLoadedAssistants && !hasAssistant ? `
-        <article class="admin-agent-setup-card">
-          <h4>Connect Hermes</h4>
-          <p class="subtle">Create the single administrator connection and receive its token once.</p>
-          <button class="btn ${state.adminAgentSaving ? "is-loading" : ""}" type="button" data-action="admin-assistant-initialize" ${state.adminAgentSaving ? "disabled" : ""}>${state.adminAgentSaving ? "Setting up..." : "Set up Hermes connection"}</button>
-        </article>
-      ` : ""}
-      <h4>Connected assistant</h4>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Assistant</th><th>Status</th><th>Permissions</th><th>Token</th><th>Last used</th><th>Actions</th></tr></thead>
-          <tbody>${agentRows || `<tr><td colspan="6" class="subtle">Hermes has not been connected yet.</td></tr>`}</tbody>
-        </table>
-      </div>
-      <div class="admin-agent-review-grid">
-        <div>
-          <h4>Approval requests</h4>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Agent</th><th>Action</th><th>Status</th><th>Requested</th><th>Review</th></tr></thead>
-              <tbody>${approvalRows || `<tr><td colspan="5" class="subtle">No requests pending.</td></tr>`}</tbody>
-            </table>
-          </div>
-        </div>
-        <div>
-          <h4>Recent activity</h4>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Time</th><th>Agent</th><th>Action</th><th>Result</th></tr></thead>
-              <tbody>${actionRows || `<tr><td colspan="4" class="subtle">No agent activity yet.</td></tr>`}</tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
 // Lightweight counts used only by the admin Dashboard. Each read is isolated:
 // a slow or refused table leaves one dash in the UI instead of blocking the
 // rest of the page.
@@ -33929,6 +33605,7 @@ function newAdminPopupDraft() {
   return { title: "", body: "", image_url: "", image_alt: "", image_fills_card: false,
     action_label: "", target_route: "", target_mcq_subject: "", target_mcq_topic: "",
     target_video_course_id: "", audience_role: "all", audience_academic_year: null,
+    organization_audience: "everyone", target_organization_id: "", university_audience: "everyone", target_university_id: "",
     priority: 0, display_rule: "once", is_active: false, starts_at: "", ends_at: "" };
 }
 
@@ -33970,7 +33647,7 @@ async function loadAdminPopups() {
     if (getCurrentUser()?.role !== "admin") return;
     state.adminPopups = campaigns;
     state.adminPopupMetrics = getAppPopupsUtils()?.aggregatePopupPerformance(views) || {};
-    await loadAdminNotificationVideoCourseOptions();
+    await Promise.all([loadAdminNotificationVideoCourseOptions(), loadAdminOrganizations(), loadUniversities()]);
   } catch (error) {
     state.adminPopups = [];
     state.adminPopupMetrics = {};
@@ -34012,6 +33689,32 @@ function renderAdminPopupPreview(draft) {
   </div></div><p class="subtle">Phone preview · ${advert && draft.target_route ? "The entire image opens the destination." : draft.target_route ? "The action opens the destination." : "Closes only; no destination."}</p>`;
 }
 
+// Organization and university audiences are separate columns that combine
+// (AND) in get_my_active_popups(). A named organization or university that
+// was deleted leaves the audience set with a null id: it reaches nobody.
+// Select value for an audience whose organization/university no longer
+// exists. Kept distinct from "" so it never reads as "Any university"; saving
+// is refused until a real one is chosen.
+const POPUP_AUDIENCE_DELETED = "deleted";
+
+function popupOrganizationAudienceLabel(popup) {
+  if (popup?.organization_audience === "no_organization") return "No organization";
+  if (popup?.organization_audience !== "organization") return "";
+  const organization = (state.adminOrganizations || []).find((entry) => entry.id === popup.target_organization_id);
+  return organization ? organization.name : "Deleted organization (reaches nobody)";
+}
+
+function popupUniversityAudienceLabel(popup) {
+  if (popup?.university_audience !== "university") return "";
+  const university = getUniversityById(popup.target_university_id);
+  return university ? university.name : "Deleted university (reaches nobody)";
+}
+
+function popupAudienceText(popup) {
+  return [popup.audience_role, popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year",
+    popupOrganizationAudienceLabel(popup), popupUniversityAudienceLabel(popup)].filter(Boolean).join(" · ");
+}
+
 function renderAdminPopupsSection() {
   const utils = getAppPopupsUtils();
   if (utils && !state.adminPopupsLoadedAt && !state.adminPopupsLoading) loadAdminPopups().then(refreshAdminPopupsView);
@@ -34022,7 +33725,7 @@ function renderAdminPopupsSection() {
     const metrics = state.adminPopupMetrics[popup.id] || { shown: 0, dismissed: 0, tapped: 0, tapThroughRate: 0 };
     return `<tr><td>${escapeHtml(popup.title)}<br><small>${escapeHtml(new Date(popup.created_at).toLocaleString())}</small></td>
       <td><span class="badge ${popupStateBadgeClass(status)}">${escapeHtml(status)}</span></td>
-      <td>${escapeHtml(popup.audience_role)} · ${escapeHtml(popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year")}</td>
+      <td>${escapeHtml(popupAudienceText(popup))}</td>
       <td>${escapeHtml(popupNumberText(popup.priority))}</td><td>${escapeHtml(popupNumberText(metrics.shown))}</td><td>${escapeHtml(popupNumberText(metrics.dismissed))}</td><td>${escapeHtml(popupNumberText(metrics.tapped))}</td><td>${escapeHtml(metrics.tapThroughRate.toFixed(1))}%</td>
       <td><div class="admin-popup-actions"><button type="button" class="btn ghost admin-btn-sm" data-popup-edit="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>Edit</button>
       <button type="button" class="btn ghost admin-btn-sm" data-popup-toggle="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>${popup.is_active ? "Deactivate" : "Activate"}</button>
@@ -34032,6 +33735,13 @@ function renderAdminPopupsSection() {
     .filter((course) => course.is_active !== false && course.is_published !== false)
     .map((course) => [course.id, getCoursePlatformCourseTitle(course)]);
   if (draft?.target_video_course_id && !courses.some(([id]) => id === draft.target_video_course_id)) courses.push([draft.target_video_course_id, "Previously selected course (unavailable)"]);
+  const organizationOptions = [["everyone", "Everyone"], ["no_organization", "Accounts in no organization"],
+    ...getAdminCourseOrganizationOptions().map((organization) => [organization.id, `Members of ${organization.name}`])];
+  const organizationValue = draft?.organization_audience === "organization" ? draft.target_organization_id || POPUP_AUDIENCE_DELETED : draft?.organization_audience || "everyone";
+  if (draft?.organization_audience === "organization" && !organizationOptions.some(([id]) => id === organizationValue)) organizationOptions.push([organizationValue, "Deleted organization (reaches nobody)"]);
+  const universityOptions = (state.universities || []).map((university) => [university.id, `Students of ${university.name}${university.is_active === false ? " (hidden)" : ""}`]);
+  const universityValue = draft?.university_audience === "university" ? draft.target_university_id || POPUP_AUDIENCE_DELETED : "";
+  if (draft?.university_audience === "university" && !universityOptions.some(([id]) => id === universityValue)) universityOptions.push([universityValue, "Deleted university (reaches nobody)"]);
   return `<section class="card admin-section" id="admin-popups-section">
     <div class="flex-between"><div class="admin-popup-actions">
     <button type="button" class="btn ghost" data-popup-refresh ${state.adminPopupsLoading || state.adminPopupSaving ? "disabled" : ""}>${state.adminPopupsLoading ? "Loading…" : "Refresh"}</button>
@@ -34060,6 +33770,9 @@ function renderAdminPopupsSection() {
     <div class="form-row"><label>Audience role<select name="audience_role">${popupSelectOptions(utils?.POPUP_AUDIENCE_ROLES || [], draft.audience_role)}</select></label>
     <label>Academic year<select name="audience_academic_year">${popupSelectOptions([1, 2, 3, 4, 5], draft.audience_academic_year, "Any year")}</select></label></div>
     <p class="subtle">Academic year here is real audience targeting. Only accounts in the selected year are eligible.</p>
+    <div class="form-row"><label>Organization<select name="popup_organization">${popupSelectOptions(organizationOptions, organizationValue)}</select></label>
+    <label>University<select name="popup_university">${popupSelectOptions(universityOptions, universityValue, "Any university")}</select></label></div>
+    <p class="subtle">Organization and university combine: choosing both reaches only members of that organization who study at that university. University comes from the student's profile.${state.adminOrganizationsError || state.universitiesError ? " Some choices could not load. Refresh to retry." : ""}</p>
     <div class="form-row"><label>Starts at<input name="starts_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.starts_at))}" /></label>
     <label>Ends at<input name="ends_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.ends_at))}" /></label></div>
     <p class="subtle">Times use your browser's local time zone. Empty dates mean no time limit.</p>
@@ -34081,6 +33794,12 @@ function captureAdminPopupDraft(form) {
   for (const name of ["image_fills_card", "is_active"]) draft[name] = form.elements[name].checked;
   draft.priority = form.elements.priority.value === "" ? NaN : Number(form.elements.priority.value);
   draft.audience_academic_year = form.elements.audience_academic_year.value ? Number(form.elements.audience_academic_year.value) : null;
+  const organization = form.elements.popup_organization.value;
+  draft.organization_audience = organization === "everyone" || organization === "no_organization" ? organization : "organization";
+  draft.target_organization_id = draft.organization_audience === "organization" && organization !== POPUP_AUDIENCE_DELETED ? organization : "";
+  const university = form.elements.popup_university.value;
+  draft.university_audience = university ? "university" : "everyone";
+  draft.target_university_id = university === POPUP_AUDIENCE_DELETED ? "" : university;
   for (const name of ["starts_at", "ends_at"]) {
     const value = form.elements[name].value;
     draft[name] = value ? new Date(value).toISOString() : "";
@@ -34541,7 +34260,7 @@ function openAdminOrganization(organizationId) {
   state.adminOrganizationDetail = null;
   state.adminOrganizationDetailError = "";
   state.adminOrganizationMemberSearch = "";
-  state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+  state.adminOrganizationMemberPage = 1;
   const loading = loadAdminOrganizationDetail(state.adminOrganizationSelectedId);
   refreshAdminOrganizationsView();
   loading.then(refreshAdminOrganizationsView);
@@ -34694,7 +34413,9 @@ function renderAdminOrganizationDetail(organization) {
   const members = detail?.members || [];
   const removals = detail && state.adminOrganizationRemovals?.organizationId === organization.id ? state.adminOrganizationRemovals : null;
   const filteredMembers = filterOrganizationMembers(members, state.adminOrganizationMemberSearch);
-  const visibleMembers = filteredMembers.slice(0, Math.max(ORGANIZATION_MEMBERS_PAGE_SIZE, Number(state.adminOrganizationMemberLimit) || 0));
+  const membersPageInfo = getAdminListPage(filteredMembers, ORGANIZATION_MEMBERS_PAGE_SIZE, state.adminOrganizationMemberPage);
+  state.adminOrganizationMemberPage = membersPageInfo.page;
+  const visibleMembers = membersPageInfo.items;
   const busy = Boolean(state.adminOrganizationSaving);
   const loadingNote = `<p class="subtle">Loading…</p>`;
   const pageHeader = renderAdminPageHeader({
@@ -34745,7 +34466,7 @@ function renderAdminOrganizationDetail(organization) {
       <div class="course-builder-list">
         ${loading ? loadingNote : visibleMembers.length ? visibleMembers.map(renderAdminOrganizationMemberRow).join("") : `<p class="subtle">${members.length ? "No members match your search." : "No members yet."}</p>`}
       </div>
-      ${filteredMembers.length > visibleMembers.length ? `<p class="subtle">Showing ${escapeHtml(String(visibleMembers.length))} of ${escapeHtml(String(filteredMembers.length))}. <button class="btn ghost admin-btn-sm" type="button" data-org-member-more>Show more</button></p>` : ""}
+      ${membersPageInfo.totalPages > 1 ? `<p class="subtle">Showing ${String(membersPageInfo.start + 1)}–${String(membersPageInfo.end)} of ${String(filteredMembers.length)}</p>${renderAdminPager("org-members", membersPageInfo, "Member pages")}` : ""}
     </div>
 
     <div class="admin-org-detail-section">
@@ -35085,17 +34806,17 @@ function wireAdminOrganizations() {
   const memberSearch = section.querySelector("#admin-org-member-search");
   memberSearch?.addEventListener("input", (event) => {
     state.adminOrganizationMemberSearch = String(event.target?.value || "");
-    state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+    state.adminOrganizationMemberPage = 1;
     const caret = event.target.selectionStart;
     refreshAdminOrganizationsView();
     const next = appEl.querySelector("#admin-org-member-search");
     next?.focus();
     if (next && Number.isFinite(caret)) next.setSelectionRange(caret, caret);
   });
-  section.querySelector("[data-org-member-more]")?.addEventListener("click", () => {
-    state.adminOrganizationMemberLimit = (Number(state.adminOrganizationMemberLimit) || ORGANIZATION_MEMBERS_PAGE_SIZE) + ORGANIZATION_MEMBERS_PAGE_SIZE;
+  section.querySelectorAll("[data-admin-pager='org-members'] [data-page]").forEach((button) => button.addEventListener("click", () => {
+    state.adminOrganizationMemberPage = Math.max(1, Number(button.getAttribute("data-page")) || 1);
     refreshAdminOrganizationsView();
-  });
+  }));
   section.querySelectorAll("[data-org-member-remove]").forEach((button) => button.addEventListener("click", () => {
     const userId = button.getAttribute("data-org-member-remove");
     const name = button.getAttribute("data-org-member-name") || "this member";
@@ -35261,7 +34982,7 @@ const ADMIN_PERMISSIONS = [
 ];
 const ADMIN_PERMISSION_IDS = ADMIN_PERMISSIONS.map((permission) => permission.id);
 // Super admins only, whatever areas an admin has.
-const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "ai-agents", "admin-access"]);
+const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "admin-access"]);
 const ADMIN_PAGE_AREAS = {
   users: "people",
   universities: "people",
@@ -35527,7 +35248,7 @@ function renderAdminAccessSection() {
       busy: Boolean(state.adminAccessRowsLoading),
     }),
     notes: [
-      "A <b>super admin</b> can do everything, including this page, Site Access and Hermes.",
+      "A <b>super admin</b> can do everything, including this page and Site Access.",
       "Every other admin can do only what is ticked here. Tick a whole area, or open it up and tick single actions (for example <b>Add new users</b> without <b>Remove users</b>). They always see the Dashboard; pages where they hold nothing are hidden, and the database refuses anything not ticked.",
       "Admin accounts themselves (making someone an admin, editing, suspending or deleting an admin) are for super admins only. At least one super admin must always remain.",
       "To add an admin, give the user the Admin role on the Users page, then choose their areas here. A new admin has no areas until you do.",
@@ -36115,8 +35836,17 @@ function renderAdmin() {
       }
       return acc;
     }, { google: 0, email: 0 });
-    const renderedUsers = filteredUsers.slice(0, ADMIN_USER_RENDER_LIMIT);
-    const hiddenFilteredUserCount = Math.max(0, filteredUsers.length - renderedUsers.length);
+    const usersFilterKey = JSON.stringify([
+      userSearchQuery.trim().toLowerCase(), userFilterYear, userFilterSemester,
+      userFilterApproval, userFilterProvider, userFilterRole, userFilterMcqHeld,
+    ]);
+    if (state.adminUsersFilterKey !== usersFilterKey) {
+      state.adminUsersFilterKey = usersFilterKey;
+      state.adminUsersPage = 1;
+    }
+    const usersPageInfo = getAdminListPage(filteredUsers, ADMIN_USER_RENDER_LIMIT, state.adminUsersPage);
+    state.adminUsersPage = usersPageInfo.page;
+    const renderedUsers = usersPageInfo.items;
     const visibleSelectableUserIds = renderedUsers
       .filter((account) => canBulkSelectAdminUser(account, user))
       .map((account) => String(account.id || "").trim())
@@ -36586,6 +36316,10 @@ function renderAdmin() {
       const editCourses = editIsStudent ? getAdminVisibleCoursesForUser(editDisplay, allCourses) : [];
       const editSaveMode = getAdminUserEnrollmentSaveMode(editId);
       const editMissing = isUserAccessApproved(editUserAccount) ? [] : describeMissingStudentApprovalFields(editUserAccount);
+      const editCurrentEmail = String(editUserAccount.email || "").trim().toLowerCase();
+      // Only a real Supabase account can have its sign-in email moved, and only
+      // by an admin holding the users.edit action (the Edge Function re-checks).
+      const editCanChangeEmail = isUuidValue(getUserProfileId(editUserAccount)) && usersCan.edit;
       const editBody = `
         <div class="admin-user-edit" data-user-edit-root data-user-id="${escapeHtml(editId)}">
           <div class="form-row">
@@ -36596,6 +36330,12 @@ function renderAdmin() {
               <input id="admin-user-edit-phone" type="tel" data-field="phone" value="${escapeHtml(String(editDisplay.phone ?? ""))}" inputmode="tel" autocomplete="off" maxlength="20" placeholder="+20 10 0000 0000" />
             </label>
           </div>
+          ${editCanChangeEmail
+        ? `<label>Sign-in email
+              <input id="admin-user-edit-email" type="email" data-original-email="${escapeHtml(editCurrentEmail)}" value="${escapeHtml(editCurrentEmail)}" autocomplete="off" maxlength="254" spellcheck="false" />
+              <small class="subtle">Changing it changes how they sign in. The new address is marked confirmed.</small>
+            </label>`
+        : ""}
           ${editIsStudent
         ? `<div class="form-row">
               <label>Year
@@ -36662,11 +36402,7 @@ function renderAdmin() {
             <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning ? "disabled" : ""}>Clear</button>
           </div>`
         : ""}
-        <p class="admin-users-showing">Showing ${String(renderedUsers.length)} of ${String(filteredUsers.length)}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}</p>
-        ${hiddenFilteredUserCount
-        ? `<p class="subtle" style="margin: 0.4rem 0 0;">Showing the first ${ADMIN_USER_RENDER_LIMIT} matching users to keep this screen responsive. Use search or filters to reach the others.</p>`
-        : ""
-      }
+        <p class="admin-users-showing">${filteredUsers.length ? `Showing ${String(usersPageInfo.start + 1)}–${String(usersPageInfo.end)} of ${String(filteredUsers.length)}` : "Showing 0"}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}${usersPageInfo.totalPages > 1 ? ` · Page ${String(usersPageInfo.page)} of ${String(usersPageInfo.totalPages)}` : ""}</p>
 
         <div class="table-wrap admin-users-table-wrap" style="margin-top: 0.9rem;">
           <table class="admin-users-table">
@@ -36702,6 +36438,7 @@ function renderAdmin() {
             <tbody>${accountRows || `<tr><td colspan="6" class="subtle">No users match the current search and filters.</td></tr>`}</tbody>
           </table>
         </div>
+        ${renderAdminPager("users", usersPageInfo, "User pages")}
       </section>
     `;
   }
@@ -36975,11 +36712,11 @@ function renderAdmin() {
     const questionsFilterKey = `${selectedCourse}::${selectedTopic}::${questionSearchQuery.trim().toLowerCase()}`;
     if (state.adminQuestionsFilterKey !== questionsFilterKey) {
       state.adminQuestionsFilterKey = questionsFilterKey;
-      state.adminQuestionsVisibleLimit = ADMIN_QUESTION_RENDER_PAGE_SIZE;
+      state.adminQuestionsPage = 1;
     }
-    const questionsVisibleLimit = Math.max(ADMIN_QUESTION_RENDER_PAGE_SIZE, Number(state.adminQuestionsVisibleLimit) || 0);
-    const renderedCourseQuestions = courseQuestions.slice(0, questionsVisibleLimit);
-    const hiddenFilteredQuestionCount = Math.max(0, courseQuestions.length - renderedCourseQuestions.length);
+    const questionsPageInfo = getAdminListPage(courseQuestions, ADMIN_QUESTION_RENDER_PAGE_SIZE, state.adminQuestionsPage);
+    state.adminQuestionsPage = questionsPageInfo.page;
+    const renderedCourseQuestions = questionsPageInfo.items;
     const visibleQuestionIds = renderedCourseQuestions
       .map((question) => String(question.id || "").trim())
       .filter(Boolean);
@@ -37188,10 +36925,7 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
-        ${hiddenFilteredQuestionCount
-        ? `<p class="admin-question-show-more"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-questions-show-more">Show more (${hiddenFilteredQuestionCount})</button></p>`
-        : ""
-      }
+        ${renderAdminPager("questions", questionsPageInfo, "Question pages")}
       </section>
 
       ${state.adminQuestionModalOpen
@@ -37360,12 +37094,13 @@ function renderAdmin() {
     const targetVideoCourseId = String(state.adminNotificationTargetVideoCourseId || "").trim();
     const notificationSending = Boolean(state.adminNotificationSending);
     const allNotifications = getNotifications();
-    const notificationVisibleCount = Math.min(
-      Math.max(ADMIN_NOTIFICATION_RENDER_PAGE_SIZE, Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE),
-      ADMIN_NOTIFICATION_RENDER_CAP,
+    const notificationsPageInfo = getAdminListPage(
+      allNotifications.slice(0, ADMIN_NOTIFICATION_RENDER_CAP),
+      ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+      state.adminNotificationsPage,
     );
-    const notificationsToRender = allNotifications.slice(0, notificationVisibleCount);
-    const notificationsRemaining = Math.min(allNotifications.length, ADMIN_NOTIFICATION_RENDER_CAP) - notificationsToRender.length;
+    state.adminNotificationsPage = notificationsPageInfo.page;
+    const notificationsToRender = notificationsPageInfo.items;
     const notificationRows = notificationsToRender
       .map((notification) => {
         const targetLabel = getNotificationTargetLabel(notification, users);
@@ -37548,11 +37283,7 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
-        ${notificationsRemaining > 0 ? `
-          <div class="admin-list-show-more">
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-notifications-show-more">Show more (${notificationsRemaining})</button>
-          </div>
-        ` : ""}
+        ${renderAdminPager("notifications", notificationsPageInfo, "Notification pages")}
       </section>
     `;
 
@@ -37721,10 +37452,6 @@ function renderAdmin() {
   if (activeAdminPage === "organizations") {
     pageContent = renderAdminOrganizationsSection();
     adminGlobalOverlay = renderAdminOrganizationDialogs();
-  }
-
-  if (activeAdminPage === "ai-agents") {
-    pageContent = renderAdminAgentsSection();
   }
 
   if (activeAdminPage === "admin-access") {
@@ -38153,15 +37880,12 @@ function applyAdminPageTransition(previousPage, nextPage) {
     state.adminCourseTopicGroupCreateModalOpen = false;
     state.adminCourseTopicInlineCreateOpen = false;
   }
-  if (nextPage !== "ai-agents") {
-    state.adminAgentNewToken = null;
-  }
   if (nextPage !== "logs") {
     state.adminLogsVisibleCount = 100;
   }
   if (nextPage !== "notifications") {
     state.adminNotificationComposeOpen = false;
-    state.adminNotificationsVisibleCount = ADMIN_NOTIFICATION_RENDER_PAGE_SIZE;
+    state.adminNotificationsPage = 1;
   }
   if (nextPage === "activity") {
     refreshAdminPresenceSnapshot({ force: true })
@@ -38456,121 +38180,6 @@ function wireAdmin() {
     state.skipNextRouteAnimation = true;
     render();
     flushPendingSyncInBackground();
-  });
-
-  appEl.querySelector("[data-action='admin-assistant-initialize']")?.addEventListener("click", async () => {
-    if (state.adminAgentSaving) {
-      return;
-    }
-    state.adminAgentSaving = true;
-    state.skipNextRouteAnimation = true;
-    render();
-    try {
-      await initializePrimaryAdminAssistant();
-      appendSystemLog("admin.agent_created", "Hermes admin assistant connection created.", {});
-      toast("Hermes connection created. Store the displayed token in Hermes.");
-    } catch (error) {
-      toast(getErrorMessage(error, "Could not set up Hermes connection."));
-    } finally {
-      state.adminAgentSaving = false;
-      if (state.route === "admin" && state.adminPage === "ai-agents") {
-        state.skipNextRouteAnimation = true;
-        render();
-      }
-    }
-  });
-
-  appEl.querySelector("[data-action='admin-agents-refresh']")?.addEventListener("click", async () => {
-    await loadAdminAgents({ force: true });
-    state.skipNextRouteAnimation = true;
-    render();
-  });
-
-  appEl.querySelector("[data-action='admin-agent-hide-token']")?.addEventListener("click", () => {
-    state.adminAgentNewToken = null;
-    state.skipNextRouteAnimation = true;
-    render();
-  });
-
-  appEl.querySelectorAll("[data-action='admin-agent-rotate-token']").forEach((button) => {
-    button.addEventListener("click", async () => {
-      if (!window.confirm("Rotate this agent token? Its current Hermes connection will stop working immediately.")) {
-        return;
-      }
-      try {
-        await rotateAdminAgentToken(
-          String(button.getAttribute("data-agent-id") || "").trim(),
-          String(button.getAttribute("data-agent-name") || "").trim(),
-        );
-        appendSystemLog("admin.agent_token_rotated", "AI admin assistant token rotated.", {});
-        toast("New token generated. Update Hermes with the displayed token.");
-      } catch (error) {
-        toast(getErrorMessage(error, "Could not rotate token."));
-      }
-      state.skipNextRouteAnimation = true;
-      render();
-    });
-  });
-
-  appEl.querySelectorAll("[data-action='admin-agent-set-status']").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const nextStatus = String(button.getAttribute("data-next-status") || "").trim();
-      const message = nextStatus === "disabled"
-        ? "Disable this agent now? Its token will immediately stop working."
-        : "Enable this agent again?";
-      if (!window.confirm(message)) {
-        return;
-      }
-      try {
-        await setAdminAgentStatus(String(button.getAttribute("data-agent-id") || "").trim(), nextStatus);
-        appendSystemLog("admin.agent_status", `AI admin assistant ${nextStatus}.`, { status: nextStatus });
-        toast(nextStatus === "active" ? "Assistant enabled." : "Assistant disabled.");
-      } catch (error) {
-        toast(getErrorMessage(error, "Could not change assistant status."));
-      }
-      state.skipNextRouteAnimation = true;
-      render();
-    });
-  });
-
-  appEl.querySelectorAll("[data-action='admin-agent-set-full-access']").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const enable = String(button.getAttribute("data-enable") || "").trim() === "true";
-      const agentName = String(button.getAttribute("data-agent-name") || "this assistant").trim();
-      const message = enable
-        ? `Grant full administrator tools to ${agentName}? It will be able to manage users, content, courses, notifications, and site access.`
-        : `Remove full administrator tools from ${agentName}?`;
-      if (!window.confirm(message)) {
-        return;
-      }
-      try {
-        await setAdminAgentFullAccess(String(button.getAttribute("data-agent-id") || "").trim(), enable);
-        appendSystemLog("admin.agent_full_access", enable ? "AI assistant granted full administrator tools." : "AI assistant full administrator tools removed.", { enabled: enable });
-        toast(enable ? "Full administrator tools granted." : "Full administrator tools removed.");
-      } catch (error) {
-        toast(getErrorMessage(error, "Could not change full administrator tools."));
-      }
-      state.skipNextRouteAnimation = true;
-      render();
-    });
-  });
-
-  appEl.querySelectorAll("[data-action='admin-agent-approve-request'], [data-action='admin-agent-reject-request']").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const approve = button.getAttribute("data-action") === "admin-agent-approve-request";
-      if (!window.confirm(approve ? "Approve and execute this agent request?" : "Reject this agent request?")) {
-        return;
-      }
-      try {
-        await resolveAdminAgentApproval(String(button.getAttribute("data-request-id") || "").trim(), approve ? "approve" : "reject");
-        appendSystemLog("admin.agent_approval", approve ? "AI agent request approved." : "AI agent request rejected.", {});
-        toast(approve ? "Request approved and completed." : "Request rejected.");
-      } catch (error) {
-        toast(getErrorMessage(error, "Could not review request."));
-      }
-      state.skipNextRouteAnimation = true;
-      render();
-    });
   });
 
   appEl.querySelector("[data-action='refresh-admin-data']")?.addEventListener("click", async () => {
@@ -39306,13 +38915,8 @@ function wireAdmin() {
       render();
     });
 
-    appEl.querySelector("[data-action='admin-notifications-show-more']")?.addEventListener("click", () => {
-      state.adminNotificationsVisibleCount = Math.min(
-        (Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE) + ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
-        ADMIN_NOTIFICATION_RENDER_CAP,
-      );
-      state.skipNextRouteAnimation = true;
-      render();
+    wireAdminPager("notifications", (page) => {
+      state.adminNotificationsPage = page;
     });
 
     notificationForm?.addEventListener("submit", async (event) => {
@@ -40458,6 +40062,10 @@ function wireAdmin() {
   const adminUserFilterProvider = document.getElementById("admin-user-filter-provider");
   const adminUserFilterRole = document.getElementById("admin-user-filter-role");
   const adminUserFilterMcqHeld = document.getElementById("admin-user-filter-mcq-held");
+  wireAdminPager("users", (page) => {
+    state.adminUsersPage = page;
+    state.adminSelectedUserIds = [];
+  });
   const selectAllUsersInput = appEl.querySelector("[data-action='admin-select-all-users']");
   if (selectAllUsersInput instanceof HTMLInputElement) {
     selectAllUsersInput.indeterminate = selectAllUsersInput.dataset.indeterminate === "true";
@@ -41374,6 +40982,34 @@ function wireAdmin() {
     button.addEventListener("click", async () => {
       const row = button.closest("tr[data-user-id], [data-user-edit-root][data-user-id]");
       clearEnrollmentAutoSaveTimer(row);
+      const emailInput = row?.querySelector("#admin-user-edit-email");
+      const nextEmail = String(emailInput?.value || "").trim().toLowerCase();
+      const originalEmail = String(emailInput?.getAttribute("data-original-email") || "").trim().toLowerCase();
+      if (emailInput && nextEmail !== originalEmail) {
+        const userId = String(row.getAttribute("data-user-id") || "").trim();
+        const account = getUsers().find((entry) => String(entry?.id || "").trim() === userId);
+        button.disabled = true;
+        const emailResult = await updateSupabaseAuthUserEmailAsAdmin(getUserProfileId(account), nextEmail);
+        button.disabled = false;
+        if (!emailResult.ok) {
+          toast(`Email not changed: ${emailResult.message}`);
+          emailInput.focus();
+          return;
+        }
+        // The function already wrote profiles.email; mirror it locally so the
+        // next sync does not write the old address back.
+        const users = getUsers();
+        const idx = users.findIndex((entry) => String(entry?.id || "").trim() === userId);
+        if (idx !== -1) {
+          users[idx].email = emailResult.email;
+          save(STORAGE_KEYS.users, users, {
+            userSyncScope: USER_RELATIONAL_SYNC_SCOPE_ADMIN,
+            profileSyncIds: [getUserProfileId(users[idx])],
+          });
+        }
+        emailInput.setAttribute("data-original-email", emailResult.email);
+        appendSystemLog("admin.user_email_changed", "Changed a user's sign-in email.", { userId });
+      }
       const saved = await saveUserEnrollmentFromRow(row, { mode: "manual", syncNow: true });
       if (saved && row?.hasAttribute("data-user-edit-root")) {
         closeAdminUserEditDialog({ discardDraft: false });
@@ -42238,10 +41874,9 @@ function wireAdmin() {
     render();
   });
 
-  appEl.querySelector("[data-action='admin-questions-show-more']")?.addEventListener("click", () => {
-    state.adminQuestionsVisibleLimit = (Number(state.adminQuestionsVisibleLimit) || ADMIN_QUESTION_RENDER_PAGE_SIZE) + ADMIN_QUESTION_RENDER_PAGE_SIZE;
-    state.skipNextRouteAnimation = true;
-    render();
+  wireAdminPager("questions", (page) => {
+    state.adminQuestionsPage = page;
+    state.adminSelectedQuestionIds = [];
   });
 
   appEl.querySelector("[data-action='admin-open-editor-new']")?.addEventListener("click", () => {
@@ -46256,6 +45891,60 @@ async function setSupabaseAuthUserPasswordAsAdmin(targetAuthId, password) {
     return { ok: false, message: "Could not update Supabase user password." };
   } catch (error) {
     return { ok: false, message: error?.message || "Unexpected error during Supabase password update." };
+  }
+}
+
+// Changes a user's sign-in email (auth.users) and the profile's copy, through
+// the same `admin-update-user-email` Edge Function the MedBank app uses. Auth
+// owns the address, so a plain profiles write would leave sign-in unchanged.
+// The function checks the `users.edit` admin action itself.
+async function updateSupabaseAuthUserEmailAsAdmin(targetAuthId, email) {
+  const safeTargetAuthId = String(targetAuthId || "").trim();
+  const nextEmail = String(email || "").trim().toLowerCase();
+  if (!isUuidValue(safeTargetAuthId)) {
+    return { ok: false, message: "This account has no sign-in record to update." };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail) || nextEmail.length > 254) {
+    return { ok: false, message: "Enter a valid email address." };
+  }
+  const authClient = getSupabaseAuthClient();
+  if (!authClient || !SUPABASE_CONFIG.url || !SUPABASE_CONFIG.legacyAnonKey) {
+    return { ok: false, message: "Supabase is not available. Try again in a moment." };
+  }
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const tokenResult = await getValidSupabaseAccessToken(authClient);
+      if (!tokenResult.ok) {
+        return { ok: false, message: tokenResult.message || "Could not verify Supabase session." };
+      }
+      const response = await fetchWithTimeout(`${SUPABASE_CONFIG.url}/functions/v1/admin-update-user-email`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${tokenResult.token}`,
+          apikey: SUPABASE_CONFIG.legacyAnonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ targetAuthId: safeTargetAuthId, email: nextEmail }),
+      });
+      const payload = await readJsonResponseSafe(response);
+      const details = await getResponseDetails(response, payload);
+      if (response.ok && payload?.ok !== false) {
+        return { ok: true, email: nextEmail };
+      }
+      if ((response.status === 401 || response.status === 403) && attempt === 0 && (!details || isInvalidJwtMessage(details))) {
+        await runSupabaseAuthRequestWithTimeout(
+          authClient,
+          () => authClient.auth.refreshSession({ refresh_token: tokenResult.refreshToken || undefined }).catch(() => { }),
+          SUPABASE_SESSION_TIMEOUT_MS,
+          "Supabase session refresh timed out.",
+        );
+        continue;
+      }
+      return { ok: false, message: details || `Email update failed (${response.status}).` };
+    }
+    return { ok: false, message: "Could not update the email." };
+  } catch (error) {
+    return { ok: false, message: getErrorMessage(error, "Could not update the email.") };
   }
 }
 
@@ -59436,6 +59125,48 @@ function renderAdminUserDeviceExemption(exemption) {
   `;
 }
 
+// Google Play Integrity, mirroring the MedBank app's user page. Verdicts are
+// written only by the `verify-play-integrity` Edge Function; admins can read
+// them and exempt a real phone that Google fails (device_integrity_exemptions).
+const ADMIN_DEVICE_INTEGRITY_OUTCOME_LABELS = {
+  pass: "Passed",
+  fail: "Failed",
+  unavailable: "Couldn't check",
+  invalid: "Invalid check",
+};
+
+function renderAdminUserDeviceIntegrity(integrity) {
+  if (!integrity) {
+    return "";
+  }
+  if (integrity.error) {
+    return `
+      <h5 class="admin-user-device-subtitle">Google Play device check</h5>
+      <p class="subtle">The device check is unavailable: ${escapeHtml(integrity.error)}</p>
+    `;
+  }
+  const outcome = String(integrity.outcome || "").trim();
+  const fields = [
+    ["Latest result", ADMIN_DEVICE_INTEGRITY_OUTCOME_LABELS[outcome] || (outcome ? outcome : "Not checked yet")],
+    integrity.checkedAt ? ["Checked", formatReportDateTime(integrity.checkedAt)] : null,
+    integrity.hints.length ? ["Signals", integrity.hints.join(", ")] : null,
+  ].filter(Boolean);
+  return `
+    <h5 class="admin-user-device-subtitle">Google Play device check</h5>
+    <dl class="admin-user-device-fields">
+      ${fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+    </dl>
+    <div class="admin-user-device-release admin-user-device-exemption">
+      <button class="btn ghost admin-btn-sm" type="button" data-action="toggle-user-integrity-exemption">
+        ${integrity.exempt ? "Remove device check exemption" : "Exempt from device check"}
+      </button>
+      <p class="subtle">${integrity.exempt
+        ? "Exempt: this student is never refused by the device check."
+        : "For a real phone that Google fails. This student is never refused by the device check. Takes effect within 30 seconds."}</p>
+    </div>
+  `;
+}
+
 function renderAdminUserDeviceDetails(device, exemption) {
   if (exemption.exempt) {
     return `
@@ -59485,9 +59216,10 @@ async function loadAdminUserDeviceIntoDialog(context) {
   }
   let device = null;
   const exemption = { exempt: false, error: "" };
+  const integrity = { outcome: "", checkedAt: "", hints: [], exempt: false, error: "" };
   let errorMessage = "";
   try {
-    const [deviceResult, exemptionResult] = await Promise.all([
+    const [deviceResult, exemptionResult, verdictResult, integrityExemptionResult] = await Promise.all([
       client
         .from("user_devices")
         .select("device_name, platform, registered_at, last_seen_at")
@@ -59497,8 +59229,32 @@ async function loadAdminUserDeviceIntoDialog(context) {
         .from("user_device_exemptions")
         .select("user_id")
         .eq("user_id", context.profileId)
+        .maybeSingle(),
+      client
+        .from("device_integrity_verdicts")
+        .select("outcome, created_at, signal_hints")
+        .eq("user_id", context.profileId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      client
+        .from("device_integrity_exemptions")
+        .select("user_id")
+        .eq("user_id", context.profileId)
         .maybeSingle()
     ]);
+    // Same rule as the device-limit exemption: an unread state is shown as
+    // unavailable, never as "not exempt".
+    if (verdictResult.error || integrityExemptionResult.error) {
+      integrity.error = (verdictResult.error || integrityExemptionResult.error).message || "Could not load the device check.";
+    } else {
+      integrity.outcome = String(verdictResult.data?.outcome || "").trim();
+      integrity.checkedAt = verdictResult.data?.created_at || "";
+      integrity.hints = (Array.isArray(verdictResult.data?.signal_hints) ? verdictResult.data.signal_hints : [])
+        .map((hint) => String(hint || "").trim())
+        .filter(Boolean);
+      integrity.exempt = Boolean(integrityExemptionResult.data);
+    }
     if (deviceResult.error) {
       errorMessage = deviceResult.error.message || "Could not load the registered device.";
     } else {
@@ -59529,7 +59285,11 @@ async function loadAdminUserDeviceIntoDialog(context) {
     });
     return;
   }
-  body.innerHTML = renderAdminUserDeviceDetails(device, exemption);
+  body.innerHTML = renderAdminUserDeviceDetails(device, exemption) + renderAdminUserDeviceIntegrity(integrity);
+  const integrityButton = body.querySelector("[data-action='toggle-user-integrity-exemption']");
+  integrityButton?.addEventListener("click", () => {
+    toggleAdminUserIntegrityExemption(context, integrity.exempt, integrityButton);
+  });
   const releaseButton = body.querySelector("[data-action='release-user-device']");
   releaseButton?.addEventListener("click", () => {
     releaseAdminUserDevice(context, device, releaseButton);
@@ -59579,6 +59339,50 @@ async function toggleAdminUserDeviceExemption(context, currentlyExempt, button) 
     return;
   }
   toast(currentlyExempt ? "Exemption removed." : "Student exempted from the device limit.");
+  if (token === adminUserDeviceDialogToken) {
+    loadAdminUserDeviceIntoDialog(context);
+  }
+}
+
+async function toggleAdminUserIntegrityExemption(context, currentlyExempt, button) {
+  const confirmed = window.confirm(
+    currentlyExempt
+      ? `Remove the device check exemption?\n\n${context.name}'s phone will be checked by Google Play again.`
+      : `Exempt from the device check?\n\n${context.name} will never be refused by the Google Play device check until you remove the exemption.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    toast("Supabase is not connected.");
+    return;
+  }
+  const token = adminUserDeviceDialogToken;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  let errorMessage = "";
+  try {
+    const table = client.from("device_integrity_exemptions");
+    const { error } = currentlyExempt
+      ? await table.delete().eq("user_id", context.profileId)
+      : await table.insert({ user_id: context.profileId });
+    // 23505: already exempt - the goal holds.
+    if (error && error.code !== "23505") {
+      errorMessage = error.message || "Could not update the device check exemption.";
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not update the device check exemption.";
+  }
+  if (errorMessage) {
+    toast(errorMessage);
+    if (token === adminUserDeviceDialogToken) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+    }
+    return;
+  }
+  toast(currentlyExempt ? "Device check exemption removed." : "Student exempted from the device check.");
   if (token === adminUserDeviceDialogToken) {
     loadAdminUserDeviceIntoDialog(context);
   }

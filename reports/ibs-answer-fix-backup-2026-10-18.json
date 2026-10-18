@@ -1,0 +1,790 @@
+[
+ {
+  "choices": [
+   {
+    "id": "61abc022-6989-4021-bfb7-a9db8fdc7d24",
+    "l": "A",
+    "ok": false,
+    "t": "Aorta"
+   },
+   {
+    "id": "eb2dc440-d80e-48f2-9067-c91b7e106934",
+    "l": "B",
+    "ok": false,
+    "t": "Pulmonary artery"
+   },
+   {
+    "id": "c601e1af-1422-471f-9090-1394c6083266",
+    "l": "C",
+    "ok": true,
+    "t": "Renal vein"
+   },
+   {
+    "id": "73b6d273-0c21-476a-bbdf-65fc48395884",
+    "l": "D",
+    "ok": false,
+    "t": "IVC"
+   }
+  ],
+  "explanation": "The renal vein is rich in nutrients.",
+  "id": "55044055-fa43-4523-b147-e1a6f6bdbf5c",
+  "stem": "8. Rich in nutrients",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "8e5d8437-6ce0-4930-af16-103110b9a6b1",
+    "l": "A",
+    "ok": false,
+    "t": "Epidermis"
+   },
+   {
+    "id": "c7eb9255-57d1-460b-be54-d858b793f68a",
+    "l": "B",
+    "ok": true,
+    "t": "CNS"
+   },
+   {
+    "id": "a003bee2-4bba-4d9b-ac35-571cad78d12a",
+    "l": "C",
+    "ok": false,
+    "t": "Bone marrow"
+   },
+   {
+    "id": "c8f2ea8f-a59c-4b2d-b521-d94574ffc7d7",
+    "l": "D",
+    "ok": false,
+    "t": "All the given distractors"
+   }
+  ],
+  "explanation": "The CNS is devoid of lymphatics.",
+  "id": "10b8e2eb-7202-4270-a88f-66115e1e4e83",
+  "stem": "15. Devoid of lymphatics",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "2c8345f9-7e19-4bd4-a12e-a6ef42ebefe1",
+    "l": "A",
+    "ok": false,
+    "t": "Esophagus"
+   },
+   {
+    "id": "1274cc8f-f96a-4db1-a821-650717ea6d30",
+    "l": "B",
+    "ok": false,
+    "t": "Stomach"
+   },
+   {
+    "id": "6707a0cb-36cd-4863-a22a-4fcf1963aaa7",
+    "l": "C",
+    "ok": true,
+    "t": "Appendix"
+   },
+   {
+    "id": "a897657f-4db6-419a-828b-8ee1ab7a2e2e",
+    "l": "D",
+    "ok": false,
+    "t": "Small intestine"
+   }
+  ],
+  "explanation": "The appendix is the narrowest part of the GIT.",
+  "id": "ee55066a-c6f0-46c6-a5a9-e0f27793d3c1",
+  "stem": "8. The narrowest part in GIT is",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "baaa98b3-1627-4b37-801a-c27046fb6ba5",
+    "l": "A",
+    "ok": false,
+    "t": "Long"
+   },
+   {
+    "id": "cbfd7bfe-d4a4-4d3d-a8a5-e585e73b5a26",
+    "l": "B",
+    "ok": false,
+    "t": "Narrow"
+   },
+   {
+    "id": "d029b305-d0bd-47ac-b379-b006e6207a98",
+    "l": "C",
+    "ok": false,
+    "t": "Show 2 fissures"
+   },
+   {
+    "id": "7689cb2a-0093-4159-8aa9-3669e2ae7317",
+    "l": "D",
+    "ok": true,
+    "t": "Show 2 lobes"
+   }
+  ],
+  "explanation": "The left lung shows 2 lobes.",
+  "id": "6eb9555e-6bd2-4780-a2b2-15e7d7021a8e",
+  "stem": "18. The left lung",
+  "updated_at": "2026-10-13 11:09:54.214098+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "da71903a-ca67-4ffb-a860-753c104bcb74",
+    "l": "A",
+    "ok": false,
+    "t": "tubular"
+   },
+   {
+    "id": "96b9177a-1bc3-484c-a392-97699331836d",
+    "l": "B",
+    "ok": true,
+    "t": "alveolar"
+   },
+   {
+    "id": "44d3e03a-cc9b-492d-bc8c-12ed6c370d6d",
+    "l": "C",
+    "ok": false,
+    "t": "tubule- alveolar"
+   },
+   {
+    "id": "965fe2ca-0688-46f4-a144-00509c556793",
+    "l": "D",
+    "ok": false,
+    "t": "none of the above"
+   }
+  ],
+  "explanation": "Simple coiled tubular glands are present in tubular glands.",
+  "id": "2d2775b1-1ef8-4f91-9fd2-6b500e085360",
+  "stem": "10) simple coiled is present in:",
+  "updated_at": "2026-10-13 10:59:53.78925+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "45f948c2-e125-4251-9b87-a1fb6aeb304e",
+    "l": "A",
+    "ok": false,
+    "t": "5-30"
+   },
+   {
+    "id": "74cf4de7-97a8-45aa-b4ae-50db60a16df3",
+    "l": "B",
+    "ok": false,
+    "t": "6-8"
+   },
+   {
+    "id": "3222f378-e023-4bd1-a728-c296addae4f9",
+    "l": "C",
+    "ok": false,
+    "t": "2"
+   },
+   {
+    "id": "76f793c1-754f-4c74-afc7-7fbb10795f51",
+    "l": "D",
+    "ok": true,
+    "t": "3-4"
+   }
+  ],
+  "explanation": "Transitional epithelium in full bladder has 2 layers.",
+  "id": "eaea3ceb-765a-4a82-8b88-a2801d1d639c",
+  "stem": "15) number of layer of transitional epithelium in full bladder:",
+  "updated_at": "2026-10-13 10:59:53.78925+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "02677d75-eb3d-4f10-ab3c-3c4f5219df60",
+    "l": "A",
+    "ok": true,
+    "t": "Zona pellucida"
+   },
+   {
+    "id": "10876ebe-ecea-447a-ab47-041bf14de643",
+    "l": "B",
+    "ok": false,
+    "t": "Crona radiate"
+   },
+   {
+    "id": "14781690-73a1-462b-9a3b-2d65923fdd13",
+    "l": "C",
+    "ok": false,
+    "t": "Theca externa"
+   },
+   {
+    "id": "acbc7ba8-3548-4516-a49b-75c740c5796c",
+    "l": "D",
+    "ok": false,
+    "t": "Theca interna"
+   }
+  ],
+  "explanation": "Corona radiata is the most inner layer of the cumulus oophorus which is liberated with the secondary oocyte.",
+  "id": "45acbe48-c803-4699-8f85-dc287a06616b",
+  "stem": "1. it is the most inner layer of the cumulus oophorous which is liberated with the secondary oocyte?",
+  "updated_at": "2026-10-13 11:05:39.159135+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "37ce109f-e51c-4061-a497-6d1e7b3f714a",
+    "l": "A",
+    "ok": false,
+    "t": "Amount: 2-6 ml/ejaculate"
+   },
+   {
+    "id": "f3cd1f3c-f594-4a19-aeaf-b25956abb633",
+    "l": "B",
+    "ok": true,
+    "t": "Sperms count: 20-200 million sperm/ejaculate"
+   },
+   {
+    "id": "50a222c5-88b9-4dce-858d-9b6989f62676",
+    "l": "C",
+    "ok": false,
+    "t": "Vital sperms: ≥ 60%"
+   },
+   {
+    "id": "f40f9ffd-f172-43bc-aa6e-b5071d362b9e",
+    "l": "D",
+    "ok": false,
+    "t": "Sperm motility: ≥ 40% and ≥ 30% with aggressive motility"
+   }
+  ],
+  "explanation": "Vital sperms should be ≥ 60%, not as stated. The other values are correct.",
+  "id": "ed703bbe-a10d-4f2d-ae21-e675656bcbe4",
+  "stem": "8- All are true about the semen except",
+  "updated_at": "2026-10-13 10:59:54.032547+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "91bcc1fc-3a3a-46c9-aa41-a67d015bd6e5",
+    "l": "A",
+    "ok": false,
+    "t": "Right atrium"
+   },
+   {
+    "id": "1ca2ba26-5dfd-4cd3-8dea-39fb5a904665",
+    "l": "B",
+    "ok": false,
+    "t": "Right ventricle"
+   },
+   {
+    "id": "54e14e1f-798d-4c86-bdc7-9967c74a7779",
+    "l": "C",
+    "ok": false,
+    "t": "Left atrium"
+   },
+   {
+    "id": "0258d4e3-eff4-40df-a215-2624c02aeed0",
+    "l": "D",
+    "ok": true,
+    "t": "Left ventricle"
+   }
+  ],
+  "explanation": "The right ventricle receives blood through the right atrioventricular opening (tricuspid valve).",
+  "id": "8d3100b5-21cc-441a-ad97-744eaa7e4d0b",
+  "stem": "1. Receives blood through right A-V opening (tricuspid valve).  ( revision)",
+  "updated_at": "2026-10-13 10:59:54.290269+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "df7fba58-93ec-483d-beba-6c2fdd22835e",
+    "l": "A",
+    "ok": false,
+    "t": "Right atrium"
+   },
+   {
+    "id": "12d7464d-914b-4382-80b1-1133be84dbb8",
+    "l": "B",
+    "ok": false,
+    "t": "Right ventricle"
+   },
+   {
+    "id": "d36e6b34-5436-4b0b-b144-4e14616a0206",
+    "l": "C",
+    "ok": false,
+    "t": "Left atrium"
+   },
+   {
+    "id": "f04f826d-6c86-4798-bf94-2ca2b2a6c9e6",
+    "l": "D",
+    "ok": true,
+    "t": "Left ventricle"
+   }
+  ],
+  "explanation": "The right ventricle receives blood through the right atrioventricular opening (tricuspid valve).",
+  "id": "87b6c4c9-3b5e-4cf0-ab7c-3300adac396c",
+  "stem": "1. Receives blood through right A-V opening (tricuspid valve)",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "679a9dbf-2e6b-4fcc-9096-58da2858ca18",
+    "l": "A",
+    "ok": false,
+    "t": "Axillary lymph nodes"
+   },
+   {
+    "id": "828b41b2-a1cc-4b9f-82ff-9507a04d10a9",
+    "l": "B",
+    "ok": true,
+    "t": "Cervical lymph nodes"
+   },
+   {
+    "id": "ed571be5-5ab3-4288-88bb-5685b9ce4b9c",
+    "l": "C",
+    "ok": false,
+    "t": "Adenoids"
+   },
+   {
+    "id": "7a08a6cf-ca66-4915-9305-121ad8f05ee6",
+    "l": "D",
+    "ok": false,
+    "t": "All the given distractors"
+   }
+  ],
+  "explanation": "Adenoids do not have afferent lymphatics.",
+  "id": "dd78068e-494f-4499-bdbf-1a887bb3fa3e",
+  "stem": "5. Does not have afferent lymphatics",
+  "updated_at": "2026-10-13 10:59:54.290269+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "9cbd1dfa-ce04-424a-b352-c019f63350ef",
+    "l": "A",
+    "ok": false,
+    "t": "Round above liver"
+   },
+   {
+    "id": "cc5f4bb8-81c3-4a08-afbc-bc916451e10c",
+    "l": "B",
+    "ok": true,
+    "t": "Secretes bile"
+   },
+   {
+    "id": "c3ed1e4b-95aa-4b4a-b227-b2358b02442c",
+    "l": "C",
+    "ok": false,
+    "t": "Formed of head, body, tail"
+   },
+   {
+    "id": "868bc22b-8e42-4d1b-879d-8e90519ce4e3",
+    "l": "D",
+    "ok": false,
+    "t": "Continuous with cystic ducts"
+   }
+  ],
+  "explanation": "The gall bladder is continuous with the cystic duct.",
+  "id": "457485a7-a609-46ed-af48-21250cdcbf72",
+  "stem": "1. The gall bladder",
+  "updated_at": "2026-10-13 11:02:25.80059+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "ab2155f0-5676-4087-8fea-56b647f4e48e",
+    "l": "A",
+    "ok": false,
+    "t": "Found above the liver"
+   },
+   {
+    "id": "0e082ac4-fbf3-4a04-ba75-c27fb6997d14",
+    "l": "B",
+    "ok": true,
+    "t": "Secretes bile"
+   },
+   {
+    "id": "77b93cf9-aa00-480f-8c19-a88491edd482",
+    "l": "C",
+    "ok": false,
+    "t": "Formed of head, body and tail"
+   },
+   {
+    "id": "7903ebf6-6b85-47d0-afa1-fa196207d076",
+    "l": "D",
+    "ok": false,
+    "t": "Continuous with the cystic duct"
+   }
+  ],
+  "explanation": "The gall bladder is continuous with the cystic duct.",
+  "id": "50a58432-f946-4370-a1aa-acf6c93df322",
+  "stem": "24. The gall bladder",
+  "updated_at": "2026-10-13 11:07:38.193096+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "bbe9c68f-5339-4a42-ab07-5a92fcd0ec4c",
+    "l": "A",
+    "ok": false,
+    "t": "Comma shaped"
+   },
+   {
+    "id": "0b5b6ad6-e17e-4e70-879f-b4a8e54cd82a",
+    "l": "B",
+    "ok": false,
+    "t": "2 feet"
+   },
+   {
+    "id": "39f2e69b-92a2-4f0c-a078-a7abf5cc4af7",
+    "l": "C",
+    "ok": false,
+    "t": "Has fundus, body, tail"
+   },
+   {
+    "id": "15d2013a-760e-45e6-808f-e35a42562142",
+    "l": "D",
+    "ok": true,
+    "t": "Comma shaped and 2 feet"
+   }
+  ],
+  "explanation": "The epididymis is comma shaped.",
+  "id": "54d03b0b-7336-45db-94b8-98a1671f11b5",
+  "stem": "14. The epididymis",
+  "updated_at": "2026-10-13 11:05:39.159135+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "2a9fd9a2-4587-456a-b7bd-07c420e29796",
+    "l": "A",
+    "ok": false,
+    "t": "7 cervical"
+   },
+   {
+    "id": "b9c27118-9401-48eb-9fbe-dc35af64645d",
+    "l": "B",
+    "ok": false,
+    "t": "12 thoracic"
+   },
+   {
+    "id": "9d9e3fbb-accf-4874-a476-fb848e9f36e6",
+    "l": "C",
+    "ok": false,
+    "t": "5 lumbar"
+   },
+   {
+    "id": "60e5124e-275e-4431-bd0d-7217d690c97b",
+    "l": "D",
+    "ok": true,
+    "t": "5 sacral"
+   },
+   {
+    "id": "f19e324b-b57f-45c8-8f11-b2bb58c2f25a",
+    "l": "E",
+    "ok": false,
+    "t": "All"
+   }
+  ],
+  "explanation": "All",
+  "id": "8535e238-2814-47d7-a8ba-bf84cdb308db",
+  "stem": "23. Regarding spinal cord segments choose the statement",
+  "updated_at": "2026-10-13 11:05:39.159135+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "4590db69-bc51-4bc9-97ac-3070c3f7f062",
+    "l": "A",
+    "ok": false,
+    "t": "Abduction"
+   },
+   {
+    "id": "3e62703c-a8a6-4772-99da-9952b4f17395",
+    "l": "B",
+    "ok": false,
+    "t": "Adduction"
+   },
+   {
+    "id": "00e20756-cc74-4f36-af2f-df36d36b1e3d",
+    "l": "C",
+    "ok": true,
+    "t": "Medial rotation"
+   },
+   {
+    "id": "a8c8b6df-48f0-4d0e-b6b9-059a50c63bf8",
+    "l": "D",
+    "ok": false,
+    "t": "Lateral rotation"
+   }
+  ],
+  "explanation": "Moving the anterior side away from the midline is abduction.",
+  "id": "e89861ae-fbd8-49f9-b3b0-2af767f0018e",
+  "stem": "17. Moving the anterior side away from the midline",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "812a21aa-7d73-4f1f-bc70-a3e899149a60",
+    "l": "A",
+    "ok": false,
+    "t": "Type I collagen"
+   },
+   {
+    "id": "47e0cd8e-cc31-4f58-8252-d4c1ec4a2333",
+    "l": "B",
+    "ok": true,
+    "t": "Type II collagen"
+   },
+   {
+    "id": "9afade69-bc4e-41bc-b48f-14f277956356",
+    "l": "C",
+    "ok": false,
+    "t": "Reticular fibers"
+   },
+   {
+    "id": "20f5056e-2eac-46d4-ba64-7fb64eb86ff8",
+    "l": "D",
+    "ok": false,
+    "t": "Type VII collagen"
+   }
+  ],
+  "explanation": "Anchoring fibers that fix basement membrane to connective tissue are formed of type VII collagen.",
+  "id": "8572ab7e-0783-476e-bdb0-9ff34a207853",
+  "stem": "76) Anchoring fibers that fix basement membrane to C.T. are formed of",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "19c2db2a-b51f-4eef-8ccd-ae8adde7974d",
+    "l": "A",
+    "ok": true,
+    "t": "Formed of hyaline cartilage"
+   },
+   {
+    "id": "9956bb81-9679-4380-958c-a57d1dd424d1",
+    "l": "B",
+    "ok": false,
+    "t": "Allows minimal movement"
+   },
+   {
+    "id": "88bf472e-9a9d-4981-be2e-0a4b556ed55b",
+    "l": "C",
+    "ok": false,
+    "t": "Usually found in midline"
+   },
+   {
+    "id": "df37c8ea-ae8d-43dc-9ab6-0be4c6727e04",
+    "l": "D",
+    "ok": false,
+    "t": "Ossifies with age"
+   }
+  ],
+  "explanation": "A primary cartilaginous joint is formed of hyaline cartilage.",
+  "id": "cc9616b0-d663-415b-b31b-1caf62290c82",
+  "stem": "19. Primary cartilaginous joint",
+  "updated_at": "2026-10-13 11:05:39.159135+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "91ab6aa3-3ab1-4e7b-901e-e485274c21ff",
+    "l": "A",
+    "ok": true,
+    "t": "Formed of hyaline cartilage"
+   },
+   {
+    "id": "2e72db71-9cd4-4da7-b460-bf39a6732406",
+    "l": "B",
+    "ok": false,
+    "t": "Allows minimal movement"
+   },
+   {
+    "id": "77596ed4-8b05-481a-9362-1850a5d0b3d0",
+    "l": "C",
+    "ok": false,
+    "t": "Usually found in midline"
+   },
+   {
+    "id": "4384ac30-ca1a-4814-96a3-8cf9fa0e1a8c",
+    "l": "D",
+    "ok": false,
+    "t": "Ossifies with age"
+   }
+  ],
+  "explanation": "A primary cartilaginous joint is formed of hyaline cartilage.",
+  "id": "794edb47-6846-411a-bb7f-e5e925dd5517",
+  "stem": "6. Primary cartilaginous joint",
+  "updated_at": "2026-10-13 11:05:39.159135+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "42c56580-5006-4f71-99fe-60833761ec7f",
+    "l": "A",
+    "ok": true,
+    "t": "Formed of hyaline cartilage"
+   },
+   {
+    "id": "3914863e-957b-45f5-bd6b-c43ae7cd75f1",
+    "l": "B",
+    "ok": false,
+    "t": "Allows minimal movement"
+   },
+   {
+    "id": "5d957377-b281-4884-868c-bc6de3de59c9",
+    "l": "C",
+    "ok": false,
+    "t": "Usually found in midline"
+   },
+   {
+    "id": "2ce079f4-d97f-46e6-8018-0834d2214b4f",
+    "l": "D",
+    "ok": false,
+    "t": "Ossifies with age"
+   }
+  ],
+  "explanation": "A primary cartilaginous joint is formed of hyaline cartilage.",
+  "id": "f22c9a54-2752-4f46-94d4-2d2a479ac8b6",
+  "stem": "36. Primary cartilaginous joint",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "e5edb2c9-0eb4-43da-b708-14c0cf658411",
+    "l": "A",
+    "ok": false,
+    "t": "It is about 2.5 meters long"
+   },
+   {
+    "id": "251575b4-54a8-4110-bc29-a4e48f2e4093",
+    "l": "B",
+    "ok": false,
+    "t": "It has a thin wall and a narrow diameter"
+   },
+   {
+    "id": "a897d5e1-a618-4b01-aae0-53032cf14125",
+    "l": "C",
+    "ok": true,
+    "t": "Has many mucosal folds showing villi & rich vascularity"
+   }
+  ],
+  "explanation": "The ileum has many mucosal folds showing villi and rich vascularity.",
+  "id": "2c91b41c-882f-44f2-8a56-fc1e61ff02bb",
+  "stem": "21. Ileum:",
+  "updated_at": "2026-10-13 11:05:39.159135+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "a4b023b7-2ab4-4c44-83ad-15b0c9391846",
+    "l": "A",
+    "ok": true,
+    "t": "4th"
+   },
+   {
+    "id": "f2d455e1-9de9-4f0d-a908-447ca0d7c02a",
+    "l": "B",
+    "ok": false,
+    "t": "8th"
+   },
+   {
+    "id": "c591ee22-7afe-4222-8b15-fb38d30b4d46",
+    "l": "C",
+    "ok": false,
+    "t": "2nd"
+   },
+   {
+    "id": "66df59c3-cabf-4aef-afda-9d1c4e660096",
+    "l": "D",
+    "ok": false,
+    "t": "6th"
+   }
+  ],
+  "explanation": "Morula comes in contact with the uterine endometrium on the 4th day.",
+  "id": "163b2f52-205f-4d47-98eb-146984f9c8ae",
+  "stem": "53. At which day after fertilization does the morula come in contact with the uterine endometrium",
+  "updated_at": "2026-10-13 10:59:54.032547+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "1429cad6-1d6f-4ad4-a8f8-ae1bb3e91d9d",
+    "l": "A",
+    "ok": false,
+    "t": "Pivot"
+   },
+   {
+    "id": "8b400477-5ecb-4352-9e95-dd150dbe2699",
+    "l": "B",
+    "ok": false,
+    "t": "Ball and socket"
+   },
+   {
+    "id": "7f6789f6-6927-401f-a77c-ed3d5f54366f",
+    "l": "C",
+    "ok": false,
+    "t": "Modified hinge"
+   },
+   {
+    "id": "b0dd5f2e-9d85-4c2c-aab6-62296656b484",
+    "l": "D",
+    "ok": true,
+    "t": "A & b only"
+   }
+  ],
+  "explanation": "Pivot, ball and socket, and modified hinge joints all allow rotation.",
+  "id": "0afe2efd-66ac-4708-a2bb-bf6d6e3fedbf",
+  "stem": "39. All the following types of joints allow rotation",
+  "updated_at": "2026-10-13 11:09:53.917029+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "5a09e331-f92c-4564-9ce8-a33cf5395391",
+    "l": "A",
+    "ok": false,
+    "t": "Divided into about 200 compartments"
+   },
+   {
+    "id": "68b95723-f82d-4e16-99d3-fcd63a642078",
+    "l": "B",
+    "ok": false,
+    "t": "Each compartment contains 20 seminiferous tubules"
+   },
+   {
+    "id": "ec7d254c-cd94-453b-ab30-8875a68044c6",
+    "l": "C",
+    "ok": true,
+    "t": "Each seminiferous tubule is about 2 ft"
+   }
+  ],
+  "explanation": "The statement that each seminiferous tubule is about 2 ft is incorrect.",
+  "id": "48ad6ab6-575b-4149-9034-e6e1ed489966",
+  "stem": "31. All are true about the testis except",
+  "updated_at": "2026-10-13 11:14:23.581027+00"
+ },
+ {
+  "choices": [
+   {
+    "id": "f547271b-ea16-4b83-bbe4-f5e363111439",
+    "l": "A",
+    "ok": false,
+    "t": "Divided into about 200 compartments"
+   },
+   {
+    "id": "fa8f70e5-eb34-4018-a716-29d459a0ddb2",
+    "l": "B",
+    "ok": false,
+    "t": "Each compartment contains 20 seminiferous tubules"
+   },
+   {
+    "id": "606c0911-1425-40c5-9b0b-4390ea24eb33",
+    "l": "C",
+    "ok": true,
+    "t": "Each seminiferous tubule is about 2 ft"
+   }
+  ],
+  "explanation": "The statement that each seminiferous tubule is about 2 ft is incorrect.",
+  "id": "6afe9248-0498-4a7c-bd98-b91002ed7d36",
+  "stem": "31. All are true about the testis except",
+  "updated_at": "2026-10-13 11:16:13.938581+00"
+ }
+]

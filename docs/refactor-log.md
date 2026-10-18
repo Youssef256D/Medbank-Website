@@ -2,6 +2,57 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-19 — Numbered pages for long admin lists
+- The Users list was hard-capped at `ADMIN_USER_RENDER_LIMIT` (80) rows with
+  no way to reach the rest. Users, MCQ questions, sent notifications and
+  organization members now use numbered pages (Prev · 1 2 3 … · Next).
+- Shared helpers: `getAdminListPage(items, pageSize, page)` (1-based, clamps
+  to the last page), `getAdminPagerSlots`, `renderAdminPager(name, info)` and
+  `wireAdminPager(name, onPage)`; styles under `.admin-pager`.
+- State: `adminUsersPage` (+ `adminUsersFilterKey`, which resets to page 1
+  when search/filters change), `adminQuestionsPage` (replaces
+  `adminQuestionsVisibleLimit`), `adminNotificationsPage` (replaces
+  `adminNotificationsVisibleCount`; the 200-row `ADMIN_NOTIFICATION_RENDER_CAP`
+  still applies), `adminOrganizationMemberPage` (replaces
+  `adminOrganizationMemberLimit`). The `admin-questions-show-more` and
+  `admin-notifications-show-more` actions are gone.
+- Changing page clears the bulk selection (select-all covers only the page shown).
+
+### 2026-10-19 — Hermes AI admin assistant removed (website, DB, Edge Function)
+- Owner decision. Last agent activity was 2026-06-11. Removed: the
+  `ai-agents` admin page and all its code/state/CSS, the `admin-agent-tool`
+  Edge Function (source, `config.toml` entry, and the deployed function via
+  `supabase functions delete`), and the four tables `admin_agents`,
+  `admin_agent_permissions`, `admin_agent_approval_requests`,
+  `admin_agent_action_log` (migration `20261019200000_drop_hermes_admin_agent`).
+- **No backup** of the 4,103 action-log rows, by the owner's choice.
+- The app's admin Logs page read `admin_agent_action_log` only, so it was
+  removed on the app branch `claude/admin-parity-with-web`; `/admin/logs`
+  redirects to Activity. App builds already installed show an error on that
+  page until updated. The website's Logs page is unrelated (local system
+  logs) and stays.
+- `set_updated_at()` is shared and was kept. No RLS policy on any other table
+  changed.
+
+### 2026-10-19 — Admin parity with the MedBank app (web side)
+- Audited every admin page against the Flutter admin (`Medbank-App`,
+  `lib/features/admin`). The backends were already shared; only two app
+  features were missing here:
+  - **Sign-in email edit** in Users → Edit details. Goes through the
+    deployed `admin-update-user-email` Edge Function
+    (`updateSupabaseAuthUserEmailAsAdmin`), never a plain `profiles` write:
+    Auth owns the address. The email changes first; a refused address stops
+    the save. Field shows only with `users.edit`.
+  - **Google Play device check** in the Registered device dialog: latest
+    `device_integrity_verdicts` row and the `device_integrity_exemptions`
+    toggle, same wording as the app. An unread state shows as unavailable,
+    never "not exempt".
+- The app got the web-only pieces on branch `claude/admin-parity-with-web`
+  (MCQ subject locks, question CSV export, upload history). Still web-only on
+  purpose: Hermes assistant console, local system-log clear/export, "force
+  student refresh" (app_state). Still app-only: admin inbox, appearance.
+- No migration, RLS or Edge Function change.
+
 ### 2026-10-19 — Signup shows the live course names (renamed courses)
 - Bug: signed-out visitors cannot read `courses` (RLS `courses_select` is
   admin/enrolled only), so the signup and complete-profile course checklists
@@ -16,7 +67,38 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
 - Enrollment itself was never affected: the profile term trigger enrolls by
   year/semester on the server. No RLS policy was changed.
 - Applied to the hosted project via SQL with the ledger row inserted by hand
-  (so `db push` would not re-run it).
+  (the popup migration is applied as `20261018222954`).
+
+### 2026-10-19 — Pop-ups can target an organization and/or a university
+- New columns `app_popups.university_audience` ('everyone' | 'university')
+  and `target_university_id` (FK `universities`, on delete set null), same
+  shape as the existing `organization_audience` / `target_organization_id`.
+  Migration `20261018222954_popup_university_audience.sql` also replaces
+  `get_my_active_popups()` to match `profiles.university_id`. Organization
+  and university **combine with AND**.
+- A deleted organization/university leaves the audience set with a null id:
+  the pop-up reaches nobody (never widens). The admin editor shows it as
+  "Deleted … (reaches nobody)" with the sentinel value `deleted`, never as
+  "Any university", and refuses to save until a real one is picked.
+- Web admin Pop-ups editor: new Organization and University pickers; the
+  list's Audience column names them. `validatePopupCampaign` checks pairing.
+- The Flutter admin console does not know the university columns yet; its
+  updates leave them untouched.
+
+### 2026-10-18 — IBS answer key fixes (data only, hosted DB)
+- Owner-approved content fix for course "INTRODUCTION TO BODY STRUCTURE ( IBS )"
+  (`9e435020-...`): 25 questions had the wrong `question_choices.is_correct`
+  (or 2 correct options). Fixed answers and explanations, and reworded options
+  on 6 of them (left lung, 3× primary cartilaginous joint, spinal segments,
+  joints rotation) plus one stem ("morula" → "blastocyst").
+- Source: `IBS Final Book .docx`. **The book's own key is wrong in several
+  places**, so do not bulk re-sync answers from it. Review list:
+  `reports/ibs-answer-review-2026-10-18.md`. Old values:
+  `reports/ibs-answer-fix-backup-2026-10-18.json`.
+- No code changes; `content_versions` bumped itself through the choices trigger.
+- 2026-10-19 follow-up: 6 more questions fixed (the "your call" section of the
+  review). The stems of the lysosome, most-cranial-part and cilium questions
+  were reworded. Old values: `reports/ibs-answer-fix-backup-2-2026-10-19.json`.
 
 ### 2026-10-17 — Block submit no longer hangs on the cloud flush
 - **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit

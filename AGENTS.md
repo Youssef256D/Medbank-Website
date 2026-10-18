@@ -77,7 +77,6 @@ supabase/
     admin-delete-user/            } GitHub Pages. /api/*.js mirrors only the
     admin-set-user-access/        } older delete/access/password path and is
     admin-set-user-password/      } deprecated in the current deploy (see §6).
-    admin-agent-tool/   Hermes AI admin assistant (scoped + full-admin tools).
     cloudflare-stream-token/      Protected long-course-video pipeline.
     cloudflare-stream-tus-upload/
   migrations/           CANONICAL schema source of truth. Timestamped. Apply to
@@ -100,7 +99,7 @@ Assets/                 Branding images.
 - **Student app:** `app-launcher`, `courses`, `dashboard`, `notifications`,
   `create-test`, `session`, `review`, `analytics`, `profile`
 - **Admin:** `admin` (sub-pages: dashboard, users, courses, questions,
-  bulk-import, notifications, site-access, ai-agents, activity, logs,
+  bulk-import, notifications, site-access, activity, logs,
   course-platform)
 
 ### Key invariants in `main.js`
@@ -117,8 +116,8 @@ Assets/                 Branding images.
 Core relational tables: `profiles`, `courses`, `course_topics`,
 `user_course_enrollments`, `questions`, `question_choices`, `question_tags`,
 `test_blocks`, `test_block_items`, `test_responses`, `notifications`, etc.
-Plus the admin-agent control plane (`admin_agents`, `admin_agent_action_log`,
-`admin_agent_approval_requests`) and the course learning-platform tables.
+Plus the course learning-platform tables. (The Hermes `admin_agent*` tables
+were dropped on 2026-10-19.)
 
 Enums: `user_role` (student/admin), `question_difficulty`, `question_status`
 (draft/published/archived), `block_mode` (tutor/timed), `block_source`
