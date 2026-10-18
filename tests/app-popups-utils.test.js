@@ -82,6 +82,9 @@ function adminHarness(overrides = {}) {
     isMissingRelationError: (error) => ['42P01', 'PGRST205'].includes(error.code),
     isStorageBucketMissingError: (error) => /bucket not found/i.test(error.message),
     loadAdminNotificationVideoCourseOptions: async () => true, render: () => {}, toast: () => {},
+    loadAdminOrganizations: async () => true, loadUniversities: async () => true,
+    getAdminCourseOrganizationOptions: () => state.adminOrganizations || [],
+    getUniversityById: (id) => (state.universities || []).find((entry) => entry.id === id) || null,
     // Mirrors main.js escapeHtml() EXACTLY, including its String(value || "")
     // coercion. A stub using ?? here is more forgiving than production and
     // hides every falsy-value rendering bug, which is how a raw 0 shipped as a
@@ -159,6 +162,8 @@ function wiredEditor(draftOverrides = {}, overrides = {}) {
   h.state.adminPopupDraft = { ...h.newAdminPopupDraft(), title: 'Campaign', ...draftOverrides };
   for (const [key, value] of Object.entries(h.state.adminPopupDraft)) controls[key] = { value: String(value ?? ''), checked: !!value };
   controls.artwork = { addEventListener: () => {} };
+  controls.popup_organization = { value: 'everyone' };
+  controls.popup_university = { value: '' };
   h.wireAdminPopups();
   return { h, listeners, controls };
 }
@@ -220,4 +225,41 @@ test('only Live wears the danger-free green badge; healthy states are neutral', 
   const html = h.renderAdminPopupsSection();
   assert.match(html, /class="badge neutral">Scheduled/);
   assert.doesNotMatch(html, /badge bad/);
+});
+
+test('organization and university audiences validate their pairing', () => {
+  const base = { title: 'T', audience_role: 'all', display_rule: 'once', priority: 0 };
+  assert.equal(utils.validatePopupCampaign(base).ok, true);
+  assert.equal(utils.validatePopupCampaign({ ...base, organization_audience: 'organization', target_organization_id: '' }).ok, false);
+  assert.equal(utils.validatePopupCampaign({ ...base, organization_audience: 'everyone', target_organization_id: 'org' }).ok, false);
+  assert.equal(utils.validatePopupCampaign({ ...base, university_audience: 'university', target_university_id: '' }).ok, false);
+  assert.equal(utils.validatePopupCampaign({ ...base, university_audience: 'everyone', target_university_id: 'uni' }).ok, false);
+  assert.equal(utils.validatePopupCampaign({ ...base, organization_audience: 'organization', target_organization_id: 'org',
+    university_audience: 'university', target_university_id: 'uni' }).ok, true);
+});
+
+test('organization and university pickers save as audience columns', async () => {
+  let payload;
+  const { h, listeners, controls } = wiredEditor({}, {
+    getCoursesPlatformClient: () => ({ from: () => ({ insert: (data) => { payload = data; return { select: async () => ({ data: [{ id: 'created' }] }) }; } }) }),
+  });
+  h.loadAdminPopups = async () => {};
+  controls.popup_organization.value = 'org-1';
+  controls.popup_university.value = 'uni-1';
+  listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(payload.organization_audience, 'organization');
+  assert.equal(payload.target_organization_id, 'org-1');
+  assert.equal(payload.university_audience, 'university');
+  assert.equal(payload.target_university_id, 'uni-1');
+});
+
+test('a deleted university is never shown or saved as "Any university"', () => {
+  const h = adminHarness();
+  h.state.universities = [{ id: 'uni-1', name: 'Cairo' }];
+  h.state.adminPopupDraft = { ...h.newAdminPopupDraft(), title: 'T', university_audience: 'university', target_university_id: null };
+  const html = h.renderAdminPopupsSection();
+  assert.match(html, /<option value="deleted" selected>Deleted university \(reaches nobody\)/);
+  h.state.adminPopups = [{ id: 'p', title: 'P', created_at: now, audience_role: 'all', priority: 0, university_audience: 'university', target_university_id: 'uni-1' }];
+  assert.match(h.renderAdminPopupsSection(), /all · Any year · Cairo/);
 });

@@ -535,7 +535,9 @@ const state = {
   adminQuestionModalOpen: false,
   adminQuestionsFiltersOpen: false,
   adminQuestionsFilterKey: "",
-  adminQuestionsVisibleLimit: 0,
+  adminUsersPage: 1,
+  adminUsersFilterKey: "",
+  adminQuestionsPage: 1,
   qbankFilters: {
     course: "",
     topics: [],
@@ -601,7 +603,7 @@ const state = {
   adminOrganizationDetailLoading: false,
   adminOrganizationDetailError: "",
   adminOrganizationMemberSearch: "",
-  adminOrganizationMemberLimit: 50,
+  adminOrganizationMemberPage: 1,
   adminOrganizationDraft: null,
   adminOrganizationCodeDraft: null,
   adminOrganizationAddMemberOpen: false,
@@ -776,7 +778,7 @@ const state = {
   adminNotificationBody: "",
   adminNotificationSending: false,
   adminNotificationComposeOpen: false,
-  adminNotificationsVisibleCount: ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+  adminNotificationsPage: 1,
   studentDataRefreshing: false,
   studentDataLastSyncAt: 0,
   studentDataLastFullSyncAt: 0,
@@ -1564,18 +1566,17 @@ const SYSTEM_LOG_AUDITED_STORAGE_KEYS = new Set([
   STORAGE_KEYS.flashcards,
 ]);
 
+// Offline/first-paint fallback only; the live list comes from `courses`
+// (signup: get_signup_course_catalog). Mirrors the active rows on 2026-10-19.
 const DEFAULT_MEDBANK_CURRICULUM = {
   1: {
     1: [
-      "Introduction for All Students (Intro 100)",
-      "Introduction to Body Structure (BOS 101)",
-      "Gross & Microscopic Aspects of Diseases (GMD 102)",
-      "Introduction to Microbial and Parasitic Agents (MIP 103)",
-      "Introduction to Drug Therapy (DRG 104)",
-      "Medical Terminology (MET 105)",
+      "Introduction to Body Function (IBF 102)",
+      "INTRODUCTION TO BODY STRUCTURE ( IBS )",
+      "Introduction to Heamato-Immunology (IHI 103)",
+      "Introduction to Molecular Biology (IMB 104)",
     ],
     2: [
-      "Molecular Biology (MBI 106)",
       "Musculoskeletal (MUS 107)",
       "Hemopoetic System, Immunity & Defense Mechanism (HID 108)",
       "Clinical Toxicology (CTX 109)",
@@ -1584,10 +1585,10 @@ const DEFAULT_MEDBANK_CURRICULUM = {
   },
   2: {
     1: [
-      "Respiratory System (RES 201)",
-      "Cardiovascular System (CVS 202)",
-      "GIT & Liver (GIL 203)",
-      "Social & Behavioral Science (SOB 204)",
+      "Musculo-Skeletal System (MSS 201)",
+      "Nervous System (NRS 202)",
+      "Endocrinal & Reproductive Systems (ERS 203)",
+      "Elective 3",
     ],
     2: [
       "Metabolism & Nutrition (MEN 205)",
@@ -1616,7 +1617,7 @@ const DEFAULT_MEDBANK_CURRICULUM = {
   4: {
     1: [
       "Pediatric 401 (Ped 401)",
-      "Surgery Medical 402 (SM 402)",
+      "Cardiology",
       "Surgery Medical 403 (SM 403)",
       "Surgery Medical 404 (SM 404)",
     ],
@@ -1628,9 +1629,9 @@ const DEFAULT_MEDBANK_CURRICULUM = {
   },
   5: {
     1: [
-      "Obstetric (Obs 501)",
+      "Obstetric",
       "Nephrology (SM 502)",
-      "GIT (SM 503)",
+      "Gastroentrology (SM 503)",
     ],
     2: [
       "Gynecology (Gyn 504)",
@@ -6223,6 +6224,70 @@ function normalizeAdminUserIdList(ids, allowedSet = null) {
       .map((id) => String(id || "").trim())
       .filter((id) => id && (!allowed || allowed.has(id))),
   )];
+}
+
+// Numbered pages for long admin lists. `page` is 1-based; it is clamped to
+// the last page so a shrinking list never lands on an empty page.
+function getAdminListPage(items, pageSize, page) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Number(pageSize) || 1);
+  const totalPages = Math.max(1, Math.ceil(list.length / size));
+  const current = Math.min(totalPages, Math.max(1, Math.floor(Number(page) || 1)));
+  const start = (current - 1) * size;
+  return {
+    items: list.slice(start, start + size),
+    page: current,
+    totalPages,
+    start,
+    end: Math.min(list.length, start + size),
+    total: list.length,
+  };
+}
+
+function getAdminPagerSlots(page, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+  const slots = [1];
+  const from = Math.max(2, Math.min(page - 1, totalPages - 4));
+  const to = Math.min(totalPages - 1, Math.max(page + 1, 5));
+  if (from > 2) slots.push("gap");
+  for (let value = from; value <= to; value += 1) slots.push(value);
+  if (to < totalPages - 1) slots.push("gap");
+  slots.push(totalPages);
+  return slots;
+}
+
+function renderAdminPager(name, pageInfo, label = "Pages") {
+  if (!pageInfo || pageInfo.totalPages <= 1) {
+    return "";
+  }
+  const { page, totalPages } = pageInfo;
+  const safeName = escapeHtml(String(name || ""));
+  const buttons = getAdminPagerSlots(page, totalPages).map((slot) => (
+    slot === "gap"
+      ? `<span class="admin-pager-gap" aria-hidden="true">…</span>`
+      : `<button class="admin-pager-btn${slot === page ? " is-active" : ""}" type="button" data-page="${String(slot)}" ${slot === page ? `aria-current="page"` : ""} aria-label="Page ${String(slot)}">${String(slot)}</button>`
+  )).join("");
+  return `
+    <nav class="admin-pager" data-admin-pager="${safeName}" aria-label="${escapeHtml(label)}">
+      <button class="admin-pager-btn admin-pager-step" type="button" data-page="${String(page - 1)}" ${page <= 1 ? "disabled" : ""} aria-label="Previous page">‹ Prev</button>
+      ${buttons}
+      <button class="admin-pager-btn admin-pager-step" type="button" data-page="${String(page + 1)}" ${page >= totalPages ? "disabled" : ""} aria-label="Next page">Next ›</button>
+    </nav>
+  `;
+}
+
+function wireAdminPager(name, onPage) {
+  appEl.querySelectorAll(`[data-admin-pager="${name}"] [data-page]`).forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextPage = Math.max(1, Number(button.getAttribute("data-page")) || 1);
+      onPage(nextPage);
+      state.skipNextRouteAnimation = true;
+      render();
+      appEl.querySelector(`[data-admin-pager="${name}"]`)?.closest("section")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  });
 }
 
 function canBulkSelectAdminUser(account, actorUser = null) {
@@ -25776,6 +25841,7 @@ function wireAuth(mode) {
     renderSignupCourseOptions(preferredCourses, {
       explicitSelection: Array.isArray(savedDraft?.selectedCourses),
     });
+    refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "signupCourses", renderSignupCourseOptions);
     wireUniversityCollegeFields(form, {
       onChange: ({ ineligible }) => {
         syncMcqSubjectFieldsForEligibility(form, ineligible);
@@ -26483,6 +26549,7 @@ function wireCompleteProfile() {
   renderCompleteProfileCourseOptions(preferredCourses, {
     explicitSelection: Array.isArray(savedDraft?.selectedCourses),
   });
+  refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "completeProfileCourses", renderCompleteProfileCourseOptions);
   wireUniversityCollegeFields(form, {
     onChange: ({ ineligible }) => {
       syncMcqSubjectFieldsForEligibility(form, ineligible);
@@ -33538,6 +33605,7 @@ function newAdminPopupDraft() {
   return { title: "", body: "", image_url: "", image_alt: "", image_fills_card: false,
     action_label: "", target_route: "", target_mcq_subject: "", target_mcq_topic: "",
     target_video_course_id: "", audience_role: "all", audience_academic_year: null,
+    organization_audience: "everyone", target_organization_id: "", university_audience: "everyone", target_university_id: "",
     priority: 0, display_rule: "once", is_active: false, starts_at: "", ends_at: "" };
 }
 
@@ -33579,7 +33647,7 @@ async function loadAdminPopups() {
     if (getCurrentUser()?.role !== "admin") return;
     state.adminPopups = campaigns;
     state.adminPopupMetrics = getAppPopupsUtils()?.aggregatePopupPerformance(views) || {};
-    await loadAdminNotificationVideoCourseOptions();
+    await Promise.all([loadAdminNotificationVideoCourseOptions(), loadAdminOrganizations(), loadUniversities()]);
   } catch (error) {
     state.adminPopups = [];
     state.adminPopupMetrics = {};
@@ -33621,6 +33689,32 @@ function renderAdminPopupPreview(draft) {
   </div></div><p class="subtle">Phone preview · ${advert && draft.target_route ? "The entire image opens the destination." : draft.target_route ? "The action opens the destination." : "Closes only; no destination."}</p>`;
 }
 
+// Organization and university audiences are separate columns that combine
+// (AND) in get_my_active_popups(). A named organization or university that
+// was deleted leaves the audience set with a null id: it reaches nobody.
+// Select value for an audience whose organization/university no longer
+// exists. Kept distinct from "" so it never reads as "Any university"; saving
+// is refused until a real one is chosen.
+const POPUP_AUDIENCE_DELETED = "deleted";
+
+function popupOrganizationAudienceLabel(popup) {
+  if (popup?.organization_audience === "no_organization") return "No organization";
+  if (popup?.organization_audience !== "organization") return "";
+  const organization = (state.adminOrganizations || []).find((entry) => entry.id === popup.target_organization_id);
+  return organization ? organization.name : "Deleted organization (reaches nobody)";
+}
+
+function popupUniversityAudienceLabel(popup) {
+  if (popup?.university_audience !== "university") return "";
+  const university = getUniversityById(popup.target_university_id);
+  return university ? university.name : "Deleted university (reaches nobody)";
+}
+
+function popupAudienceText(popup) {
+  return [popup.audience_role, popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year",
+    popupOrganizationAudienceLabel(popup), popupUniversityAudienceLabel(popup)].filter(Boolean).join(" · ");
+}
+
 function renderAdminPopupsSection() {
   const utils = getAppPopupsUtils();
   if (utils && !state.adminPopupsLoadedAt && !state.adminPopupsLoading) loadAdminPopups().then(refreshAdminPopupsView);
@@ -33631,7 +33725,7 @@ function renderAdminPopupsSection() {
     const metrics = state.adminPopupMetrics[popup.id] || { shown: 0, dismissed: 0, tapped: 0, tapThroughRate: 0 };
     return `<tr><td>${escapeHtml(popup.title)}<br><small>${escapeHtml(new Date(popup.created_at).toLocaleString())}</small></td>
       <td><span class="badge ${popupStateBadgeClass(status)}">${escapeHtml(status)}</span></td>
-      <td>${escapeHtml(popup.audience_role)} · ${escapeHtml(popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year")}</td>
+      <td>${escapeHtml(popupAudienceText(popup))}</td>
       <td>${escapeHtml(popupNumberText(popup.priority))}</td><td>${escapeHtml(popupNumberText(metrics.shown))}</td><td>${escapeHtml(popupNumberText(metrics.dismissed))}</td><td>${escapeHtml(popupNumberText(metrics.tapped))}</td><td>${escapeHtml(metrics.tapThroughRate.toFixed(1))}%</td>
       <td><div class="admin-popup-actions"><button type="button" class="btn ghost admin-btn-sm" data-popup-edit="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>Edit</button>
       <button type="button" class="btn ghost admin-btn-sm" data-popup-toggle="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>${popup.is_active ? "Deactivate" : "Activate"}</button>
@@ -33641,6 +33735,13 @@ function renderAdminPopupsSection() {
     .filter((course) => course.is_active !== false && course.is_published !== false)
     .map((course) => [course.id, getCoursePlatformCourseTitle(course)]);
   if (draft?.target_video_course_id && !courses.some(([id]) => id === draft.target_video_course_id)) courses.push([draft.target_video_course_id, "Previously selected course (unavailable)"]);
+  const organizationOptions = [["everyone", "Everyone"], ["no_organization", "Accounts in no organization"],
+    ...getAdminCourseOrganizationOptions().map((organization) => [organization.id, `Members of ${organization.name}`])];
+  const organizationValue = draft?.organization_audience === "organization" ? draft.target_organization_id || POPUP_AUDIENCE_DELETED : draft?.organization_audience || "everyone";
+  if (draft?.organization_audience === "organization" && !organizationOptions.some(([id]) => id === organizationValue)) organizationOptions.push([organizationValue, "Deleted organization (reaches nobody)"]);
+  const universityOptions = (state.universities || []).map((university) => [university.id, `Students of ${university.name}${university.is_active === false ? " (hidden)" : ""}`]);
+  const universityValue = draft?.university_audience === "university" ? draft.target_university_id || POPUP_AUDIENCE_DELETED : "";
+  if (draft?.university_audience === "university" && !universityOptions.some(([id]) => id === universityValue)) universityOptions.push([universityValue, "Deleted university (reaches nobody)"]);
   return `<section class="card admin-section" id="admin-popups-section">
     <div class="flex-between"><div class="admin-popup-actions">
     <button type="button" class="btn ghost" data-popup-refresh ${state.adminPopupsLoading || state.adminPopupSaving ? "disabled" : ""}>${state.adminPopupsLoading ? "Loading…" : "Refresh"}</button>
@@ -33669,6 +33770,9 @@ function renderAdminPopupsSection() {
     <div class="form-row"><label>Audience role<select name="audience_role">${popupSelectOptions(utils?.POPUP_AUDIENCE_ROLES || [], draft.audience_role)}</select></label>
     <label>Academic year<select name="audience_academic_year">${popupSelectOptions([1, 2, 3, 4, 5], draft.audience_academic_year, "Any year")}</select></label></div>
     <p class="subtle">Academic year here is real audience targeting. Only accounts in the selected year are eligible.</p>
+    <div class="form-row"><label>Organization<select name="popup_organization">${popupSelectOptions(organizationOptions, organizationValue)}</select></label>
+    <label>University<select name="popup_university">${popupSelectOptions(universityOptions, universityValue, "Any university")}</select></label></div>
+    <p class="subtle">Organization and university combine: choosing both reaches only members of that organization who study at that university. University comes from the student's profile.${state.adminOrganizationsError || state.universitiesError ? " Some choices could not load. Refresh to retry." : ""}</p>
     <div class="form-row"><label>Starts at<input name="starts_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.starts_at))}" /></label>
     <label>Ends at<input name="ends_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.ends_at))}" /></label></div>
     <p class="subtle">Times use your browser's local time zone. Empty dates mean no time limit.</p>
@@ -33690,6 +33794,12 @@ function captureAdminPopupDraft(form) {
   for (const name of ["image_fills_card", "is_active"]) draft[name] = form.elements[name].checked;
   draft.priority = form.elements.priority.value === "" ? NaN : Number(form.elements.priority.value);
   draft.audience_academic_year = form.elements.audience_academic_year.value ? Number(form.elements.audience_academic_year.value) : null;
+  const organization = form.elements.popup_organization.value;
+  draft.organization_audience = organization === "everyone" || organization === "no_organization" ? organization : "organization";
+  draft.target_organization_id = draft.organization_audience === "organization" && organization !== POPUP_AUDIENCE_DELETED ? organization : "";
+  const university = form.elements.popup_university.value;
+  draft.university_audience = university ? "university" : "everyone";
+  draft.target_university_id = university === POPUP_AUDIENCE_DELETED ? "" : university;
   for (const name of ["starts_at", "ends_at"]) {
     const value = form.elements[name].value;
     draft[name] = value ? new Date(value).toISOString() : "";
@@ -34150,7 +34260,7 @@ function openAdminOrganization(organizationId) {
   state.adminOrganizationDetail = null;
   state.adminOrganizationDetailError = "";
   state.adminOrganizationMemberSearch = "";
-  state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+  state.adminOrganizationMemberPage = 1;
   const loading = loadAdminOrganizationDetail(state.adminOrganizationSelectedId);
   refreshAdminOrganizationsView();
   loading.then(refreshAdminOrganizationsView);
@@ -34303,7 +34413,9 @@ function renderAdminOrganizationDetail(organization) {
   const members = detail?.members || [];
   const removals = detail && state.adminOrganizationRemovals?.organizationId === organization.id ? state.adminOrganizationRemovals : null;
   const filteredMembers = filterOrganizationMembers(members, state.adminOrganizationMemberSearch);
-  const visibleMembers = filteredMembers.slice(0, Math.max(ORGANIZATION_MEMBERS_PAGE_SIZE, Number(state.adminOrganizationMemberLimit) || 0));
+  const membersPageInfo = getAdminListPage(filteredMembers, ORGANIZATION_MEMBERS_PAGE_SIZE, state.adminOrganizationMemberPage);
+  state.adminOrganizationMemberPage = membersPageInfo.page;
+  const visibleMembers = membersPageInfo.items;
   const busy = Boolean(state.adminOrganizationSaving);
   const loadingNote = `<p class="subtle">Loading…</p>`;
   const pageHeader = renderAdminPageHeader({
@@ -34354,7 +34466,7 @@ function renderAdminOrganizationDetail(organization) {
       <div class="course-builder-list">
         ${loading ? loadingNote : visibleMembers.length ? visibleMembers.map(renderAdminOrganizationMemberRow).join("") : `<p class="subtle">${members.length ? "No members match your search." : "No members yet."}</p>`}
       </div>
-      ${filteredMembers.length > visibleMembers.length ? `<p class="subtle">Showing ${escapeHtml(String(visibleMembers.length))} of ${escapeHtml(String(filteredMembers.length))}. <button class="btn ghost admin-btn-sm" type="button" data-org-member-more>Show more</button></p>` : ""}
+      ${membersPageInfo.totalPages > 1 ? `<p class="subtle">Showing ${String(membersPageInfo.start + 1)}–${String(membersPageInfo.end)} of ${String(filteredMembers.length)}</p>${renderAdminPager("org-members", membersPageInfo, "Member pages")}` : ""}
     </div>
 
     <div class="admin-org-detail-section">
@@ -34694,17 +34806,17 @@ function wireAdminOrganizations() {
   const memberSearch = section.querySelector("#admin-org-member-search");
   memberSearch?.addEventListener("input", (event) => {
     state.adminOrganizationMemberSearch = String(event.target?.value || "");
-    state.adminOrganizationMemberLimit = ORGANIZATION_MEMBERS_PAGE_SIZE;
+    state.adminOrganizationMemberPage = 1;
     const caret = event.target.selectionStart;
     refreshAdminOrganizationsView();
     const next = appEl.querySelector("#admin-org-member-search");
     next?.focus();
     if (next && Number.isFinite(caret)) next.setSelectionRange(caret, caret);
   });
-  section.querySelector("[data-org-member-more]")?.addEventListener("click", () => {
-    state.adminOrganizationMemberLimit = (Number(state.adminOrganizationMemberLimit) || ORGANIZATION_MEMBERS_PAGE_SIZE) + ORGANIZATION_MEMBERS_PAGE_SIZE;
+  section.querySelectorAll("[data-admin-pager='org-members'] [data-page]").forEach((button) => button.addEventListener("click", () => {
+    state.adminOrganizationMemberPage = Math.max(1, Number(button.getAttribute("data-page")) || 1);
     refreshAdminOrganizationsView();
-  });
+  }));
   section.querySelectorAll("[data-org-member-remove]").forEach((button) => button.addEventListener("click", () => {
     const userId = button.getAttribute("data-org-member-remove");
     const name = button.getAttribute("data-org-member-name") || "this member";
@@ -35724,8 +35836,17 @@ function renderAdmin() {
       }
       return acc;
     }, { google: 0, email: 0 });
-    const renderedUsers = filteredUsers.slice(0, ADMIN_USER_RENDER_LIMIT);
-    const hiddenFilteredUserCount = Math.max(0, filteredUsers.length - renderedUsers.length);
+    const usersFilterKey = JSON.stringify([
+      userSearchQuery.trim().toLowerCase(), userFilterYear, userFilterSemester,
+      userFilterApproval, userFilterProvider, userFilterRole, userFilterMcqHeld,
+    ]);
+    if (state.adminUsersFilterKey !== usersFilterKey) {
+      state.adminUsersFilterKey = usersFilterKey;
+      state.adminUsersPage = 1;
+    }
+    const usersPageInfo = getAdminListPage(filteredUsers, ADMIN_USER_RENDER_LIMIT, state.adminUsersPage);
+    state.adminUsersPage = usersPageInfo.page;
+    const renderedUsers = usersPageInfo.items;
     const visibleSelectableUserIds = renderedUsers
       .filter((account) => canBulkSelectAdminUser(account, user))
       .map((account) => String(account.id || "").trim())
@@ -36281,11 +36402,7 @@ function renderAdmin() {
             <button class="btn ghost admin-btn-sm" type="button" data-action="admin-clear-user-selection" ${bulkDeactivateRunning ? "disabled" : ""}>Clear</button>
           </div>`
         : ""}
-        <p class="admin-users-showing">Showing ${String(renderedUsers.length)} of ${String(filteredUsers.length)}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}</p>
-        ${hiddenFilteredUserCount
-        ? `<p class="subtle" style="margin: 0.4rem 0 0;">Showing the first ${ADMIN_USER_RENDER_LIMIT} matching users to keep this screen responsive. Use search or filters to reach the others.</p>`
-        : ""
-      }
+        <p class="admin-users-showing">${filteredUsers.length ? `Showing ${String(usersPageInfo.start + 1)}–${String(usersPageInfo.end)} of ${String(filteredUsers.length)}` : "Showing 0"}${filteredUsers.length !== users.length ? ` matching (${String(users.length)} total)` : ""}${usersPageInfo.totalPages > 1 ? ` · Page ${String(usersPageInfo.page)} of ${String(usersPageInfo.totalPages)}` : ""}</p>
 
         <div class="table-wrap admin-users-table-wrap" style="margin-top: 0.9rem;">
           <table class="admin-users-table">
@@ -36321,6 +36438,7 @@ function renderAdmin() {
             <tbody>${accountRows || `<tr><td colspan="6" class="subtle">No users match the current search and filters.</td></tr>`}</tbody>
           </table>
         </div>
+        ${renderAdminPager("users", usersPageInfo, "User pages")}
       </section>
     `;
   }
@@ -36594,11 +36712,11 @@ function renderAdmin() {
     const questionsFilterKey = `${selectedCourse}::${selectedTopic}::${questionSearchQuery.trim().toLowerCase()}`;
     if (state.adminQuestionsFilterKey !== questionsFilterKey) {
       state.adminQuestionsFilterKey = questionsFilterKey;
-      state.adminQuestionsVisibleLimit = ADMIN_QUESTION_RENDER_PAGE_SIZE;
+      state.adminQuestionsPage = 1;
     }
-    const questionsVisibleLimit = Math.max(ADMIN_QUESTION_RENDER_PAGE_SIZE, Number(state.adminQuestionsVisibleLimit) || 0);
-    const renderedCourseQuestions = courseQuestions.slice(0, questionsVisibleLimit);
-    const hiddenFilteredQuestionCount = Math.max(0, courseQuestions.length - renderedCourseQuestions.length);
+    const questionsPageInfo = getAdminListPage(courseQuestions, ADMIN_QUESTION_RENDER_PAGE_SIZE, state.adminQuestionsPage);
+    state.adminQuestionsPage = questionsPageInfo.page;
+    const renderedCourseQuestions = questionsPageInfo.items;
     const visibleQuestionIds = renderedCourseQuestions
       .map((question) => String(question.id || "").trim())
       .filter(Boolean);
@@ -36807,10 +36925,7 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
-        ${hiddenFilteredQuestionCount
-        ? `<p class="admin-question-show-more"><button class="btn ghost admin-btn-sm" type="button" data-action="admin-questions-show-more">Show more (${hiddenFilteredQuestionCount})</button></p>`
-        : ""
-      }
+        ${renderAdminPager("questions", questionsPageInfo, "Question pages")}
       </section>
 
       ${state.adminQuestionModalOpen
@@ -36979,12 +37094,13 @@ function renderAdmin() {
     const targetVideoCourseId = String(state.adminNotificationTargetVideoCourseId || "").trim();
     const notificationSending = Boolean(state.adminNotificationSending);
     const allNotifications = getNotifications();
-    const notificationVisibleCount = Math.min(
-      Math.max(ADMIN_NOTIFICATION_RENDER_PAGE_SIZE, Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE),
-      ADMIN_NOTIFICATION_RENDER_CAP,
+    const notificationsPageInfo = getAdminListPage(
+      allNotifications.slice(0, ADMIN_NOTIFICATION_RENDER_CAP),
+      ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
+      state.adminNotificationsPage,
     );
-    const notificationsToRender = allNotifications.slice(0, notificationVisibleCount);
-    const notificationsRemaining = Math.min(allNotifications.length, ADMIN_NOTIFICATION_RENDER_CAP) - notificationsToRender.length;
+    state.adminNotificationsPage = notificationsPageInfo.page;
+    const notificationsToRender = notificationsPageInfo.items;
     const notificationRows = notificationsToRender
       .map((notification) => {
         const targetLabel = getNotificationTargetLabel(notification, users);
@@ -37167,11 +37283,7 @@ function renderAdmin() {
             </tbody>
           </table>
         </div>
-        ${notificationsRemaining > 0 ? `
-          <div class="admin-list-show-more">
-            <button class="btn ghost admin-btn-sm" type="button" data-action="admin-notifications-show-more">Show more (${notificationsRemaining})</button>
-          </div>
-        ` : ""}
+        ${renderAdminPager("notifications", notificationsPageInfo, "Notification pages")}
       </section>
     `;
 
@@ -37773,7 +37885,7 @@ function applyAdminPageTransition(previousPage, nextPage) {
   }
   if (nextPage !== "notifications") {
     state.adminNotificationComposeOpen = false;
-    state.adminNotificationsVisibleCount = ADMIN_NOTIFICATION_RENDER_PAGE_SIZE;
+    state.adminNotificationsPage = 1;
   }
   if (nextPage === "activity") {
     refreshAdminPresenceSnapshot({ force: true })
@@ -38803,13 +38915,8 @@ function wireAdmin() {
       render();
     });
 
-    appEl.querySelector("[data-action='admin-notifications-show-more']")?.addEventListener("click", () => {
-      state.adminNotificationsVisibleCount = Math.min(
-        (Number(state.adminNotificationsVisibleCount) || ADMIN_NOTIFICATION_RENDER_PAGE_SIZE) + ADMIN_NOTIFICATION_RENDER_PAGE_SIZE,
-        ADMIN_NOTIFICATION_RENDER_CAP,
-      );
-      state.skipNextRouteAnimation = true;
-      render();
+    wireAdminPager("notifications", (page) => {
+      state.adminNotificationsPage = page;
     });
 
     notificationForm?.addEventListener("submit", async (event) => {
@@ -39955,6 +40062,10 @@ function wireAdmin() {
   const adminUserFilterProvider = document.getElementById("admin-user-filter-provider");
   const adminUserFilterRole = document.getElementById("admin-user-filter-role");
   const adminUserFilterMcqHeld = document.getElementById("admin-user-filter-mcq-held");
+  wireAdminPager("users", (page) => {
+    state.adminUsersPage = page;
+    state.adminSelectedUserIds = [];
+  });
   const selectAllUsersInput = appEl.querySelector("[data-action='admin-select-all-users']");
   if (selectAllUsersInput instanceof HTMLInputElement) {
     selectAllUsersInput.indeterminate = selectAllUsersInput.dataset.indeterminate === "true";
@@ -41763,10 +41874,9 @@ function wireAdmin() {
     render();
   });
 
-  appEl.querySelector("[data-action='admin-questions-show-more']")?.addEventListener("click", () => {
-    state.adminQuestionsVisibleLimit = (Number(state.adminQuestionsVisibleLimit) || ADMIN_QUESTION_RENDER_PAGE_SIZE) + ADMIN_QUESTION_RENDER_PAGE_SIZE;
-    state.skipNextRouteAnimation = true;
-    render();
+  wireAdminPager("questions", (page) => {
+    state.adminQuestionsPage = page;
+    state.adminSelectedQuestionIds = [];
   });
 
   appEl.querySelector("[data-action='admin-open-editor-new']")?.addEventListener("click", () => {
@@ -48926,6 +49036,70 @@ function getCurriculumCourses(year, semester) {
   const yearMap = MEDBANK_CURRICULUM[normalizedYear] || {};
   const courses = yearMap[normalizedSemester] || [];
   return sanitizeCourseAssignments(courses);
+}
+
+// Signed-out visitors cannot read `courses` (RLS), so signup used to show the
+// hardcoded/cached curriculum with pre-rename names. This pulls the active
+// course names per term from `get_signup_course_catalog()` (2026-10-19).
+// Returns true when the curriculum changed.
+async function refreshSignupCourseCatalog() {
+  const client = getRelationalClient();
+  if (!client || typeof client.rpc !== "function") {
+    return false;
+  }
+  if (getCurrentUser()?.role === "admin"
+    || isRelationalStorageKeyBusy(STORAGE_KEYS.curriculum)
+    || isRelationalStorageKeyBusy(STORAGE_KEYS.courseTopics)) {
+    return false;
+  }
+  const { data, error } = await client.rpc("get_signup_course_catalog");
+  if (error || !Array.isArray(data) || !data.length) {
+    if (error) {
+      console.warn("Could not load the signup course catalog.", error?.message || error);
+    }
+    return false;
+  }
+  const curriculum = {};
+  for (let year = 1; year <= 5; year += 1) {
+    curriculum[year] = { 1: [], 2: [] };
+  }
+  data.forEach((row) => {
+    const year = normalizeAcademicYearOrNull(row?.academic_year);
+    const semester = normalizeAcademicSemesterOrNull(row?.academic_semester);
+    const courseName = String(row?.course_name || "").trim();
+    if (year === null || semester === null || !courseName) {
+      return;
+    }
+    if (!curriculum[year][semester].includes(courseName)) {
+      curriculum[year][semester].push(courseName);
+    }
+  });
+  const nextCurriculum = normalizeCurriculum(curriculum);
+  if (JSON.stringify(nextCurriculum) === JSON.stringify(MEDBANK_CURRICULUM)) {
+    return false;
+  }
+  MEDBANK_CURRICULUM = nextCurriculum;
+  rebuildCurriculumCatalog();
+  saveLocalOnly(STORAGE_KEYS.curriculum, MEDBANK_CURRICULUM, { audit: false });
+  return true;
+}
+
+// Re-renders a signup-style course checklist after the live catalog loads,
+// keeping the student's picks; an untouched all-checked list stays all-checked.
+function refreshCourseOptionsFromSignupCatalog(courseOptionsEl, inputName, renderOptions) {
+  refreshSignupCourseCatalog()
+    .then((changed) => {
+      if (!changed || !courseOptionsEl?.isConnected) {
+        return;
+      }
+      const inputs = Array.from(courseOptionsEl.querySelectorAll(`input[name='${inputName}']`));
+      const checked = inputs.filter((input) => input.checked).map((input) => input.value);
+      const untouched = !inputs.length || checked.length === inputs.length;
+      renderOptions(untouched ? [] : checked, { explicitSelection: !untouched });
+    })
+    .catch((error) => {
+      console.warn("Could not refresh signup course options.", error?.message || error);
+    });
 }
 
 function inferAcademicTermFromCourses(courses) {

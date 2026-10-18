@@ -22290,6 +22290,58 @@ body .admin-users-bulk-bar .admin-users-bulk-suspend {
   }
 }
 
+/* Numbered pages for long admin lists (renderAdminPager) */
+.admin-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  margin-top: 0.9rem;
+}
+.admin-pager-btn {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.admin-pager-btn:hover:not(:disabled):not(.is-active) {
+  border-color: var(--line-strong);
+  background: var(--brand-soft);
+}
+.admin-pager-btn.is-active {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+  cursor: default;
+}
+.admin-pager-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.admin-pager-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.admin-pager-gap {
+  padding: 0 0.2rem;
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .admin-pager-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
+
 /* Admin Messaging pages */
 .admin-list-show-more {
   display: flex;
