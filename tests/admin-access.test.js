@@ -31,7 +31,7 @@ test('a super admin sees every page', () => {
   const access = api.normalizeAdminAccess({ is_super: true, areas: [] });
   assert.equal(access.isSuper, true);
   assert.deepEqual([...access.areas], [...api.ADMIN_AREA_IDS]);
-  for (const page of ['dashboard', 'users', 'questions', 'video-courses', 'popups', 'logs', 'site-access', 'ai-agents', 'admin-access']) {
+  for (const page of ['dashboard', 'users', 'questions', 'video-courses', 'popups', 'logs', 'site-access', 'admin-access']) {
     assert.equal(api.canAdminAccessPage(access, page), true, page);
   }
   assert.equal(api.describeAdminAccess(access), 'Super admin');
@@ -49,7 +49,7 @@ test('a limited admin sees the Dashboard and their areas only', () => {
   assert.equal(api.canAdminAccessPage(access, 'logs'), false);
   // Super-only pages stay hidden even with every area.
   const allAreas = api.normalizeAdminAccess({ is_super: false, areas: [...api.ADMIN_AREA_IDS] });
-  for (const page of ['site-access', 'ai-agents', 'admin-access']) {
+  for (const page of ['site-access', 'admin-access']) {
     assert.equal(api.canAdminAccessPage(allAreas, page), false, page);
   }
   // An unknown page is super-only.
