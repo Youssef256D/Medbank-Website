@@ -6,7 +6,7 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
 - New columns `app_popups.university_audience` ('everyone' | 'university')
   and `target_university_id` (FK `universities`, on delete set null), same
   shape as the existing `organization_audience` / `target_organization_id`.
-  Migration `20261019120000_popup_university_audience.sql` also replaces
+  Migration `20261018222954_popup_university_audience.sql` also replaces
   `get_my_active_popups()` to match `profiles.university_id`. Organization
   and university **combine with AND**.
 - A deleted organization/university leaves the audience set with a null id:
