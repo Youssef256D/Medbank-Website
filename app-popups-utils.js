@@ -38,6 +38,14 @@
     if (route !== "video-courses" && text(popup.target_video_course_id)) errors.push("A video course only applies to Video Courses.");
     if (!POPUP_AUDIENCE_ROLES.includes(popup.audience_role)) errors.push("Choose a valid audience role.");
     if (!POPUP_DISPLAY_RULES.includes(popup.display_rule)) errors.push("Choose a valid display rule.");
+    const organizationAudience = popup.organization_audience ?? "everyone";
+    if (!["everyone", "no_organization", "organization"].includes(organizationAudience)) errors.push("Choose a valid organization audience.");
+    if (organizationAudience === "organization" && !text(popup.target_organization_id)) errors.push("Choose an organization.");
+    if (organizationAudience !== "organization" && text(popup.target_organization_id)) errors.push("An organization only applies to the organization audience.");
+    const universityAudience = popup.university_audience ?? "everyone";
+    if (!["everyone", "university"].includes(universityAudience)) errors.push("Choose a valid university audience.");
+    if (universityAudience === "university" && !text(popup.target_university_id)) errors.push("Choose a university.");
+    if (universityAudience !== "university" && text(popup.target_university_id)) errors.push("A university only applies to the university audience.");
     if (popup.audience_academic_year != null && (!Number.isInteger(popup.audience_academic_year) || popup.audience_academic_year < 1 || popup.audience_academic_year > 5)) errors.push("Academic year must be between 1 and 5, or any year.");
     if (!Number.isInteger(popup.priority) || popup.priority < -2147483648 || popup.priority > 2147483647) errors.push("Priority must be a whole number within the database integer range.");
     for (const key of ["starts_at", "ends_at"]) {

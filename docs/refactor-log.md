@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-19 — Pop-ups can target an organization and/or a university
+- New columns `app_popups.university_audience` ('everyone' | 'university')
+  and `target_university_id` (FK `universities`, on delete set null), same
+  shape as the existing `organization_audience` / `target_organization_id`.
+  Migration `20261019120000_popup_university_audience.sql` also replaces
+  `get_my_active_popups()` to match `profiles.university_id`. Organization
+  and university **combine with AND**.
+- A deleted organization/university leaves the audience set with a null id:
+  the pop-up reaches nobody (never widens). The admin editor shows it as
+  "Deleted … (reaches nobody)" with the sentinel value `deleted`, never as
+  "Any university", and refuses to save until a real one is picked.
+- Web admin Pop-ups editor: new Organization and University pickers; the
+  list's Audience column names them. `validatePopupCampaign` checks pairing.
+- The Flutter admin console does not know the university columns yet; its
+  updates leave them untouched.
+
 ### 2026-10-17 — Block submit no longer hangs on the cloud flush
 - **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit
   all and finish" and last-question "Finish and submit") went through

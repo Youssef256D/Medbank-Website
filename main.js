@@ -33928,6 +33928,7 @@ function newAdminPopupDraft() {
   return { title: "", body: "", image_url: "", image_alt: "", image_fills_card: false,
     action_label: "", target_route: "", target_mcq_subject: "", target_mcq_topic: "",
     target_video_course_id: "", audience_role: "all", audience_academic_year: null,
+    organization_audience: "everyone", target_organization_id: "", university_audience: "everyone", target_university_id: "",
     priority: 0, display_rule: "once", is_active: false, starts_at: "", ends_at: "" };
 }
 
@@ -33969,7 +33970,7 @@ async function loadAdminPopups() {
     if (getCurrentUser()?.role !== "admin") return;
     state.adminPopups = campaigns;
     state.adminPopupMetrics = getAppPopupsUtils()?.aggregatePopupPerformance(views) || {};
-    await loadAdminNotificationVideoCourseOptions();
+    await Promise.all([loadAdminNotificationVideoCourseOptions(), loadAdminOrganizations(), loadUniversities()]);
   } catch (error) {
     state.adminPopups = [];
     state.adminPopupMetrics = {};
@@ -34011,6 +34012,32 @@ function renderAdminPopupPreview(draft) {
   </div></div><p class="subtle">Phone preview · ${advert && draft.target_route ? "The entire image opens the destination." : draft.target_route ? "The action opens the destination." : "Closes only; no destination."}</p>`;
 }
 
+// Organization and university audiences are separate columns that combine
+// (AND) in get_my_active_popups(). A named organization or university that
+// was deleted leaves the audience set with a null id: it reaches nobody.
+// Select value for an audience whose organization/university no longer
+// exists. Kept distinct from "" so it never reads as "Any university"; saving
+// is refused until a real one is chosen.
+const POPUP_AUDIENCE_DELETED = "deleted";
+
+function popupOrganizationAudienceLabel(popup) {
+  if (popup?.organization_audience === "no_organization") return "No organization";
+  if (popup?.organization_audience !== "organization") return "";
+  const organization = (state.adminOrganizations || []).find((entry) => entry.id === popup.target_organization_id);
+  return organization ? organization.name : "Deleted organization (reaches nobody)";
+}
+
+function popupUniversityAudienceLabel(popup) {
+  if (popup?.university_audience !== "university") return "";
+  const university = getUniversityById(popup.target_university_id);
+  return university ? university.name : "Deleted university (reaches nobody)";
+}
+
+function popupAudienceText(popup) {
+  return [popup.audience_role, popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year",
+    popupOrganizationAudienceLabel(popup), popupUniversityAudienceLabel(popup)].filter(Boolean).join(" · ");
+}
+
 function renderAdminPopupsSection() {
   const utils = getAppPopupsUtils();
   if (utils && !state.adminPopupsLoadedAt && !state.adminPopupsLoading) loadAdminPopups().then(refreshAdminPopupsView);
@@ -34021,7 +34048,7 @@ function renderAdminPopupsSection() {
     const metrics = state.adminPopupMetrics[popup.id] || { shown: 0, dismissed: 0, tapped: 0, tapThroughRate: 0 };
     return `<tr><td>${escapeHtml(popup.title)}<br><small>${escapeHtml(new Date(popup.created_at).toLocaleString())}</small></td>
       <td><span class="badge ${popupStateBadgeClass(status)}">${escapeHtml(status)}</span></td>
-      <td>${escapeHtml(popup.audience_role)} · ${escapeHtml(popup.audience_academic_year ? `Year ${popup.audience_academic_year}` : "Any year")}</td>
+      <td>${escapeHtml(popupAudienceText(popup))}</td>
       <td>${escapeHtml(popupNumberText(popup.priority))}</td><td>${escapeHtml(popupNumberText(metrics.shown))}</td><td>${escapeHtml(popupNumberText(metrics.dismissed))}</td><td>${escapeHtml(popupNumberText(metrics.tapped))}</td><td>${escapeHtml(metrics.tapThroughRate.toFixed(1))}%</td>
       <td><div class="admin-popup-actions"><button type="button" class="btn ghost admin-btn-sm" data-popup-edit="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>Edit</button>
       <button type="button" class="btn ghost admin-btn-sm" data-popup-toggle="${escapeHtml(popup.id)}" ${blocked ? "disabled" : ""}>${popup.is_active ? "Deactivate" : "Activate"}</button>
@@ -34031,6 +34058,13 @@ function renderAdminPopupsSection() {
     .filter((course) => course.is_active !== false && course.is_published !== false)
     .map((course) => [course.id, getCoursePlatformCourseTitle(course)]);
   if (draft?.target_video_course_id && !courses.some(([id]) => id === draft.target_video_course_id)) courses.push([draft.target_video_course_id, "Previously selected course (unavailable)"]);
+  const organizationOptions = [["everyone", "Everyone"], ["no_organization", "Accounts in no organization"],
+    ...getAdminCourseOrganizationOptions().map((organization) => [organization.id, `Members of ${organization.name}`])];
+  const organizationValue = draft?.organization_audience === "organization" ? draft.target_organization_id || POPUP_AUDIENCE_DELETED : draft?.organization_audience || "everyone";
+  if (draft?.organization_audience === "organization" && !organizationOptions.some(([id]) => id === organizationValue)) organizationOptions.push([organizationValue, "Deleted organization (reaches nobody)"]);
+  const universityOptions = (state.universities || []).map((university) => [university.id, `Students of ${university.name}${university.is_active === false ? " (hidden)" : ""}`]);
+  const universityValue = draft?.university_audience === "university" ? draft.target_university_id || POPUP_AUDIENCE_DELETED : "";
+  if (draft?.university_audience === "university" && !universityOptions.some(([id]) => id === universityValue)) universityOptions.push([universityValue, "Deleted university (reaches nobody)"]);
   return `<section class="card admin-section" id="admin-popups-section">
     <div class="flex-between"><div class="admin-popup-actions">
     <button type="button" class="btn ghost" data-popup-refresh ${state.adminPopupsLoading || state.adminPopupSaving ? "disabled" : ""}>${state.adminPopupsLoading ? "Loading…" : "Refresh"}</button>
@@ -34059,6 +34093,9 @@ function renderAdminPopupsSection() {
     <div class="form-row"><label>Audience role<select name="audience_role">${popupSelectOptions(utils?.POPUP_AUDIENCE_ROLES || [], draft.audience_role)}</select></label>
     <label>Academic year<select name="audience_academic_year">${popupSelectOptions([1, 2, 3, 4, 5], draft.audience_academic_year, "Any year")}</select></label></div>
     <p class="subtle">Academic year here is real audience targeting. Only accounts in the selected year are eligible.</p>
+    <div class="form-row"><label>Organization<select name="popup_organization">${popupSelectOptions(organizationOptions, organizationValue)}</select></label>
+    <label>University<select name="popup_university">${popupSelectOptions(universityOptions, universityValue, "Any university")}</select></label></div>
+    <p class="subtle">Organization and university combine: choosing both reaches only members of that organization who study at that university. University comes from the student's profile.${state.adminOrganizationsError || state.universitiesError ? " Some choices could not load. Refresh to retry." : ""}</p>
     <div class="form-row"><label>Starts at<input name="starts_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.starts_at))}" /></label>
     <label>Ends at<input name="ends_at" type="datetime-local" value="${escapeHtml(popupDateForInput(draft.ends_at))}" /></label></div>
     <p class="subtle">Times use your browser's local time zone. Empty dates mean no time limit.</p>
@@ -34080,6 +34117,12 @@ function captureAdminPopupDraft(form) {
   for (const name of ["image_fills_card", "is_active"]) draft[name] = form.elements[name].checked;
   draft.priority = form.elements.priority.value === "" ? NaN : Number(form.elements.priority.value);
   draft.audience_academic_year = form.elements.audience_academic_year.value ? Number(form.elements.audience_academic_year.value) : null;
+  const organization = form.elements.popup_organization.value;
+  draft.organization_audience = organization === "everyone" || organization === "no_organization" ? organization : "organization";
+  draft.target_organization_id = draft.organization_audience === "organization" && organization !== POPUP_AUDIENCE_DELETED ? organization : "";
+  const university = form.elements.popup_university.value;
+  draft.university_audience = university ? "university" : "everyone";
+  draft.target_university_id = university === POPUP_AUDIENCE_DELETED ? "" : university;
   for (const name of ["starts_at", "ends_at"]) {
     const value = form.elements[name].value;
     draft[name] = value ? new Date(value).toISOString() : "";

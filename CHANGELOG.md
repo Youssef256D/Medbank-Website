@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-19 — Pop-ups by organization or university
+- Admins can now send a pop-up to the members of one organization, the
+  students of one university, or both together. Needs migration
+  `20261019120000_popup_university_audience` on the hosted project.
+
 ### 2026-10-17 — Submitting a block no longer looks stuck
 - "Submit all and finish" and "Finish and submit" waited for the cloud save
   with no time limit, so a slow or stuck sync made both buttons look dead.
