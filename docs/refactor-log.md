@@ -2,6 +2,24 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-18 — IBS answer key fixes (data only, hosted DB)
+- Owner-approved content fix for course "INTRODUCTION TO BODY STRUCTURE ( IBS )"
+  (`9e435020-...`): 25 questions had the wrong `question_choices.is_correct`
+  (or 2 correct options). Fixed answers and explanations, and reworded options
+  on 6 of them (left lung, 3× primary cartilaginous joint, spinal segments,
+  joints rotation) plus one stem ("morula" → "blastocyst").
+- Source: `IBS Final Book .docx`. **The book's own key is wrong in several
+  places**, so do not bulk re-sync answers from it. Review list:
+  `reports/ibs-answer-review-2026-10-18.md`. Old values:
+  `reports/ibs-answer-fix-backup-2026-10-18.json`.
+- No code changes; `content_versions` bumped itself through the choices trigger.
+- 2026-10-19 follow-up: 6 more questions fixed (the "your call" section of the
+  review). The stems of the lysosome, most-cranial-part and cilium questions
+  were reworded. Old values: `reports/ibs-answer-fix-backup-2-2026-10-19.json`.
+- The `reports/ib*-answer-*` files stay on the owner's machine only (gitignored):
+  they hold real questions with their answer keys, and this repo is public and
+  served as-is on GitHub Pages.
+
 ### 2026-10-17 — Block submit no longer hangs on the cloud flush
 - **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit
   all and finish" and last-question "Finish and submit") went through
