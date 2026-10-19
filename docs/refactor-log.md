@@ -99,6 +99,11 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
 - 2026-10-19 follow-up: 6 more questions fixed (the "your call" section of the
   review). The stems of the lysosome, most-cranial-part and cilium questions
   were reworded. Old values: `reports/ibs-answer-fix-backup-2-2026-10-19.json`.
+- The `reports/ib*-answer-*` and `*-publish-drafts-*` files hold real
+  questions with their answer keys, and this repo is public and served as-is
+  on GitHub Pages. They are gitignored and were untracked again on 2026-10-19
+  (briefly committed in `9858d90`, so they remain in git history). The owner's
+  copies are in `reports/` locally and in `Medbank Files/answer-reports-backup-2026-10-19`.
 
 ### 2026-10-17 — Block submit no longer hangs on the cloud flush
 - **Bug:** both submit buttons (`data-action="submit-session"`, sidebar "Submit
