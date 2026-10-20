@@ -2,6 +2,21 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-20 — Dashboard "Website vs mobile app" section
+- New dashboard section (people area): app installs (students with a
+  `user_devices` row: total, Android, iPhone, new in 7 days, share of
+  registered students) and, for 24h / 7d / 30d, students on the website,
+  the app, both, website only, app only and total active.
+- Sources: `user_presence.last_seen_at` = website (the Flutter app only reads
+  that table); `user_devices.last_seen_at` = mobile app (device registration
+  live since 2026-09-28, so app history starts there). "Installed" is not a
+  store download count — that lives in Play Console / App Store Connect.
+- Pure helper `buildAdminDashboardChannelUsage` (in the test-sliced helper
+  range). Loader tasks `websiteVisitorsLast30Days` / `appInstalls` put rows in
+  `state.adminDashboardActivity.websiteVisits` / `.appDevices`. Paging is now
+  shared: `readAdminDashboardPagedRows(buildQuery, timeoutMessage)` (replaces
+  `readAdminDashboardTestBlockUsers`). No RLS change: admins already read both.
+
 ### 2026-10-20 — Dashboard "Students by year" usage table
 - New full-width section on the admin Dashboard (people area only): per
   academic year 1–5 (+ "Year not set" when any), students, approved, active

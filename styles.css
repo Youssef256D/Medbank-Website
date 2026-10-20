@@ -24695,3 +24695,8 @@ body.theme-dark .create-test-startbar-copy small.is-help {
   align-items: center;
   gap: 0.5rem;
 }
+
+.admin-dash-channel-usage .admin-dash-more-stat small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}

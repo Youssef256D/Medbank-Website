@@ -96,3 +96,52 @@ test('dashboard year usage counts students, approval and activity per academic y
   assert.equal(plain.totals.activeLast30Days, 2);
   assert.equal(plain.totals.onlineNow, null);
 });
+
+test('dashboard channel usage splits website and app students per period', () => {
+  const nowMs = Date.parse('2026-10-20T12:00:00.000Z');
+  const ago = (hours) => new Date(nowMs - hours * 60 * 60 * 1000).toISOString();
+  const users = [
+    { id: 'a', role: 'student' },
+    { id: 'b', role: 'student', aliases: ['b', 'b-profile'] },
+    { id: 'c', role: 'student' },
+    { id: 'd', role: 'student' },
+    { id: 'admin', role: 'admin' },
+  ];
+  const usage = context.buildAdminDashboardChannelUsage(users, {
+    websiteVisits: [
+      { user_id: 'a', last_seen_at: ago(2) },
+      { user_id: 'b-profile', last_seen_at: ago(24 * 5) },
+      { user_id: 'admin', last_seen_at: ago(1) },
+    ],
+    appDevices: [
+      { user_id: 'b', platform: 'iOS', registered_at: ago(24 * 20), last_seen_at: ago(3) },
+      { user_id: 'c', platform: 'android', registered_at: ago(24 * 2), last_seen_at: ago(24 * 10) },
+      { user_id: 'admin', platform: 'android', registered_at: ago(5), last_seen_at: ago(1) },
+    ],
+  }, nowMs, { getIds: (user) => user.aliases || [user.id] });
+
+  const plain = JSON.parse(JSON.stringify(usage));
+  assert.equal(plain.registeredStudents, 4);
+  assert.deepEqual(plain.installs, {
+    total: 2, android: 1, ios: 1, other: 0, newLast7Days: 1,
+    trackingSinceMs: nowMs - 20 * 24 * 60 * 60 * 1000,
+  });
+  const [day, week, month] = plain.windows;
+  assert.deepEqual(
+    [day.website, day.app, day.both, day.websiteOnly, day.appOnly, day.total],
+    [1, 1, 0, 1, 1, 2],
+  );
+  assert.deepEqual(
+    [week.website, week.app, week.both, week.websiteOnly, week.appOnly, week.total],
+    [2, 1, 1, 1, 0, 2],
+  );
+  assert.equal(month.app, 2);
+  assert.equal(month.total, 3);
+
+  const failed = context.buildAdminDashboardChannelUsage(users, { websiteVisits: null, appDevices: [] }, nowMs, {
+    getIds: (user) => [user.id],
+  });
+  assert.equal(failed.windows[0].website, null);
+  assert.equal(failed.windows[0].total, null);
+  assert.equal(failed.installs.total, 0);
+});

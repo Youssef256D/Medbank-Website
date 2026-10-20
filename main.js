@@ -7392,6 +7392,120 @@ function buildAdminDashboardYearUsage(users = [], activity = {}, options = {}) {
   };
 }
 
+// Website vs mobile app usage for the dashboard. `websiteVisits` are
+// user_presence rows (website only), `appDevices` are user_devices rows (one
+// signed-in phone per student). Only accounts in `users` with role student are
+// counted. A null source means that read failed; its numbers come back null.
+const ADMIN_DASHBOARD_CHANNEL_WINDOWS = [
+  { key: "24h", label: "Last 24 hours", ms: 24 * 60 * 60 * 1000 },
+  { key: "7d", label: "Last 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  { key: "30d", label: "Last 30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+];
+
+function buildAdminDashboardChannelUsage(users = [], activity = {}, nowMs = Date.now(), options = {}) {
+  const accounts = Array.isArray(users) ? users : [];
+  const idsFor = typeof options?.getIds === "function"
+    ? options.getIds
+    : getStoredUserIdentityAliases;
+  const currentMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  const studentKeyById = new Map();
+  let registeredStudents = 0;
+  accounts.forEach((account, index) => {
+    if (account?.role !== "student") {
+      return;
+    }
+    registeredStudents += 1;
+    const studentKey = `student-${index}`;
+    (idsFor(account) || []).forEach((value) => {
+      const id = String(value || "").trim();
+      if (id) {
+        studentKeyById.set(id, studentKey);
+      }
+    });
+  });
+  const studentKeyFor = (row) => studentKeyById.get(String(row?.user_id || "").trim()) || null;
+  const toMs = (value) => {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const normalizePlatform = (value) => {
+    const platform = String(value || "").trim().toLowerCase();
+    if (platform === "android") {
+      return "android";
+    }
+    return platform === "ios" ? "ios" : "other";
+  };
+
+  const websiteRows = Array.isArray(activity?.websiteVisits) ? activity.websiteVisits : null;
+  const appRows = Array.isArray(activity?.appDevices) ? activity.appDevices : null;
+  const website = websiteRows
+    ? websiteRows
+      .map((row) => ({ student: studentKeyFor(row), lastSeenMs: toMs(row?.last_seen_at) }))
+      .filter((entry) => entry.student && entry.lastSeenMs !== null)
+    : null;
+  const app = appRows
+    ? appRows
+      .map((row) => ({
+        student: studentKeyFor(row),
+        platform: normalizePlatform(row?.platform),
+        registeredMs: toMs(row?.registered_at),
+        lastSeenMs: toMs(row?.last_seen_at),
+      }))
+      .filter((entry) => entry.student)
+    : null;
+
+  let installs = null;
+  if (app) {
+    const installed = new Set();
+    const byPlatform = { android: new Set(), ios: new Set(), other: new Set() };
+    const newLast7Days = new Set();
+    let trackingSinceMs = null;
+    app.forEach((entry) => {
+      installed.add(entry.student);
+      byPlatform[entry.platform].add(entry.student);
+      if (entry.registeredMs !== null) {
+        if (trackingSinceMs === null || entry.registeredMs < trackingSinceMs) {
+          trackingSinceMs = entry.registeredMs;
+        }
+        if (entry.registeredMs >= currentMs - ADMIN_DASHBOARD_CHANNEL_WINDOWS[1].ms) {
+          newLast7Days.add(entry.student);
+        }
+      }
+    });
+    installs = {
+      total: installed.size,
+      android: byPlatform.android.size,
+      ios: byPlatform.ios.size,
+      other: byPlatform.other.size,
+      newLast7Days: newLast7Days.size,
+      trackingSinceMs,
+    };
+  }
+
+  const windows = ADMIN_DASHBOARD_CHANNEL_WINDOWS.map((windowDef) => {
+    const sinceMs = currentMs - windowDef.ms;
+    const webSet = website
+      ? new Set(website.filter((entry) => entry.lastSeenMs >= sinceMs).map((entry) => entry.student))
+      : null;
+    const appSet = app
+      ? new Set(app.filter((entry) => entry.lastSeenMs !== null && entry.lastSeenMs >= sinceMs).map((entry) => entry.student))
+      : null;
+    const bothCount = webSet && appSet ? [...webSet].filter((key) => appSet.has(key)).length : null;
+    return {
+      key: windowDef.key,
+      label: windowDef.label,
+      website: webSet ? webSet.size : null,
+      app: appSet ? appSet.size : null,
+      both: bothCount,
+      websiteOnly: bothCount === null ? null : webSet.size - bothCount,
+      appOnly: bothCount === null ? null : appSet.size - bothCount,
+      total: bothCount === null ? null : webSet.size + appSet.size - bothCount,
+    };
+  });
+
+  return { registeredStudents, installs, windows };
+}
+
 function buildAdminUserStatistics(users = []) {
   const accounts = Array.isArray(users) ? users : [];
   const currentYear = new Date().getUTCFullYear();
@@ -32543,6 +32657,8 @@ const ADMIN_DASHBOARD_COUNT_KEYS = [
   "videoEnrollmentRequestsPending",
   "videoEnrolledStudents",
   "couponRedemptionsLast7Days",
+  "websiteVisitorsLast30Days",
+  "appInstalls",
 ];
 
 function createEmptyAdminDashboardCounts() {
@@ -32564,28 +32680,24 @@ async function readAdminDashboardHeadCount(query, timeoutMessage) {
   return result.count;
 }
 
-// Test-block owners since `sinceIso`, paged so the PostgREST row cap cannot
-// silently undercount active students. Capped at 20 pages (20k tests).
-async function readAdminDashboardTestBlockUsers(client, sinceIso) {
+// Reads every row of a dashboard query in 1000-row pages so the PostgREST row
+// cap cannot silently undercount. `buildQuery()` must return a fresh, ordered
+// query each call. Capped at 20 pages (20k rows).
+async function readAdminDashboardPagedRows(buildQuery, timeoutMessage) {
   const pageSize = 1000;
   const rows = [];
   for (let page = 0; page < 20; page += 1) {
     const from = page * pageSize;
     const result = await runWithTimeoutResult(
-      client
-        .from("test_blocks")
-        .select("user_id,created_at")
-        .gte("created_at", sinceIso)
-        .order("created_at", { ascending: false })
-        .range(from, from + pageSize - 1),
+      buildQuery().range(from, from + pageSize - 1),
       SUPABASE_QUERY_TIMEOUT_MS,
-      "Counting active students timed out.",
+      timeoutMessage,
     );
     if (result?.error) {
       throw result.error;
     }
     if (!Array.isArray(result?.data)) {
-      throw new Error("Active student rows were not returned.");
+      throw new Error("Dashboard rows were not returned.");
     }
     rows.push(...result.data);
     if (result.data.length < pageSize) {
@@ -32620,7 +32732,13 @@ async function loadAdminDashboardCounts(options = {}) {
   const weekStartMs = nowMs - (7 * 24 * 60 * 60 * 1000);
   const weekStartIso = new Date(weekStartMs).toISOString();
   const monthStartIso = new Date(nowMs - (30 * 24 * 60 * 60 * 1000)).toISOString();
-  const activity = { activeLast7Days: null, activeLast30Days: null, onlineNow: null };
+  const activity = {
+    activeLast7Days: null,
+    activeLast30Days: null,
+    onlineNow: null,
+    websiteVisits: null,
+    appDevices: null,
+  };
   const onlineCutoffIso = new Date(nowMs - PRESENCE_ONLINE_STALE_MS).toISOString();
   const tasks = [
     {
@@ -32633,7 +32751,14 @@ async function loadAdminDashboardCounts(options = {}) {
     {
       key: "activeStudentsLast7Days",
       load: async () => {
-        const rows = await readAdminDashboardTestBlockUsers(client, monthStartIso);
+        const rows = await readAdminDashboardPagedRows(
+          () => client
+            .from("test_blocks")
+            .select("user_id,created_at")
+            .gte("created_at", monthStartIso)
+            .order("created_at", { ascending: false }),
+          "Counting active students timed out.",
+        );
         const last7 = new Set();
         const last30 = new Set();
         rows.forEach((row) => {
@@ -32673,6 +32798,39 @@ async function loadAdminDashboardCounts(options = {}) {
         }
         activity.onlineNow = new Set(result.data.map((row) => String(row?.user_id || "").trim()).filter(Boolean));
         return result.data.length;
+      },
+    },
+    {
+      // Website only: the mobile app does not write user_presence, so the
+      // last_seen_at here is the student's latest website visit.
+      key: "websiteVisitorsLast30Days",
+      load: async () => {
+        const rows = await readAdminDashboardPagedRows(
+          () => client
+            .from("user_presence")
+            .select("user_id,last_seen_at")
+            .gte("last_seen_at", monthStartIso)
+            .order("user_id", { ascending: true }),
+          "Counting website visitors timed out.",
+        );
+        activity.websiteVisits = rows;
+        return rows.length;
+      },
+    },
+    {
+      // Mobile app only: one row per signed-in phone (device registration,
+      // live since 2026-09-28).
+      key: "appInstalls",
+      load: async () => {
+        const rows = await readAdminDashboardPagedRows(
+          () => client
+            .from("user_devices")
+            .select("user_id,platform,registered_at,last_seen_at")
+            .order("user_id", { ascending: true }),
+          "Counting mobile app installs timed out.",
+        );
+        activity.appDevices = rows;
+        return rows.length;
       },
     },
     {
@@ -35834,6 +35992,42 @@ function renderAdmin() {
     };
     const yearUsageRows = yearUsage.rows.map((entry) => yearUsageRow(entry)).join("");
     const yearUsageTotalRow = yearUsageRow(yearUsage.totals, true);
+    const channelUsage = buildAdminDashboardChannelUsage(users, state.adminDashboardActivity || {}, nowMs);
+    const channelInstalls = channelUsage.installs;
+    const channelCell = (value) => escapeHtml(formatAdminCount(value, { loading: dashboardCountsLoading }));
+    const channelShare = (value, whole) => (
+      Number.isFinite(Number(value)) && value !== null && whole
+        ? `${Math.round((Number(value) / whole) * 100)}%`
+        : ""
+    );
+    const appInstallShare = channelShare(channelInstalls?.total, channelUsage.registeredStudents);
+    const channelStatTiles = [
+      ["Registered students", channelUsage.registeredStudents, ""],
+      ["Installed the app", channelInstalls?.total ?? null, appInstallShare ? `${appInstallShare} of students` : ""],
+      ["Android", channelInstalls?.android ?? null, ""],
+      ["iPhone", channelInstalls?.ios ?? null, ""],
+      ["New installs (7 days)", channelInstalls?.newLast7Days ?? null, ""],
+    ].map(([label, value, detail]) => `
+      <div class="admin-dash-more-stat">
+        <span>${escapeHtml(label)}</span>
+        <b>${channelCell(value)}</b>
+        ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
+      </div>
+    `).join("");
+    const channelRows = channelUsage.windows.map((entry) => `
+      <tr>
+        <th scope="row">${escapeHtml(entry.label)}</th>
+        <td>${channelCell(entry.website)}</td>
+        <td>${channelCell(entry.app)}</td>
+        <td>${channelCell(entry.both)}</td>
+        <td>${channelCell(entry.websiteOnly)}</td>
+        <td>${channelCell(entry.appOnly)}</td>
+        <td><b>${channelCell(entry.total)}</b></td>
+      </tr>
+    `).join("");
+    const appTrackingSinceLabel = channelInstalls?.trackingSinceMs
+      ? new Date(channelInstalls.trackingSinceMs).toLocaleDateString()
+      : "";
     const detailedQuestionStats = [
       ["Published", questionTotals.published],
       ["Usable", questionTotals.publishedUsable],
@@ -35936,6 +36130,35 @@ function renderAdmin() {
                 </tfoot>
               </table>
             </div>
+          </section>` : ""}
+
+          ${adminAccessHasArea(dashboardAccess, "people") ? `<section class="admin-dash-year-usage admin-dash-channel-usage" aria-labelledby="admin-dash-channel-title">
+            <div class="admin-dash-more-head">
+              <h3 id="admin-dash-channel-title">Website vs mobile app</h3>
+              <span>Students who opened MedBank in each period</span>
+            </div>
+            <div class="admin-dash-more-stats">
+              ${channelStatTiles}
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Period</th>
+                    <th scope="col">Website</th>
+                    <th scope="col">Mobile app</th>
+                    <th scope="col">Both</th>
+                    <th scope="col">Website only</th>
+                    <th scope="col">App only</th>
+                    <th scope="col">Total active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${channelRows}
+                </tbody>
+              </table>
+            </div>
+            <p class="admin-dash-empty">"Installed the app" counts students signed in on a phone${appTrackingSinceLabel ? ` (tracked since ${escapeHtml(appTrackingSinceLabel)})` : ""}. Store download totals are in Google Play Console and App Store Connect.</p>
           </section>` : ""}
 
           ${adminAccessHasArea(dashboardAccess, "mcq") ? `<details class="admin-dashboard-more">

@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-20 — Website vs mobile app on the admin dashboard
+- The admin Dashboard shows how many students installed the mobile app
+  (Android / iPhone, new this week) and, for the last 24 hours, 7 days and
+  30 days, how many used the website, the app, or both.
+
 ### 2026-10-20 — Students by year on the admin dashboard
 - The admin Dashboard has a new "Students by year" table: for each academic
   year, how many students are registered and approved, how many started a
