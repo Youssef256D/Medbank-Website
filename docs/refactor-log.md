@@ -2,6 +2,18 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-20 — Students without MCQ access are sent to the mobile app
+- A signed-in student whose `profiles.mcq_access_enabled` is false can no
+  longer use the website: `render()` calls `shouldCheckWebsiteMcqAccessGate`,
+  `enforceWebsiteMcqAccessGate` re-reads the profile, and only a confirmed
+  `false` signs them out (`logout({ awaitSignOut: true })`), shows
+  "Get the MedBank app" and redirects to `https://medbank-links.pages.dev/`.
+- A failed or empty read never counts as "no access" (re-checked at most once
+  a minute). Admins, students completing their profile, and the native app
+  shell (`isNativeMobileAppShell`) are skipped. Held students
+  (`mcq_access_held_at`) are included — they also have no MCQ access.
+- No DB/RLS change; the database's eligibility trigger still decides the flag.
+
 ### 2026-10-20 — Dashboard "Website vs mobile app" section
 - New dashboard section (people area): app installs (students with a
   `user_devices` row: total, Android, iPhone, new in 7 days, share of

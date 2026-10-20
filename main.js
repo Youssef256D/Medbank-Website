@@ -23039,6 +23039,20 @@ function render() {
     }
   }
 
+  if (mcqWebsiteGateRuntime.redirecting) {
+    renderWebsiteMcqAccessRequiredNotice();
+    return;
+  }
+  if (
+    !authRestorePending
+    && !passwordRecoveryPending
+    && shouldCheckWebsiteMcqAccessGate(user, studentProfileCompletionRoute)
+  ) {
+    enforceWebsiteMcqAccessGate(user).catch((error) => {
+      console.warn("Website MCQ access gate failed.", error?.message || error);
+    });
+  }
+
   if (user && AUTH_ENTRY_ROUTE_SET.has(state.route) && !(state.route === "signup" && googleSignupOnboarding)) {
     state.route = user.role === "admin" ? "admin" : "app-launcher";
   }
@@ -52221,7 +52235,11 @@ async function logout(options = {}) {
   if (notice) {
     toast(notice);
   }
-  Promise.allSettled([offlinePromise, activityEndPromise, signOutPromise]).catch(() => { });
+  const settledPromise = Promise.allSettled([offlinePromise, activityEndPromise, signOutPromise]).catch(() => { });
+  if (options?.awaitSignOut) {
+    // Callers that leave the site right after need the stored session gone first.
+    await runWithTimeoutResult(settledPromise, 5000, "Sign-out timed out.").catch(() => { });
+  }
 }
 
 async function logoutDueToAccessRevocation(message = ACCOUNT_DEACTIVATED_SUPPORT_MESSAGE) {
@@ -52230,6 +52248,92 @@ async function logoutDueToAccessRevocation(message = ACCOUNT_DEACTIVATED_SUPPORT
     message,
     reason: "access-revoked",
   });
+}
+
+// Students without MCQ Bank access may not use the website at all (2026-10-20):
+// they are signed out and sent to the links page to get the mobile app, where
+// the Video Courses live. The local flag only triggers the check; the student is
+// removed only when a fresh profiles read confirms mcq_access_enabled = false
+// (an unread or failed read never counts as "no access").
+const MCQ_ACCESS_REQUIRED_REDIRECT_URL = "https://medbank-links.pages.dev/";
+const MCQ_ACCESS_REQUIRED_RECHECK_MS = 60000;
+const mcqWebsiteGateRuntime = {
+  checkingUserId: "",
+  lastCheck: { userId: "", at: 0 },
+  redirecting: false,
+};
+
+function shouldCheckWebsiteMcqAccessGate(user, studentProfileCompletionRoute = "") {
+  if (!user || user.role !== "student" || studentProfileCompletionRoute) {
+    return false;
+  }
+  if (isNativeMobileAppShell() || isUserMcqAccessEnabled(user)) {
+    return false;
+  }
+  const userId = String(user.id || "");
+  if (mcqWebsiteGateRuntime.checkingUserId === userId) {
+    return false;
+  }
+  const { lastCheck } = mcqWebsiteGateRuntime;
+  return !(lastCheck.userId === userId && Date.now() - lastCheck.at < MCQ_ACCESS_REQUIRED_RECHECK_MS);
+}
+
+async function enforceWebsiteMcqAccessGate(user) {
+  const userId = String(user?.id || "");
+  const profileId = isUuidValue(userId) ? userId : String(supabaseAuth.activeUserId || "");
+  const client = getRelationalClient();
+  if (!client || !isUuidValue(profileId)) {
+    return;
+  }
+  mcqWebsiteGateRuntime.checkingUserId = userId;
+  let row = null;
+  try {
+    row = await runRelationalQueryWithTimeout(
+      client.from("profiles").select("id,role,mcq_access_enabled").eq("id", profileId).maybeSingle(),
+      "Checking MCQ access timed out.",
+    );
+  } catch (error) {
+    console.warn("Could not confirm MCQ access for the website gate.", error?.message || error);
+  } finally {
+    mcqWebsiteGateRuntime.checkingUserId = "";
+    mcqWebsiteGateRuntime.lastCheck = { userId, at: Date.now() };
+  }
+  const currentUser = getCurrentUser();
+  if (
+    !row
+    || row.role !== "student"
+    || row.mcq_access_enabled !== false
+    || String(currentUser?.id || "") !== userId
+    || mcqWebsiteGateRuntime.redirecting
+  ) {
+    return;
+  }
+  mcqWebsiteGateRuntime.redirecting = true;
+  appendSystemLog(
+    "auth.mcq_access_required_redirect",
+    `Student without MCQ access sent to the mobile app: ${String(currentUser?.email || userId)}`,
+    { userId },
+    { force: true },
+  );
+  await logout({ actor: currentUser, message: "", awaitSignOut: true }).catch((error) => {
+    console.warn("Sign-out before the mobile app redirect failed.", error?.message || error);
+  });
+  window.setTimeout(() => {
+    window.location.replace(MCQ_ACCESS_REQUIRED_REDIRECT_URL);
+  }, 2500);
+}
+
+function renderWebsiteMcqAccessRequiredNotice() {
+  topbarEl?.classList.add("hidden");
+  appEl.classList.remove("is-session", "is-admin", "route-enter", "route-enter-active");
+  appEl.innerHTML = `
+    <section class="panel" style="max-width:520px;margin:12vh auto 0;text-align:center;padding:32px 24px;height:auto;min-height:0;align-self:start;">
+      <h2 style="margin-top:0;">Get the MedBank app</h2>
+      <p class="subtle">The website is for MCQ Bank subscribers. Your account doesn't have MCQ Bank access, so please download the MedBank app to watch your courses.</p>
+      <p class="subtle" dir="rtl" lang="ar">الموقع متاح لمشتركي بنك الأسئلة فقط. حمّل تطبيق MedBank علشان تتفرج على الكورسات.</p>
+      <a class="btn" href="${escapeHtml(MCQ_ACCESS_REQUIRED_REDIRECT_URL)}" rel="noopener">Download the app</a>
+    </section>
+  `;
 }
 
 function selectHtml(name, options, selected) {
