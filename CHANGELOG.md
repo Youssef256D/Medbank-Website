@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-20 — Website vs mobile app on the admin dashboard
+- The admin Dashboard shows how many students installed the mobile app
+  (Android / iPhone, new this week) and, for the last 24 hours, 7 days and
+  30 days, how many used the website, the app, or both.
+
+### 2026-10-20 — Students by year on the admin dashboard
+- The admin Dashboard has a new "Students by year" table: for each academic
+  year, how many students are registered and approved, how many started a
+  test in the last 7 and 30 days, how many are online now, and the share
+  actually using the app.
+
 ### 2026-10-19 — Signup shows the current course names
 - The signup and complete-profile course lists now load the live, active
   course names from the database instead of an old built-in list, so renamed

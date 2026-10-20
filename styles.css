@@ -24661,3 +24661,42 @@ body.theme-dark .create-test-startbar-copy small.is-help {
   gap: 0.4rem;
   justify-content: flex-end;
 }
+
+/* Admin dashboard: students by academic year (2026-10-20). */
+.admin-dash-year-usage {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-dash-year-usage h3 {
+  margin: 0;
+}
+
+.admin-dash-year-usage td,
+.admin-dash-year-usage th {
+  white-space: nowrap;
+}
+
+.admin-dash-year-usage-total th,
+.admin-dash-year-usage-total td {
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.admin-dash-year-usage-share {
+  display: grid;
+  grid-template-columns: minmax(4rem, 7rem) auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-dash-channel-usage .admin-dash-more-stat small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
