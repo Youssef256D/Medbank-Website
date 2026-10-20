@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-20 — Dashboard "Students by year" usage table
+- New full-width section on the admin Dashboard (people area only): per
+  academic year 1–5 (+ "Year not set" when any), students, approved, active
+  in 7 / 30 days (started a test), online now, and % using the app (30 days).
+- Pure helper `buildAdminDashboardYearUsage(users, activity, options)` sits
+  between the `// Admin dashboard summary helpers.` marker and
+  `buildAdminUserStatistics` — `tests/admin-dashboard.test.js` slices that
+  range, so keep it there. Users are matched to activity by every identity
+  alias (`getStoredUserIdentityAliases`).
+- `loadAdminDashboardCounts` now stores id sets in `state.adminDashboardActivity`
+  (`activeLast7Days`, `activeLast30Days`, `onlineNow`; null = that read failed,
+  shown as a dash). The active-students read is now 30 days of `test_blocks`
+  paged in 1000-row pages (`readAdminDashboardTestBlockUsers`, max 20 pages)
+  instead of one `limit(5000)` read that PostgREST's row cap could truncate;
+  `onlineNow` reads `user_presence.user_id` rows instead of a head count.
+
 ### 2026-10-19 — Numbered pages for long admin lists
 - The Users list was hard-capped at `ADMIN_USER_RENDER_LIMIT` (80) rows with
   no way to reach the rest. Users, MCQ questions, sent notifications and
