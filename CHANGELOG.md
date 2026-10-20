@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-20 — Website is for MCQ Bank students only
+- A student without MCQ Bank access is signed out of the website and sent to
+  https://medbank-links.pages.dev/ to download the MedBank app for courses.
+
 ### 2026-10-20 — Website vs mobile app on the admin dashboard
 - The admin Dashboard shows how many students installed the mobile app
   (Android / iPhone, new this week) and, for the last 24 hours, 7 days and
