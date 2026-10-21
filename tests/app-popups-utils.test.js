@@ -16,14 +16,23 @@ for (const [name, popup, expected] of [
 ]) test(`state: ${name}`, () => assert.equal(utils.resolvePopupCampaignState(popup, now), expected));
 
 test('exact route vocabulary and normalization', () => {
-  assert.deepEqual(utils.POPUP_TARGET_ROUTES, ['app-launcher', 'dashboard', 'create-test', 'analytics', 'video-courses', 'profile', 'notifications']);
+  assert.deepEqual(utils.POPUP_TARGET_ROUTES, ['app-launcher', 'dashboard', 'create-test', 'analytics', 'video-courses', 'profile', 'notifications', 'join-organization', 'external']);
   assert.equal(utils.normalizePopupTargetRoute(' CREATE-TEST '), 'create-test');
   assert.equal(utils.normalizePopupTargetRoute('courses'), null);
   assert.equal(utils.normalizePopupTargetRoute(''), null);
   assert.equal(utils.validatePopupCampaign(valid({ target_route: 'https://evil.example' })).ok, false);
 });
+test('external destination needs an https link the database accepts', () => {
+  const external = (target_url) => utils.validatePopupCampaign(valid({ target_route: 'external', target_url })).ok;
+  for (const url of ['https://example.com', 'https://medbank.app/offer?x=1', ' https://a.b/c ']) assert.equal(external(url), true, url);
+  for (const url of ['', null, 'http://example.com', 'example.com', 'https://localhost', ['javascript', 'alert(1)'].join(':'),
+    'https://exa mple.com', `https://example.com/${'a'.repeat(2048)}`]) assert.equal(external(url), false, String(url));
+});
 for (const route of [null, ...utils.POPUP_TARGET_ROUTES]) test(`context validation: ${route || 'no destination'}`, () => {
+  const valid = (overrides = {}) => ({ title: 'Announcement', audience_role: 'all', display_rule: 'once', priority: 0,
+    ...(route === 'external' ? { target_url: 'https://example.com' } : {}), ...overrides });
   assert.equal(utils.validatePopupCampaign(valid({ target_route: route })).ok, true);
+  assert.equal(utils.validatePopupCampaign(valid({ target_route: route, target_url: 'https://example.com/x' })).ok, route === 'external');
   assert.equal(utils.validatePopupCampaign(valid({ target_route: route, target_mcq_subject: 'Anatomy' })).ok, route === 'create-test');
   assert.equal(utils.validatePopupCampaign(valid({ target_route: route, target_mcq_subject: 'Anatomy', target_mcq_topic: 'Head' })).ok, route === 'create-test');
   assert.equal(utils.validatePopupCampaign(valid({ target_route: route, target_mcq_topic: 'Head' })).ok, false);
@@ -262,4 +271,20 @@ test('a deleted university is never shown or saved as "Any university"', () => {
   assert.match(html, /<option value="deleted" selected>Deleted university \(reaches nobody\)/);
   h.state.adminPopups = [{ id: 'p', title: 'P', created_at: now, audience_role: 'all', priority: 0, university_audience: 'university', target_university_id: 'uni-1' }];
   assert.match(h.renderAdminPopupsSection(), /all · Any year · Cairo/);
+});
+test('a Website destination saves its link; any other destination clears it', async () => {
+  let payload;
+  const { h, listeners, controls } = wiredEditor({ target_route: 'external', target_url: ' https://example.com/offer ' }, {
+    getCoursesPlatformClient: () => ({ from: () => ({ insert: (data) => { payload = data; return { select: async () => ({ data: [{ id: 'created' }] }) }; } }) }),
+  });
+  h.loadAdminPopups = async () => {};
+  listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(payload.target_route, 'external');
+  assert.equal(payload.target_url, 'https://example.com/offer');
+  h.state.adminPopupDraft = { ...h.newAdminPopupDraft(), title: 'Campaign', target_route: 'external', target_url: 'https://example.com' };
+  controls.target_route.value = 'profile';
+  controls.title.value = 'Campaign';
+  listeners.input({ target: { name: 'target_route' } });
+  assert.equal(h.state.adminPopupDraft.target_url, '');
 });

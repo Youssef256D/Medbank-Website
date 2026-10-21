@@ -11,7 +11,15 @@
 
   const POPUP_TARGET_ROUTES = Object.freeze([
     "app-launcher", "dashboard", "create-test", "analytics", "video-courses", "profile", "notifications",
+    "join-organization", "external",
   ]);
+  // "external" opens `target_url` in the browser. Mirrors the hosted
+  // app_popups_target_url_https CHECK: https only, a dotted host, <= 2048.
+  const POPUP_EXTERNAL_URL_PATTERN = /^https:\/\/[^\s/?#]+\.[^\s/?#]+/i;
+  function isValidPopupExternalUrl(value) {
+    const url = String(value ?? "").trim();
+    return url.length <= 2048 && !/\s/.test(url) && POPUP_EXTERNAL_URL_PATTERN.test(url);
+  }
   const POPUP_AUDIENCE_ROLES = Object.freeze(["all", "student", "creator", "admin"]);
   const POPUP_DISPLAY_RULES = Object.freeze(["once", "daily", "every_launch"]);
   const text = (value) => String(value ?? "").trim();
@@ -35,6 +43,8 @@
     if (text(popup.image_url) && !/^https:\/\//i.test(text(popup.image_url))) errors.push("The image must have a public HTTPS URL.");
     if (route !== "create-test" && (text(popup.target_mcq_subject) || text(popup.target_mcq_topic))) errors.push("MCQ subject and topic only apply to Create test.");
     if (text(popup.target_mcq_topic) && !text(popup.target_mcq_subject)) errors.push("Choose a subject before choosing a topic.");
+    if (route === "external" && !isValidPopupExternalUrl(popup.target_url)) errors.push("Enter a website link starting with https://.");
+    if (route !== "external" && text(popup.target_url)) errors.push("A website link only applies to the Website destination.");
     if (route !== "video-courses" && text(popup.target_video_course_id)) errors.push("A video course only applies to Video Courses.");
     if (!POPUP_AUDIENCE_ROLES.includes(popup.audience_role)) errors.push("Choose a valid audience role.");
     if (!POPUP_DISPLAY_RULES.includes(popup.display_rule)) errors.push("Choose a valid display rule.");
@@ -68,5 +78,5 @@
     return totals;
   }
   return Object.freeze({ POPUP_TARGET_ROUTES, POPUP_AUDIENCE_ROLES, POPUP_DISPLAY_RULES,
-    normalizePopupTargetRoute, resolvePopupCampaignState, validatePopupCampaign, aggregatePopupPerformance });
+    normalizePopupTargetRoute, isValidPopupExternalUrl, resolvePopupCampaignState, validatePopupCampaign, aggregatePopupPerformance });
 });

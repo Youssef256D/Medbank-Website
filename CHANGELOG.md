@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-21 — Pop-ups can open a website
+- Admin → Pop-ups: new "Website (external link)" destination with an https
+  link field, plus "Join organization". The app opens the link in the browser
+  when the pop-up or its button is tapped.
+
 ### 2026-10-20 — Website is for MCQ Bank students only
 - A student without MCQ Bank access is signed out of the website and sent to
   https://medbank-links.pages.dev/ to download the MedBank app for courses.
