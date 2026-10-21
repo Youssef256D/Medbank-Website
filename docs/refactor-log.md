@@ -2,6 +2,21 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-21 — Pop-up editor can link to a website
+- The admin Pop-ups editor now offers the two destinations the hosted
+  `app_popups_target_route_check` already allowed (Flutter migration
+  `20261009233200_popup_external_links`): **Website (external link)**
+  (`target_route = 'external'`) and **Join organization**.
+- Website shows a "Website link" field saved to `app_popups.target_url`.
+  `validatePopupCampaign` mirrors the DB checks: https only, dotted host,
+  <= 2048 chars, and the link exists only with the external route
+  (`app_popups_target_url_pairing`). Changing the destination clears it.
+- Before this, editing an app-made external pop-up on the website failed
+  validation ("Choose a supported pop-up destination").
+- Notifications have no URL column; this is pop-ups only. No schema change.
+
+**Files touched:** `app-popups-utils.js`, `main.js`, `tests/app-popups-utils.test.js`, `index.html`.
+
 ### 2026-10-20 — Students without MCQ access are sent to the mobile app
 - A signed-in student whose `profiles.mcq_access_enabled` is false can no
   longer use the website: `render()` calls `shouldCheckWebsiteMcqAccessGate`,

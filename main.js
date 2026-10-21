@@ -33892,7 +33892,7 @@ function popupNumberText(value) {
 function newAdminPopupDraft() {
   return { title: "", body: "", image_url: "", image_alt: "", image_fills_card: false,
     action_label: "", target_route: "", target_mcq_subject: "", target_mcq_topic: "",
-    target_video_course_id: "", audience_role: "all", audience_academic_year: null,
+    target_video_course_id: "", target_url: "", audience_role: "all", audience_academic_year: null,
     organization_audience: "everyone", target_organization_id: "", university_audience: "everyone", target_university_id: "",
     priority: 0, display_rule: "once", is_active: false, starts_at: "", ends_at: "" };
 }
@@ -33967,6 +33967,15 @@ function popupSelectOptions(values, selected, emptyLabel) {
   }).join("");
 }
 
+// Labels for the "Open when tapped" list; a route missing here shows as itself.
+const POPUP_TARGET_ROUTE_LABELS = {
+  "app-launcher": "Home", "join-organization": "Join organization", external: "Website (external link)",
+};
+
+function popupTargetRouteOptions(routes) {
+  return routes.map((route) => [route, POPUP_TARGET_ROUTE_LABELS[route] || route]);
+}
+
 function renderAdminPopupPreview(draft) {
   const image = /^https:\/\//i.test(draft.image_url || "") ? draft.image_url : "";
   const advert = draft.image_fills_card;
@@ -33974,7 +33983,7 @@ function renderAdminPopupPreview(draft) {
     ${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(draft.image_alt || draft.title || "Campaign artwork")}" />` : advert ? '<p class="admin-popup-copy">Upload an image to preview this advert.</p>' : ""}
     ${advert ? "" : `<div class="admin-popup-copy"><h4>${escapeHtml(draft.title || "Campaign title")}</h4><p>${escapeHtml(draft.body || "")}</p>${draft.target_route ? `<span class="btn">${escapeHtml(draft.action_label || "Open")}</span>` : ""}</div>`}
     </div><span class="admin-popup-close" aria-label="Close button position">×</span>
-  </div></div><p class="subtle">Phone preview · ${advert && draft.target_route ? "The entire image opens the destination." : draft.target_route ? "The action opens the destination." : "Closes only; no destination."}</p>`;
+  </div></div><p class="subtle">Phone preview · ${advert && draft.target_route ? "The entire image opens the destination." : draft.target_route ? "The action opens the destination." : "Closes only; no destination."}${draft.target_route === "external" && draft.target_url ? ` Opens ${escapeHtml(draft.target_url)} in the browser.` : ""}</p>`;
 }
 
 // Organization and university audiences are separate columns that combine
@@ -34048,7 +34057,10 @@ function renderAdminPopupsSection() {
     <label>Image description<input name="image_alt" value="${escapeHtml(draft.image_alt || "")}" /></label>
     <label><input name="image_fills_card" type="checkbox" ${draft.image_fills_card ? "checked" : ""} /> Image fills the card</label>
     <p class="subtle">When enabled, title and body are hidden and no action button is drawn. Title is still required for accessibility. An image is required.</p>
-    <label>Open when tapped<select name="target_route">${popupSelectOptions(utils?.POPUP_TARGET_ROUTES || [], draft.target_route, "No destination — closes only")}</select></label>
+    <label>Open when tapped<select name="target_route">${popupSelectOptions(popupTargetRouteOptions(utils?.POPUP_TARGET_ROUTES || []), draft.target_route, "No destination — closes only")}</select></label>
+    <div data-popup-external ${draft.target_route === "external" ? "" : "hidden"}>
+      <label>Website link<input name="target_url" type="url" inputmode="url" maxlength="2048" placeholder="https://example.com/page" value="${escapeHtml(draft.target_url || "")}" /></label>
+      <small class="subtle">Must start with https://. The app opens it in the phone's browser when the pop-up or its button is tapped.</small></div>
     <div data-popup-mcq ${draft.target_route === "create-test" ? "" : "hidden"}>
       <label>MCQ subject<select name="target_mcq_subject">${popupSelectOptions(Object.keys(QBANK_COURSE_TOPICS), draft.target_mcq_subject, "Any subject")}</select></label>
       <label>MCQ topic<select name="target_mcq_topic">${popupSelectOptions(QBANK_COURSE_TOPICS[draft.target_mcq_subject] || [], draft.target_mcq_topic, "Any topic")}</select></label>
@@ -34078,7 +34090,7 @@ function renderAdminPopupsSection() {
 function captureAdminPopupDraft(form) {
   const draft = state.adminPopupDraft;
   if (!draft) return;
-  for (const name of ["title", "body", "action_label", "image_alt", "target_route", "target_mcq_subject", "target_mcq_topic", "target_video_course_id", "audience_role", "display_rule"]) draft[name] = form.elements[name].value;
+  for (const name of ["title", "body", "action_label", "image_alt", "target_route", "target_mcq_subject", "target_mcq_topic", "target_video_course_id", "target_url", "audience_role", "display_rule"]) draft[name] = form.elements[name].value;
   for (const name of ["image_fills_card", "is_active"]) draft[name] = form.elements[name].checked;
   draft.priority = form.elements.priority.value === "" ? NaN : Number(form.elements.priority.value);
   draft.audience_academic_year = form.elements.audience_academic_year.value ? Number(form.elements.audience_academic_year.value) : null;
@@ -34184,6 +34196,7 @@ function wireAdminPopups() {
     if (event.target.name === "target_route") {
       if (draft.target_route !== "create-test") draft.target_mcq_subject = draft.target_mcq_topic = "";
       if (draft.target_route !== "video-courses") draft.target_video_course_id = "";
+      if (draft.target_route !== "external") draft.target_url = "";
       refreshAdminPopupsView();
     } else if (event.target.name === "target_mcq_subject") {
       draft.target_mcq_topic = "";
