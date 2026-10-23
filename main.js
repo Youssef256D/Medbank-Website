@@ -28155,7 +28155,6 @@ function renderCreateTest() {
   }
   const topicSections = getAvailableTopicSectionsForCourse(selectedCourse, questions, {
     topicSource: selectedTopicSource,
-    includeConfigured: true,
   });
   const emptyTopicMessage = getCreateTestEmptyTopicMessage(user, selectedCourse, questions);
   const topicOptions = topicSections.flatMap((section) => section.topics || []);
@@ -28619,7 +28618,6 @@ function wireCreateTest() {
     }
     const topicSections = getAvailableTopicSectionsForCourse(selectedCourse, questions, {
       topicSource: selectedTopicSource,
-      includeConfigured: true,
     });
     const topicOptions = topicSections.flatMap((section) => section.topics || []);
     const selectedTopics = (state.qbankFilters.topics || [])
@@ -48088,11 +48086,13 @@ function applyQbankFilters(questions, filters, options = {}) {
     .sort((a, b) => new Date(b.dateAdded) - new Date(a.dateAdded));
 }
 
-function getAvailableTopicsForCourse(course, questions = [], options = {}) {
+// Topics students can pick: only those with at least one of the given
+// (published) questions, in the curriculum's order. A topic whose questions
+// are all drafts does not appear.
+function getAvailableTopicsForCourse(course, questions = []) {
   const configuredTopics = (QBANK_COURSE_TOPICS[course] || []).filter((topic) => !isRemovedTopicName(topic));
   const questionTopics = [];
   const seen = new Set();
-  const includeConfigured = Boolean(options?.includeConfigured);
 
   (questions || []).forEach((question) => {
     const meta = getQbankCourseTopicMeta(question);
@@ -48107,12 +48107,9 @@ function getAvailableTopicsForCourse(course, questions = [], options = {}) {
     questionTopics.push(meta.topic);
   });
 
-  // Student topic filters default to published topics, but allow configured topics when needed.
   const questionTopicKeys = new Set(questionTopics.map((topic) => normalizeTopicLookupKey(topic) || String(topic || "").trim().toLowerCase()));
   const configuredTopicKeys = new Set(configuredTopics.map((topic) => normalizeTopicLookupKey(topic) || String(topic || "").trim().toLowerCase()));
-  const orderedConfigured = includeConfigured
-    ? configuredTopics
-    : configuredTopics.filter((topic) => questionTopicKeys.has(normalizeTopicLookupKey(topic) || String(topic || "").trim().toLowerCase()));
+  const orderedConfigured = configuredTopics.filter((topic) => questionTopicKeys.has(normalizeTopicLookupKey(topic) || String(topic || "").trim().toLowerCase()));
   const extraTopics = questionTopics.filter((topic) => !configuredTopicKeys.has(normalizeTopicLookupKey(topic) || String(topic || "").trim().toLowerCase()));
   const questionTopicByKey = new Map(
     questionTopics.map((topic) => [normalizeTopicLookupKey(topic) || String(topic || "").trim().toLowerCase(), topic]),
@@ -49003,7 +49000,7 @@ function mergeCourseTopicGroupEntries(baseGroups, incomingGroups, course) {
 }
 
 function getAvailableTopicSourceOptionsForCourse(course, questions = []) {
-  const availableTopics = getAvailableTopicsForCourse(course, questions, { includeConfigured: true });
+  const availableTopics = getAvailableTopicsForCourse(course, questions);
   if (!course || !availableTopics.length) {
     return [];
   }
@@ -49020,7 +49017,9 @@ function getAvailableTopicSourceOptionsForCourse(course, questions = []) {
         if (!rawTopic || isRemovedTopicName(rawTopic)) {
           return;
         }
-        const canonicalTopic = topicMap.get(normalizeTopicLookupKey(rawTopic) || rawTopic.toLowerCase()) || rawTopic;
+        // Only topics with published questions: a topic whose questions are
+        // all drafts is hidden from students, subgroup lists included.
+        const canonicalTopic = topicMap.get(normalizeTopicLookupKey(rawTopic) || rawTopic.toLowerCase());
         if (!canonicalTopic) {
           return;
         }
@@ -49058,9 +49057,7 @@ function getAvailableTopicSectionsForCourse(course, questions = [], options = {}
     }];
   }
 
-  const topics = getAvailableTopicsForCourse(course, questions, {
-    includeConfigured: Boolean(options?.includeConfigured),
-  });
+  const topics = getAvailableTopicsForCourse(course, questions);
   if (!topics.length) {
     return [];
   }
