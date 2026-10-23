@@ -38355,6 +38355,7 @@ function renderAdminCourseTopicControls(course) {
           items: [
             canEditQuestions && { label: "Publish all questions", attrs: `data-action="course-topic-publish-all" data-topic-index="${topicIdx}"` },
             canEditQuestions && { label: "Draft all questions", attrs: `data-action="course-topic-draft-all" data-topic-index="${topicIdx}"` },
+            topics.length > 1 && { label: "Merge into another topic…", attrs: `data-action="course-topic-merge" data-topic-index="${topicIdx}"` },
             { label: "Remove topic", attrs: `data-action="course-topic-remove" data-topic-index="${topicIdx}"`, danger: true },
           ],
         })}
@@ -38420,6 +38421,116 @@ async function setCourseTopicQuestionsStatus(course, topic, targetStatus) {
   } catch (syncError) {
     toast(`${message} Saved locally, but DB sync failed: ${getErrorMessage(syncError, "Sync failed.")}`);
   }
+}
+
+// Moves every question in `topic` to another topic of the same course, then
+// removes `topic`. The same path as a rename (applyCourseTopicsUpdate moves
+// the questions), except the new name already exists. The old topic is
+// switched off in the DB without deleting any question. True when merged.
+async function mergeCourseTopicIntoAnother(course, topic) {
+  const topics = QBANK_COURSE_TOPICS[course] || [];
+  const topicKey = normalizeTopicKey(topic);
+  const questions = getQuestions();
+  const countFor = (name) => questions.filter((question) => {
+    const meta = getQbankCourseTopicMeta(question);
+    return meta.course === course && normalizeTopicKey(meta.topic) === normalizeTopicKey(name);
+  }).length;
+  const targets = topics
+    .filter((name) => normalizeTopicKey(name) !== topicKey)
+    .map((name) => ({ topic: name, count: countFor(name) }));
+  if (!targets.length) {
+    toast("This course has no other topic to merge into.");
+    return false;
+  }
+  const target = await pickCourseTopicMergeTarget(topic, countFor(topic), targets);
+  if (!target) {
+    return false;
+  }
+  const movedCount = countFor(topic);
+  const confirmed = window.confirm(
+    `Merge "${topic}" into "${target}"? `
+    + (movedCount ? `${movedCount} question(s) will move to "${target}", and ` : "")
+    + `"${topic}" will be removed. This cannot be undone.`,
+  );
+  if (!confirmed) {
+    return false;
+  }
+  // Take the merged topic out of its subgroup first: the rename step would
+  // otherwise put the target into that subgroup too.
+  const groups = getCourseTopicGroups(course);
+  Object.keys(groups).forEach((groupName) => {
+    groups[groupName] = (groups[groupName] || []).filter((name) => normalizeTopicKey(name) !== topicKey);
+  });
+  applyCourseTopicGroupsUpdate(course, groups);
+
+  queuePendingCourseTopicDeletion(course, topic);
+  applyCourseTopicsUpdate(
+    course,
+    topics.filter((name) => normalizeTopicKey(name) !== topicKey),
+    { renamedFrom: topic, renamedTo: target },
+  );
+  markAdminQuestionCountsStale();
+  toast(movedCount
+    ? `Merged "${topic}" into "${target}". Moved ${movedCount} question(s).`
+    : `Merged "${topic}" into "${target}".`);
+  return true;
+}
+
+// Asks which topic to merge into. Resolves to its name, or "" if closed.
+function pickCourseTopicMergeTarget(topic, questionCount, targets) {
+  return new Promise((resolve) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "admin-enrollment-picker-modal admin-user-device-modal admin-topic-merge-modal";
+    wrapper.innerHTML = `
+      <button class="admin-enrollment-picker-backdrop" type="button" data-merge-close aria-label="Close"></button>
+      <section class="admin-enrollment-picker-card admin-user-device-card" role="dialog" aria-modal="true" aria-labelledby="admin-topic-merge-title">
+        <div class="admin-enrollment-picker-head">
+          <div>
+            <h4 id="admin-topic-merge-title">Merge topic</h4>
+            <p class="subtle">${escapeHtml(topic)} · ${questionCount} question(s)</p>
+          </div>
+          <button class="icon-btn" type="button" data-merge-close aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="admin-user-device-body">
+          <form class="admin-user-university-form" data-merge-form>
+            <label>Merge into
+              <select name="target" required>
+                ${targets.map((entry) => `<option value="${escapeHtml(entry.topic)}">${escapeHtml(entry.topic)} (${entry.count})</option>`).join("")}
+              </select>
+            </label>
+            <p class="subtle">Its questions move to the topic you pick, then "${escapeHtml(topic)}" is removed.</p>
+            <div class="admin-topic-merge-actions">
+              <button class="btn ghost admin-btn-sm" type="button" data-merge-close>Cancel</button>
+              <button class="btn admin-btn-sm" type="submit">Merge</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    `;
+    const finish = (value) => {
+      document.removeEventListener("keydown", onKeydown);
+      wrapper.remove();
+      resolve(value);
+    };
+    const onKeydown = (event) => {
+      if (event.key === "Escape") finish("");
+    };
+    wrapper.addEventListener("click", (event) => {
+      if (event.target.closest("[data-merge-close]")) finish("");
+    });
+    wrapper.querySelector("[data-merge-form]").addEventListener("submit", (event) => {
+      event.preventDefault();
+      finish(String(event.target.elements.target.value || ""));
+    });
+    document.body.appendChild(wrapper);
+    document.addEventListener("keydown", onKeydown);
+    wrapper.querySelector("select")?.focus();
+  });
 }
 
 function applyAdminPageTransition(previousPage, nextPage) {
@@ -39886,6 +39997,7 @@ function wireAdmin() {
         "course-topic-remove",
         "course-topic-publish-all",
         "course-topic-draft-all",
+        "course-topic-merge",
         "course-topic-clear",
         "course-notebook-link-save",
         "course-question-edit",
@@ -40137,6 +40249,14 @@ function wireAdmin() {
 
     if (action === "course-topic-publish-all" || action === "course-topic-draft-all") {
       await setCourseTopicQuestionsStatus(course, currentTopic, action === "course-topic-draft-all" ? "draft" : "published");
+      return;
+    }
+
+    if (action === "course-topic-merge") {
+      if (await mergeCourseTopicIntoAnother(course, currentTopic)) {
+        rerenderCoursesPage();
+        flushPendingSyncInBackground();
+      }
       return;
     }
 

@@ -21206,6 +21206,17 @@ small.admin-account-approval-gap {
   gap: 0.5rem;
 }
 
+/* Opens from the topics window (.admin-course-topic-modal, z-index 20000). */
+.admin-enrollment-picker-modal.admin-topic-merge-modal {
+  z-index: 20010;
+}
+
+.admin-topic-merge-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .admin-user-device-exemption {
   padding-top: 0.85rem;
   border-top: 1px solid var(--line);
