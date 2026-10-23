@@ -6960,6 +6960,14 @@ function normalizeAdminUserPhoneExactMatchValue(value) {
   return digitsOnly.startsWith("00") ? digitsOnly.slice(2) : digitsOnly;
 }
 
+// `id 1042`, `id:1042`, `ID1042` or `#1042`: the admin asked for a MedBank ID
+// and nothing else, so only that ID matches, not every phone containing the
+// digits (same rule as the app's AdminUserQuery.explicitPublicUserIdSearch).
+function getExplicitAdminUserIdSearch(term) {
+  const match = /^(?:id|#)\s*[:=#]?\s*(\d{1,18})$/i.exec(String(term || "").trim());
+  return match ? String(Number(match[1]) || "") : "";
+}
+
 function matchesAdminUserSearchTerm(account, term) {
   if (!account) {
     return false;
@@ -6968,9 +6976,13 @@ function matchesAdminUserSearchTerm(account, term) {
   if (!normalizedSearch) {
     return false;
   }
+  const accountPublicUserId = String(Number(account.publicUserId || account.public_user_id) || "").trim();
+  const explicitPublicUserId = getExplicitAdminUserIdSearch(term);
+  if (explicitPublicUserId) {
+    return accountPublicUserId === explicitPublicUserId;
+  }
   const normalizedPhoneSearch = normalizeNotificationTargetPhoneSearchText(term);
   const digitsOnlySearch = String(term || "").replace(/\D/g, "");
-  const accountPublicUserId = String(Number(account.publicUserId || account.public_user_id) || "").trim();
   if (digitsOnlySearch && accountPublicUserId && digitsOnlySearch === accountPublicUserId) {
     return true;
   }
@@ -33325,6 +33337,8 @@ function renderAdminIconButton({ icon, label, attrs = "", variant = "", busy = f
     search: '<circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path>',
     x: '<path d="M18 6 6 18M6 6l12 12"></path>',
     pencil: '<path d="M16.9 3.6a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19 4 20l1-4.5L16.9 3.6Z"></path><path d="m15 5.5 3.5 3.5"></path>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 7.5-2"></path>',
     trash: '<path d="M4 7h16"></path><path d="M10 11v6M14 11v6"></path><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"></path>',
   };
   const iconName = Object.prototype.hasOwnProperty.call(icons, icon) ? icon : "info";
@@ -35996,6 +36010,21 @@ function renderAdmin() {
         </button>
       `;
     }).join("");
+    // A wrong question is answered wrong by every student who meets it until
+    // someone fixes it, so urgent reports lead the dashboard (as in the app).
+    const urgentReportCount = canAdminAccessPage(dashboardAccess, "question-reports")
+      ? Number(questionReportSummary?.urgent) || 0
+      : 0;
+    const urgentReportsBanner = urgentReportCount > 0
+      ? `<button type="button" class="admin-dash-urgent-reports" data-action="admin-dashboard-open" data-target="question-reports">
+          <span class="admin-dash-urgent-reports-icon" aria-hidden="true">!</span>
+          <span class="admin-dash-urgent-reports-text">
+            <b>${urgentReportCount === 1 ? "1 question needs urgent review" : `${escapeHtml(formatAdminCount(urgentReportCount))} questions need urgent review`}</b>
+            <small>Many students say these are wrong. Fix them first.</small>
+          </span>
+          <span class="admin-dash-urgent-reports-view">View ›</span>
+        </button>`
+      : "";
     const maxAcademicYearCount = Math.max(0, ...Object.values(dashboardUsers.academicYearCounts));
     const studentYearRows = [1, 2, 3, 4, 5].map((year) => {
       const count = dashboardUsers.academicYearCounts[year] || 0;
@@ -36100,6 +36129,7 @@ function renderAdmin() {
             <p>What needs you now, and how MedBank is doing.</p>
           </header>
 
+          ${urgentReportsBanner}
           <section class="admin-dash-attention" aria-labelledby="admin-dash-attention-title">
             <h3 id="admin-dash-attention-title">Needs your attention</h3>
             <div class="admin-dash-attention-grid">
@@ -36928,14 +36958,28 @@ function renderAdmin() {
     const focusedCourseIndex = Number.isFinite(focusedCourseEntry?.idx) ? focusedCourseEntry.idx : -1;
     const focusedQuestionCount = focusedCourse ? getAdminCourseQuestionCount(focusedCourse, "total") : 0;
     const focusedTopicCount = focusedCourse ? (topicCountByCourse[focusedCourse] || 0) : 0;
+    const canLockCourses = adminAccessCan(getCurrentAdminAccess(), "mcq.subjects");
     const courseCards = filteredCourseEntries
       .map(({ course, idx }) => {
         const topicCount = topicCountByCourse[course] || 0;
         const questionCount = getAdminCourseQuestionCount(course, "total");
         const isActive = state.adminCourseTopicModalCourse === course;
-        const courseMeta = `${isAdminCourseUniversallyLocked(course, curriculumYear, curriculumSemester) ? "🔒 Locked for all · " : ""}${topicCount} ${topicCount === 1 ? "topic" : "topics"} · ${questionCount} ${questionCount === 1 ? "question" : "questions"}`;
+        const lockedForAll = isAdminCourseUniversallyLocked(course, curriculumYear, curriculumSemester);
+        const courseMeta = `${lockedForAll ? "🔒 Locked for all · " : ""}${topicCount} ${topicCount === 1 ? "topic" : "topics"} · ${questionCount} ${questionCount === 1 ? "question" : "questions"}`;
+        // Visible, not only on the subject page: locking is what admins come
+        // here for most (the app's subject row has the same button).
+        const lockSaving = state.adminCourseLocks.saving === getAdminCourseLockKey(course, curriculumYear, curriculumSemester);
+        const rowLockButton = canLockCourses && !state.adminCourseLocks.error
+          ? renderAdminIconButton({
+            icon: lockedForAll ? "lock" : "unlock",
+            label: lockedForAll ? `Unlock ${course} for all students` : `Lock ${course} for all students`,
+            variant: lockedForAll ? "danger" : "",
+            attrs: `data-action="course-universal-lock-toggle" aria-pressed="${lockedForAll ? "true" : "false"}"${state.adminCourseLocks.loadedAt ? "" : " disabled"}`,
+            busy: lockSaving,
+          })
+          : "";
         return `
-          <li>
+          <li class="admin-course-picker-item" data-course-index="${idx}">
             <button
               class="admin-flat-row admin-course-picker-row${isActive ? " is-active" : ""}"
               type="button"
@@ -36949,6 +36993,7 @@ function renderAdmin() {
               </span>
               <span class="admin-flat-row-chevron" aria-hidden="true">›</span>
             </button>
+            ${rowLockButton}
           </li>
         `;
       })
@@ -37395,6 +37440,7 @@ function renderAdmin() {
                   </div>
                 </div>
                 <form id="admin-question-form" style="margin-top: 0.75rem;" autocomplete="off">
+                  ${editing ? renderAdminQuestionEditorReportsBanner(editing) : ""}
                   <input type="hidden" name="id" value="${escapeHtml(editing?.id || "")}" />
                   <div class="form-row">
                     <label>Course
@@ -37879,6 +37925,8 @@ function renderAdmin() {
             </div>
           </div>
         </details>
+
+        ${renderAdminSupportNumberSection()}
       </section>
     `;
   }
@@ -38443,6 +38491,7 @@ function wireAdmin() {
   wireAdminPopups();
   wireAdminUniversities();
   wireAdminQuestionReports();
+  wireAdminSupportNumber();
   wireAdminOrganizations();
   wireAdminAccess();
 
@@ -43028,6 +43077,12 @@ function wireAdmin() {
           } else if (deliveryResult.message) {
             toast(`Correction notification queued: ${deliveryResult.message}`);
           }
+        }
+        // Students who reported it are waiting to hear back, and right after
+        // a save is when the admin knows whether it was fixed.
+        const savedQuestionDbId = String(existingQuestion?.dbId || "").trim();
+        if (idx >= 0 && isUuidValue(savedQuestionDbId)) {
+          offerToCloseQuestionReportsAfterSave(savedQuestionDbId);
         }
       } catch (syncError) {
         toast(`${successMessage} locally, but DB sync failed: ${getErrorMessage(syncError, "Sync failed.")}`);
@@ -62736,6 +62791,7 @@ function openQuestionReportOverlay(innerHtml, { opener = null, wide = false } = 
   overlay.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       closeQuestionReportDialog();
       return;
     }
@@ -63173,7 +63229,7 @@ function wireAdminQuestionReports() {
   }));
 }
 
-async function openAdminQuestionReportDetail(questionId, item, closed, opener) {
+async function openAdminQuestionReportDetail(questionId, item, closed, opener, { fromEditor = false } = {}) {
   const client = getRelationalClient();
   if (!client) {
     toast("Reports could not be loaded. Check your connection and try again.");
@@ -63207,6 +63263,10 @@ async function openAdminQuestionReportDetail(questionId, item, closed, opener) {
     ]);
     if (!document.contains(panel)) {
       return;
+    }
+    if (!item) {
+      const count = Array.isArray(entries) ? entries.length : 0;
+      panel.querySelector(".question-report-head p").textContent = count === 1 ? "1 student reported this" : `${count} students reported this`;
     }
     const suggestions = item?.suggested_labels || {};
     const choices = [...(question?.question_choices || [])]
@@ -63250,7 +63310,7 @@ async function openAdminQuestionReportDetail(questionId, item, closed, opener) {
           <textarea name="resolution" rows="2" maxlength="1000" autocomplete="off" placeholder="For example: the key is now B."></textarea>
         </label>
         <div class="question-report-actions">
-          <button type="button" class="btn ghost" data-question-report-edit>Edit question</button>
+          ${fromEditor ? "" : `<button type="button" class="btn ghost" data-question-report-edit>Edit question</button>`}
           <button type="button" class="btn ghost" data-question-report-decide="dismissed">It's correct</button>
           <button type="button" class="btn" data-question-report-decide="resolved">Mark fixed</button>
         </div>
@@ -63305,19 +63365,13 @@ function wireAdminQuestionReportDecision(panel, questionId, count) {
     });
     button.classList.add("is-loading");
     try {
-      const { error } = await client.rpc("admin_close_question_reports", {
-        p_question_id: questionId,
-        p_status: outcome,
-        p_note: String(form.querySelector("textarea[name='resolution']")?.value || "").trim() || null,
-      });
-      if (error) {
-        throw error;
-      }
+      await closeAdminQuestionReports(
+        client,
+        questionId,
+        outcome,
+        String(form.querySelector("textarea[name='resolution']")?.value || "").trim(),
+      );
       closeQuestionReportDialog();
-      toast(fixed ? "Reports closed. The students were told it's fixed." : "Reports closed. The students were told it's correct.");
-      ensureAdminQuestionReportSummary({ force: true });
-      loadAdminQuestionReports({ force: true });
-      refreshAdminQuestionReportsView();
     } catch (error) {
       form.querySelectorAll("button, textarea").forEach((element) => {
         element.disabled = false;
@@ -63326,6 +63380,359 @@ function wireAdminQuestionReportDecision(panel, questionId, count) {
       toast(String(error?.message || "The reports could not be closed."));
     }
   }));
+}
+
+// Closes every open report on a question (each reporter is notified by the
+// database) and refreshes everything that counts them.
+async function closeAdminQuestionReports(client, questionId, outcome, note) {
+  const { error } = await client.rpc("admin_close_question_reports", {
+    p_question_id: questionId,
+    p_status: outcome,
+    p_note: note || null,
+  });
+  if (error) {
+    throw error;
+  }
+  setAdminQuestionEditorReportCount(questionId, 0);
+  toast(outcome === "resolved" ? "Reports closed. The students were told it's fixed." : "Reports closed. The students were told it's correct.");
+  ensureAdminQuestionReportSummary({ force: true });
+  loadAdminQuestionReports({ force: true });
+  refreshAdminQuestionReportsView();
+}
+
+// ── Question editor: "7 students reported this question" ──
+//
+// An admin who opens a question from anywhere sees that students are waiting
+// on it. The count is read once per question and filled into a placeholder
+// rather than through render(), which would rebuild the form under the
+// admin's typing. Fail-soft: an error shows no banner.
+
+const adminQuestionEditorReportCounts = new Map();
+const adminQuestionEditorReportLoads = new Map();
+
+function renderAdminQuestionEditorReportsBannerHtml(questionId, count) {
+  if (!count) {
+    return "";
+  }
+  return `<button type="button" class="question-report-editor-banner" data-question-report-editor-open="${escapeHtml(questionId)}">
+    <span class="question-report-badge" aria-hidden="true">${QUESTION_REPORT_ICON}</span>
+    <span class="question-report-editor-banner-text">${count === 1 ? "1 student reported this question." : `${escapeHtml(String(count))} students reported this question.`}</span>
+    <span class="question-report-editor-banner-view">View ›</span>
+  </button>`;
+}
+
+function setAdminQuestionEditorReportCount(questionId, count) {
+  adminQuestionEditorReportCounts.set(questionId, count);
+  document.querySelectorAll("[data-question-report-editor-slot]").forEach((slot) => {
+    if (slot.getAttribute("data-question-report-editor-slot") === questionId) {
+      slot.innerHTML = renderAdminQuestionEditorReportsBannerHtml(questionId, count);
+    }
+  });
+}
+
+function loadAdminQuestionEditorReportCount(questionId) {
+  if (adminQuestionEditorReportLoads.has(questionId)) {
+    return adminQuestionEditorReportLoads.get(questionId);
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return Promise.resolve(0);
+  }
+  const load = runRelationalQueryWithTimeout(
+    client.rpc("admin_question_report_details", { p_question_id: questionId, p_status: "open" }),
+    "Question reports timed out.",
+  )
+    .then((entries) => (Array.isArray(entries) ? entries.length : 0))
+    .catch((error) => {
+      console.warn("Question reports unavailable.", error?.message || error);
+      return 0;
+    })
+    .then((count) => {
+      setAdminQuestionEditorReportCount(questionId, count);
+      return count;
+    })
+    .finally(() => {
+      adminQuestionEditorReportLoads.delete(questionId);
+    });
+  adminQuestionEditorReportLoads.set(questionId, load);
+  return load;
+}
+
+function renderAdminQuestionEditorReportsBanner(question) {
+  const questionId = String(question?.dbId || "").trim();
+  if (!isUuidValue(questionId) || !canAdminAccessPage(getCurrentAdminAccess(), "question-reports")) {
+    return "";
+  }
+  if (!adminQuestionEditorReportCounts.has(questionId)) {
+    loadAdminQuestionEditorReportCount(questionId);
+  }
+  return `<div class="question-report-editor-slot" data-question-report-editor-slot="${escapeHtml(questionId)}">${renderAdminQuestionEditorReportsBannerHtml(questionId, adminQuestionEditorReportCounts.get(questionId) || 0)}</div>`;
+}
+
+document.addEventListener("click", (event) => {
+  const trigger = event.target?.closest?.("[data-question-report-editor-open]");
+  if (!trigger) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  openAdminQuestionReportDetail(
+    String(trigger.getAttribute("data-question-report-editor-open") || "").trim(),
+    null,
+    false,
+    trigger,
+    { fromEditor: true },
+  );
+}, true);
+
+// After a question with open reports is saved: "Mark as fixed?", with an
+// optional note that goes out with every reporter's notification.
+async function offerToCloseQuestionReportsAfterSave(questionId) {
+  if (!adminAccessCan(getCurrentAdminAccess(), "mcq.questions_edit")) {
+    return;
+  }
+  adminQuestionEditorReportCounts.delete(questionId);
+  const count = await loadAdminQuestionEditorReportCount(questionId);
+  if (!count || document.querySelector("[data-question-report-dialog]")) {
+    return;
+  }
+  const panel = openQuestionReportOverlay(`
+    <form class="question-report-form" novalidate>
+      <header class="question-report-head">
+        <span class="question-report-badge" aria-hidden="true">${QUESTION_REPORT_ICON}</span>
+        <div>
+          <h3 id="question-report-title">Mark as fixed?</h3>
+          <p>${count === 1 ? "The student who reported it will get a notification that it's fixed." : `The ${escapeHtml(String(count))} students who reported it will get a notification that it's fixed.`}</p>
+        </div>
+        <button type="button" class="question-report-x" data-question-report-close aria-label="Close">×</button>
+      </header>
+      <label class="question-report-note">
+        <span>Note to students <small>(optional — sent with their notification)</small></span>
+        <textarea name="resolution" rows="2" maxlength="1000" autocomplete="off" placeholder="For example: the key is now B."></textarea>
+      </label>
+      <p class="question-report-error" role="alert" hidden></p>
+      <div class="question-report-actions">
+        <button type="button" class="btn ghost" data-question-report-close>Not now</button>
+        <button type="submit" class="btn" data-question-report-send>Mark fixed</button>
+      </div>
+    </form>`, { opener: document.activeElement });
+  const form = panel.querySelector("form");
+  const errorEl = form.querySelector(".question-report-error");
+  form.querySelector("textarea")?.focus();
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const client = getRelationalClient();
+    if (!client) {
+      errorEl.textContent = "You're offline. Try again when you're connected.";
+      errorEl.hidden = false;
+      return;
+    }
+    const send = form.querySelector("[data-question-report-send]");
+    form.querySelectorAll("button, textarea").forEach((element) => {
+      element.disabled = true;
+    });
+    send.classList.add("is-loading");
+    try {
+      await closeAdminQuestionReports(client, questionId, "resolved", String(form.querySelector("textarea")?.value || "").trim());
+      closeQuestionReportDialog();
+    } catch (error) {
+      form.querySelectorAll("button, textarea").forEach((element) => {
+        element.disabled = false;
+      });
+      send.classList.remove("is-loading");
+      errorEl.textContent = String(error?.message || "The reports could not be closed.");
+      errorEl.hidden = false;
+    }
+  });
+}
+
+// ─── Support WhatsApp number (app_state g:support_whatsapp) ──────────────
+//
+// The number every "Contact support" in the mobile app opens, read by each
+// app from the server so changing it needs no new build. Restrictive RLS
+// (migration 20261022210000_support_whatsapp_number) lets only an admin
+// write it, digits only. Same row, rules and wording as the app's
+// Admin → Site access.
+
+const SUPPORT_WHATSAPP_STORAGE_KEY = "g:support_whatsapp";
+// What the app falls back to when the row cannot be read
+// (PublicLinks.adminWhatsAppNumber in the app).
+const SUPPORT_WHATSAPP_FALLBACK_NUMBER = "201552900540";
+
+function isValidSupportWhatsAppNumber(digits) {
+  return /^[0-9]{8,15}$/.test(String(digits || ""));
+}
+
+// Spaces, dashes and "+" dropped, a "00" prefix dropped, and an Egyptian
+// mobile typed the local way (01…, 11 digits) given its country code.
+function normalizeSupportWhatsAppNumber(input) {
+  let digits = String(input || "").replace(/[^0-9]/g, "");
+  if (digits.startsWith("00")) {
+    digits = digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith("01")) {
+    digits = `2${digits}`;
+  }
+  return digits;
+}
+
+function formatSupportWhatsAppNumber(digits) {
+  const value = String(digits || "");
+  if (value.length === 12 && value.startsWith("20")) {
+    return `+20 ${value.slice(2, 5)} ${value.slice(5, 8)} ${value.slice(8)}`;
+  }
+  return value ? `+${value}` : "";
+}
+
+function getAdminSupportNumberState() {
+  if (!state.adminSupportNumber) {
+    state.adminSupportNumber = { number: "", loaded: false, loading: false, saving: false, error: "" };
+  }
+  return state.adminSupportNumber;
+}
+
+// Filled into the rendered field rather than through render(), which would
+// rebuild the site-access form under the admin's typing.
+function syncAdminSupportNumberField() {
+  const support = getAdminSupportNumberState();
+  const input = document.querySelector("#admin-support-number-form input[name='supportNumber']");
+  if (input instanceof HTMLInputElement && support.loaded) {
+    if (input.disabled) {
+      input.value = formatSupportWhatsAppNumber(support.number);
+    }
+    input.disabled = support.saving;
+  }
+  const status = document.querySelector("[data-admin-support-number-status]");
+  if (status) {
+    status.textContent = support.error;
+    status.hidden = !support.error;
+  }
+  const open = document.querySelector("[data-admin-support-number-open]");
+  if (open && support.number) {
+    open.setAttribute("href", `https://wa.me/${support.number}`);
+  }
+  const save = document.querySelector("#admin-support-number-form [type='submit']");
+  if (save) {
+    save.disabled = !support.loaded || support.saving;
+    save.classList.toggle("is-loading", support.saving);
+  }
+}
+
+function ensureAdminSupportNumberLoaded(force = false) {
+  const support = getAdminSupportNumberState();
+  if (support.loading || (support.loaded && !force)) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return;
+  }
+  support.loading = true;
+  runRelationalQueryWithTimeout(
+    client.from("app_state").select("payload").eq("storage_key", SUPPORT_WHATSAPP_STORAGE_KEY).maybeSingle(),
+    "The support number could not be loaded.",
+  )
+    .then((row) => {
+      const number = row?.payload?.number;
+      support.number = isValidSupportWhatsAppNumber(number) ? number : SUPPORT_WHATSAPP_FALLBACK_NUMBER;
+      support.error = isValidSupportWhatsAppNumber(number) ? "" : "No number is saved yet, so the app uses its built-in one.";
+    })
+    .catch((error) => {
+      console.warn("Support number unavailable.", error?.message || error);
+      support.number = SUPPORT_WHATSAPP_FALLBACK_NUMBER;
+      support.error = "The saved number could not be loaded, so this shows the app's built-in one.";
+    })
+    .finally(() => {
+      support.loading = false;
+      support.loaded = true;
+      syncAdminSupportNumberField();
+    });
+}
+
+function renderAdminSupportNumberSection() {
+  const support = getAdminSupportNumberState();
+  ensureAdminSupportNumberLoaded();
+  const number = support.number || SUPPORT_WHATSAPP_FALLBACK_NUMBER;
+  return `
+    <section class="admin-settings-section admin-support-number" id="admin-support-number-section">
+      <h4 class="admin-settings-section-title">Support WhatsApp number</h4>
+      <p class="admin-settings-row-desc">Every "Contact support" in the app opens a WhatsApp chat with this number. Students get a new number the next time they open the app.</p>
+      <form id="admin-support-number-form" class="admin-support-number-form" novalidate autocomplete="off">
+        <label class="admin-support-number-field">
+          <span>WhatsApp number</span>
+          <input name="supportNumber" type="tel" inputmode="tel" dir="ltr" autocomplete="off" maxlength="24" value="${escapeHtml(support.loaded ? formatSupportWhatsAppNumber(number) : "")}" placeholder="${support.loaded ? "" : "Loading…"}" aria-describedby="admin-support-number-help" ${support.loaded && !support.saving ? "" : "disabled"} />
+        </label>
+        <small id="admin-support-number-help" class="subtle">With the country code, e.g. +20 155 290 0540</small>
+        <p class="form-error" role="alert" data-admin-support-number-status ${support.error ? "" : "hidden"}>${escapeHtml(support.error)}</p>
+        <div class="admin-support-number-actions">
+          <a class="btn ghost admin-btn-sm" data-admin-support-number-open href="https://wa.me/${escapeHtml(number)}" target="_blank" rel="noopener noreferrer">Open in WhatsApp</a>
+          <button type="submit" class="btn admin-btn-sm ${support.saving ? "is-loading" : ""}" ${support.loaded && !support.saving ? "" : "disabled"}>Save number</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function wireAdminSupportNumber() {
+  const form = appEl.querySelector("#admin-support-number-form");
+  if (!form) {
+    return;
+  }
+  const support = getAdminSupportNumberState();
+  const input = form.querySelector("input[name='supportNumber']");
+  const status = form.querySelector("[data-admin-support-number-status]");
+  const showStatus = (message) => {
+    support.error = message;
+    status.textContent = message;
+    status.hidden = !message;
+  };
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (support.saving || !support.loaded) {
+      return;
+    }
+    const digits = normalizeSupportWhatsAppNumber(input.value);
+    if (!isValidSupportWhatsAppNumber(digits)) {
+      showStatus("Enter the number with its country code (8 to 15 digits).");
+      input.focus();
+      return;
+    }
+    if (digits === support.number) {
+      showStatus("");
+      return;
+    }
+    // A typo would send every stuck student to a stranger, so ask first.
+    if (!window.confirm(`Change the support number?\n\nStudents who tap "Contact support" will be sent to WhatsApp on ${formatSupportWhatsAppNumber(digits)}. Make sure it is right.`)) {
+      return;
+    }
+    const client = getRelationalClient();
+    if (!client) {
+      showStatus("You're offline. Try again when you're connected.");
+      return;
+    }
+    showStatus("");
+    support.saving = true;
+    syncAdminSupportNumberField();
+    try {
+      const now = new Date().toISOString();
+      const { error } = await client.from("app_state").upsert({
+        storage_key: SUPPORT_WHATSAPP_STORAGE_KEY,
+        payload: { number: digits, updated_at: now, updated_by: (await getQuestionReportUserId(client)) || null },
+        updated_at: now,
+      }, { onConflict: "storage_key" });
+      if (error) {
+        throw error;
+      }
+      support.number = digits;
+      input.value = formatSupportWhatsAppNumber(digits);
+      toast("Support number saved.");
+    } catch (error) {
+      showStatus(String(error?.message || "The support number could not be saved."));
+    } finally {
+      support.saving = false;
+      syncAdminSupportNumberField();
+    }
+  });
 }
 
 window.__MCQ_ON_GSAP_READY__ = handleGsapReadyForCurrentRoute;

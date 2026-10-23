@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-23 — Admin catches up with the app
+- Question editor: "N students reported this question" banner, and after
+  saving a reported question an offer to mark its reports fixed (with an
+  optional note to students).
+- Dashboard: a red "questions need urgent review" banner on top.
+- MCQ subjects: a lock / unlock button on every subject row.
+- Site access: the support WhatsApp number the app opens (`app_state`
+  `g:support_whatsapp`); copies migration 20261022210000 (already applied).
+- Users search: `id 1042`, `id:1042`, `ID1042` or `#1042` matches the
+  MedBank ID only.
+
 ### 2026-10-23 — Students can report wrong questions
 - "Report a problem" under every MCQ (exam and review): pick what's wrong,
   optionally the answer you think is right, and a note.
