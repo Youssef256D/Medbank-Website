@@ -24700,6 +24700,21 @@ function landingCoursesSectionHtml() {
   `;
 }
 
+// The support number on the Contact page is the one an admin sets on
+// Site access (g:support_whatsapp), the same number the app's "Contact
+// support" opens. Until it is read (or if it cannot be), the built-in one.
+function supportContactLinesHtml() {
+  const number = getPublicSupportWhatsAppNumber();
+  return `<a class="lp-contact-line" data-support-whatsapp-link href="https://wa.me/${escapeHtml(number)}" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.4A8.4 8.4 0 1 1 21 11.5z"/></svg>
+          <span>WhatsApp <span data-support-number-text dir="ltr">${escapeHtml(formatSupportWhatsAppNumber(number))}</span></span>
+        </a>
+        <a class="lp-contact-line" data-support-phone-link href="tel:+${escapeHtml(number)}">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <span>Call <span data-support-number-text dir="ltr">${escapeHtml(formatSupportWhatsAppNumber(number))}</span></span>
+        </a>`;
+}
+
 function landingContactBodyHtml() {
   const coursesHidden = isVideoCoursesHidden();
   return `
@@ -24710,16 +24725,13 @@ function landingContactBodyHtml() {
     <div class="lp-contact-card">
       <p class="lp-contact-name">Youssef Ayoub <span>· MedBank owner</span></p>
       <div class="lp-contact-lines">
-        <a class="lp-contact-line" href="tel:+201004532728">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-          <span>+20 100 453 2728</span>
-        </a>
+        ${supportContactLinesHtml()}
         <a class="lp-contact-line" href="mailto:Code.Youssefaayoub@gmail.com">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
           <span>Code.Youssefaayoub@gmail.com</span>
         </a>
       </div>
-      <p class="lp-contact-hint">${coursesHidden ? "Message or call for support and account details." : "Message or call for contact and pricing details."}</p>
+      <p class="lp-contact-hint">${coursesHidden ? "Message us on WhatsApp, call, or email for support and account details." : "Message us on WhatsApp, call, or email for contact and pricing details."}</p>
     </div>
   `;
 }
@@ -63584,6 +63596,50 @@ function formatSupportWhatsAppNumber(digits) {
   return value ? `+${value}` : "";
 }
 
+function getPublicSupportWhatsAppNumber() {
+  ensurePublicSupportWhatsAppNumberLoaded();
+  return isValidSupportWhatsAppNumber(state.publicSupportWhatsAppNumber)
+    ? state.publicSupportWhatsAppNumber
+    : SUPPORT_WHATSAPP_FALLBACK_NUMBER;
+}
+
+// Fills every support link already on the page (the Contact page, and the
+// pre-rendered one in index.html) without a render().
+function applyPublicSupportWhatsAppNumber(number) {
+  state.publicSupportWhatsAppNumber = number;
+  document.querySelectorAll("[data-support-whatsapp-link]").forEach((link) => link.setAttribute("href", `https://wa.me/${number}`));
+  document.querySelectorAll("[data-support-phone-link]").forEach((link) => link.setAttribute("href", `tel:+${number}`));
+  document.querySelectorAll("[data-support-number-text]").forEach((text) => {
+    text.textContent = formatSupportWhatsAppNumber(number);
+  });
+}
+
+// Read once per page load; anyone may read the row (it is public contact
+// info). Fail-soft: the built-in number stays.
+function ensurePublicSupportWhatsAppNumberLoaded() {
+  if (state.publicSupportWhatsAppNumberRequested) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return;
+  }
+  state.publicSupportWhatsAppNumberRequested = true;
+  runRelationalQueryWithTimeout(
+    client.from("app_state").select("payload").eq("storage_key", SUPPORT_WHATSAPP_STORAGE_KEY).maybeSingle(),
+    "The support number could not be loaded.",
+  )
+    .then((row) => {
+      const number = row?.payload?.number;
+      if (isValidSupportWhatsAppNumber(number)) {
+        applyPublicSupportWhatsAppNumber(number);
+      }
+    })
+    .catch((error) => {
+      console.warn("Support number unavailable, using the built-in one.", error?.message || error);
+    });
+}
+
 function getAdminSupportNumberState() {
   if (!state.adminSupportNumber) {
     state.adminSupportNumber = { number: "", loaded: false, loading: false, saving: false, error: "" };
@@ -63724,6 +63780,7 @@ function wireAdminSupportNumber() {
         throw error;
       }
       support.number = digits;
+      applyPublicSupportWhatsAppNumber(digits);
       input.value = formatSupportWhatsAppNumber(digits);
       toast("Support number saved.");
     } catch (error) {

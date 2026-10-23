@@ -19,6 +19,8 @@ hosted Supabase is the source of truth.
   `g:support_whatsapp`); copies migration 20261022210000 (already applied).
 - Users search: `id 1042`, `id:1042`, `ID1042` or `#1042` matches the
   MedBank ID only.
+- Contact page: WhatsApp and call links use the admin-set support number
+  (was the old +20 100 453 2728); email unchanged.
 
 ### 2026-10-23 — Students can report wrong questions
 - "Report a problem" under every MCQ (exam and review): pick what's wrong,
