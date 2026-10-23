@@ -2,6 +2,26 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-23 — Question reports (students flag wrong MCQs)
+- Migration `20261023120000_question_reports` (also in the Flutter repo):
+  `question_reports`, written only through `report_question` (one open
+  report per student per question; 30 a day), and admin RPCs
+  `admin_question_report_queue` / `_summary` / `_details` /
+  `admin_close_question_reports`. The level and order are the server's —
+  reporters and their share of the students who answered — never recompute
+  them in `main.js`.
+- Students: "Report a problem" in the exam's question box and in Review
+  (`renderQuestionReportLink`); the dialog lives on `<body>`, outside `#app`,
+  so renders never close it. Clicks are caught by one capture-phase listener
+  on `[data-report-question]`. The old `mcq_feedback` panel was never shown
+  (no button opened it) and is left untouched.
+- Admin: new page `question-reports` (in `ADMIN_DATA_PAGES`,
+  `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS`, `ADMIN_PAGE_PERMISSIONS`), a
+  sidebar badge, and a "Reported questions" dashboard card. Closing reports
+  notifies every reporter (database trigger).
+
+**Files touched:** `main.js`, `styles.css`, `index.html`, `supabase/migrations/20261023120000_question_reports.sql`.
+
 ### 2026-10-21 — Pop-up editor can link to a website
 - The admin Pop-ups editor now offers the two destinations the hosted
   `app_popups_target_route_check` already allowed (Flutter migration

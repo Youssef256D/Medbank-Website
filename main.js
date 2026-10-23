@@ -203,7 +203,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "organizations", "mcq-subjects", "questions", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "organizations", "mcq-subjects", "questions", "question-reports", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -229,6 +229,7 @@ const ADMIN_NAV_GROUPS = [
     items: [
       { page: "mcq-subjects", label: "Subjects" },
       { page: "questions", label: "Questions" },
+      { page: "question-reports", label: "Question reports" },
       { page: "bulk-import", label: "Bulk Import" },
     ],
   },
@@ -29588,6 +29589,7 @@ function renderSession() {
                   <span aria-hidden="true">⚑</span>
                   <span>${response.flagged ? "Unflag question" : "Flag question"}</span>
                 </button>
+                ${renderQuestionReportLink(question)}
               </div>
             </aside>
 
@@ -30892,6 +30894,7 @@ function renderReview() {
               <p class="exam-mark-line subtle">Mode: ${escapeHtml(selected.mode === "timed" ? "Timed" : "Tutor")}</p>
               <p class="exam-mark-line subtle">Block score: ${correctCount}/${total} (${accuracy}%)</p>
               <span class="exam-meta-link muted">${response.flagged ? "⚑ Flagged question" : "⚑ Not flagged"}</span>
+              ${question ? renderQuestionReportLink(question, { className: "exam-meta-link" }) : ""}
               <span class="exam-meta-badge">v1 (latest)</span>
             </aside>
 
@@ -34260,11 +34263,14 @@ function renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection) {
   const pendingApprovalCount = (state.adminCoursesPlatformCourses || []).filter(
     (course) => String(course?.review_status || "").trim() === "pending",
   ).length;
+  const openQuestionReports = Number(state.adminQuestionReports?.summary?.open) || 0;
   const badgeFor = (item) => (item.section === "requests"
     ? pendingRequestCount
     : item.section === "approvals"
       ? pendingApprovalCount
-      : 0);
+      : item.page === "question-reports"
+        ? openQuestionReports
+        : 0);
   const badgeHtml = (count) => (count
     ? `<span class="nav-badge">${count > 99 ? "99+" : count}</span>`
     : "");
@@ -35290,6 +35296,7 @@ const ADMIN_PAGE_AREAS = {
   organizations: "people",
   "mcq-subjects": "mcq",
   questions: "mcq",
+  "question-reports": "mcq",
   "bulk-import": "mcq",
   "video-courses": "video_courses",
   notifications: "messaging",
@@ -35304,6 +35311,7 @@ const ADMIN_PAGE_PERMISSIONS = {
   organizations: ["users.organizations"],
   "mcq-subjects": ["mcq.subjects"],
   questions: ["mcq.questions_create", "mcq.questions_edit", "mcq.questions_delete"],
+  "question-reports": ["mcq.questions_create", "mcq.questions_edit", "mcq.questions_delete", "mcq.bulk_import"],
   "bulk-import": ["mcq.bulk_import"],
   "video-courses": ["video_courses.manage"],
   notifications: ["messaging.notifications"],
@@ -35894,6 +35902,8 @@ function renderAdmin() {
       .join("");
 
     const nowMs = Date.now();
+    ensureAdminQuestionReportSummary();
+    const questionReportSummary = state.adminQuestionReports?.summary || null;
     // Admin layers: cards and panels for areas this admin lacks are left out.
     const dashboardAccess = getCurrentAdminAccess();
     const dashboardUsers = buildAdminDashboardUserSnapshot(users, nowMs);
@@ -35956,11 +35966,25 @@ function renderAdmin() {
             ? "Published but missing an answer"
             : "All published questions usable",
       },
+      {
+        target: "question-reports",
+        value: questionReportSummary ? Number(questionReportSummary.open) || 0 : null,
+        loading: !questionReportSummary,
+        label: "Reported questions",
+        detail: !questionReportSummary
+          ? "Checking reports"
+          : Number(questionReportSummary.urgent) > 0
+            ? `${formatAdminCount(questionReportSummary.urgent)} urgent — many students say they're wrong`
+            : Number(questionReportSummary.open) > 0
+              ? "Students say these may be wrong"
+              : "No open reports",
+      },
     ].filter((card) => adminAccessHasArea(dashboardAccess, {
       "users-pending": "people",
       "users-mcq-held": "people",
       "course-requests": "video_courses",
       questions: "mcq",
+      "question-reports": "mcq",
     }[card.target] || "people")).map((card) => {
       const countText = formatAdminCount(card.value, { loading: card.loading });
       const attention = Number.isFinite(Number(card.value)) && Number(card.value) > 0;
@@ -37869,6 +37893,10 @@ function renderAdmin() {
     pageContent = `${popupsPageHeader}${renderAdminPopupsSection()}`;
   }
 
+  if (activeAdminPage === "question-reports") {
+    pageContent = renderAdminQuestionReportsSection();
+  }
+
   if (activeAdminPage === "universities") {
     pageContent = renderAdminUniversitiesSection();
     // Rendered outside the admin shell/card: a hovered card gets a
@@ -38414,6 +38442,7 @@ function wireAdmin() {
   document.body.classList.toggle("is-admin-dialog-open", Boolean(appEl.querySelector(".admin-dialog")));
   wireAdminPopups();
   wireAdminUniversities();
+  wireAdminQuestionReports();
   wireAdminOrganizations();
   wireAdminAccess();
 
@@ -38532,6 +38561,12 @@ function wireAdmin() {
           : "approvals";
       } else if (target === "questions") {
         nextPage = "questions";
+      } else if (target === "question-reports") {
+        const reports = getAdminQuestionReportsState();
+        reports.closed = false;
+        reports.level = Number(reports.summary?.urgent) > 0 ? "urgent" : "";
+        reports.page = null;
+        nextPage = "question-reports";
       }
 
       if (!KNOWN_ADMIN_PAGES.has(nextPage)) {
@@ -62538,6 +62573,759 @@ function handleGsapReadyForCurrentRoute() {
 
 function handleLucideReadyForCurrentRoute() {
   window.requestAnimationFrame(renderLucideIcons);
+}
+
+// ─── Question reports (migration 20261023120000_question_reports) ────────
+//
+// Students report MCQ Bank questions they think are wrong; admins review
+// them. The table and every rule live in the database and are shared with
+// the Flutter app: one open report per student per question (sending again
+// edits it), 30 new reports a day, an "urgent" alert to admins, and a
+// notification to every reporter when an admin closes the reports. The
+// queue's order — level, then a score from how many students reported a
+// question *and* their share of the students who answered it — is the
+// server's (`admin_question_report_queue`). Nothing here recomputes it.
+//
+// Both dialogs are appended to <body>, outside the re-rendered #app, so a
+// render() (the exam timer, a sync) never closes one mid-sentence.
+
+const QUESTION_REPORT_REASONS = [
+  { id: "wrong_answer", label: "Wrong answer" },
+  { id: "wrong_explanation", label: "Wrong explanation" },
+  { id: "typo", label: "Typo or wording" },
+  { id: "image", label: "Image problem" },
+  { id: "unclear", label: "Unclear question" },
+  { id: "other", label: "Something else" },
+];
+const QUESTION_REPORT_LEVELS = [
+  { id: "urgent", label: "Urgent" },
+  { id: "high", label: "High" },
+  { id: "watch", label: "Watch" },
+  { id: "low", label: "Low" },
+];
+const QUESTION_REPORT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v4"/><path d="M12 14.5h.01"/></svg>`;
+const QUESTION_REPORTED_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>`;
+
+function getQuestionReportReasonLabel(reasonId) {
+  return QUESTION_REPORT_REASONS.find((reason) => reason.id === reasonId)?.label || "Something else";
+}
+
+// ── Student side ──
+
+// "Report a problem" under a question, or "Reported · thanks" once the
+// student has an open report on it. Questions with no database id (local
+// demo data) have nothing to report against.
+function renderQuestionReportLink(question, options = {}) {
+  const dbId = String(question?.dbId || "").trim();
+  if (!isUuidValue(dbId)) {
+    return "";
+  }
+  ensureMyQuestionReportsLoaded();
+  const labels = (Array.isArray(question?.choices) ? question.choices : [])
+    .map((choice) => normalizeQuestionChoiceLabel(choice?.id))
+    .filter(Boolean);
+  const reported = Boolean(state.myQuestionReports?.[dbId]);
+  const className = String(options.className || "exam-meta-link exam-meta-link-moodle");
+  return `<button type="button" class="${escapeHtml(className)} question-report-link ${reported ? "is-reported" : ""}" data-report-question="${escapeHtml(dbId)}" data-report-labels="${escapeHtml(labels.join(","))}">
+    ${reported ? QUESTION_REPORTED_ICON : QUESTION_REPORT_ICON}
+    <span>${reported ? "Reported · thanks" : "Report a problem"}</span>
+  </button>`;
+}
+
+async function getQuestionReportUserId(client) {
+  try {
+    const { data } = await client.auth.getSession();
+    return String(data?.session?.user?.id || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+// Fail-soft: an error (or a backend without the table yet) reads as "nothing
+// reported" and is not retried until the next sign-in.
+function ensureMyQuestionReportsLoaded() {
+  if (state.myQuestionReports || state.myQuestionReportsLoading) {
+    return;
+  }
+  state.myQuestionReportsLoading = true;
+  loadMyQuestionReports().finally(() => {
+    state.myQuestionReportsLoading = false;
+    if (Object.keys(state.myQuestionReports || {}).length && (state.route === "session" || state.route === "review")) {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  });
+}
+
+async function loadMyQuestionReports() {
+  const client = getRelationalClient();
+  const userId = client ? await getQuestionReportUserId(client) : "";
+  if (!client || !userId) {
+    state.myQuestionReports = {};
+    return;
+  }
+  try {
+    const rows = await runRelationalQueryWithTimeout(
+      client
+        .from("question_reports")
+        .select("question_id, reason, note, suggested_choice_label")
+        .eq("reporter_id", userId)
+        .eq("status", "open"),
+      "Your question reports could not be loaded.",
+    );
+    state.myQuestionReports = Object.fromEntries((rows || []).map((row) => [
+      String(row.question_id),
+      { reason: row.reason, note: row.note || "", suggested: row.suggested_choice_label || "" },
+    ]));
+  } catch (error) {
+    console.warn("Question reports unavailable.", error?.message || error);
+    state.myQuestionReports = {};
+  }
+}
+
+function closeQuestionReportDialog() {
+  const overlay = document.querySelector("[data-question-report-dialog]");
+  if (!overlay) {
+    return;
+  }
+  const opener = overlay.__opener;
+  overlay.remove();
+  document.body.classList.remove("is-question-report-open");
+  if (opener && document.contains(opener)) {
+    opener.focus();
+  }
+}
+
+function trapQuestionReportFocus(event, panel) {
+  if (event.key !== "Tab") {
+    return;
+  }
+  const focusable = [...panel.querySelectorAll("button:not(:disabled), input:not(:disabled), textarea:not(:disabled)")]
+    .filter((element) => element.offsetParent !== null);
+  if (!focusable.length) {
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+// Builds the overlay shell both dialogs share and wires Escape, the
+// backdrop and the focus trap.
+function openQuestionReportOverlay(innerHtml, { opener = null, wide = false } = {}) {
+  closeQuestionReportDialog();
+  const overlay = document.createElement("div");
+  overlay.className = "question-report-overlay";
+  overlay.setAttribute("data-question-report-dialog", "");
+  overlay.innerHTML = `<div class="question-report-panel ${wide ? "is-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="question-report-title">${innerHtml}</div>`;
+  overlay.__opener = opener;
+  document.body.appendChild(overlay);
+  document.body.classList.add("is-question-report-open");
+  const panel = overlay.querySelector(".question-report-panel");
+  overlay.addEventListener("mousedown", (event) => {
+    if (event.target === overlay) {
+      closeQuestionReportDialog();
+    }
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeQuestionReportDialog();
+      return;
+    }
+    trapQuestionReportFocus(event, panel);
+  });
+  overlay.querySelectorAll("[data-question-report-close]").forEach((button) => {
+    button.addEventListener("click", closeQuestionReportDialog);
+  });
+  return panel;
+}
+
+function openQuestionReportDialog(questionId, labels, opener) {
+  const existing = state.myQuestionReports?.[questionId] || null;
+  const choiceLabels = String(labels || "").split(",").map(normalizeQuestionChoiceLabel).filter(Boolean);
+  const reasonTiles = QUESTION_REPORT_REASONS.map((reason) => `
+    <label class="question-report-reason">
+      <input type="radio" name="question-report-reason" value="${reason.id}" ${existing?.reason === reason.id ? "checked" : ""} />
+      <span>${escapeHtml(reason.label)}</span>
+    </label>`).join("");
+  const letters = choiceLabels.map((label) => `
+    <label class="question-report-letter" title="Answer ${label}">
+      <input type="radio" name="question-report-suggested" value="${label}" ${existing?.suggested === label ? "checked" : ""} aria-label="Answer ${label}" />
+      <span>${label}</span>
+    </label>`).join("");
+  const panel = openQuestionReportOverlay(`
+    <form class="question-report-form" novalidate>
+      <header class="question-report-head">
+        <span class="question-report-badge" aria-hidden="true">${QUESTION_REPORT_ICON}</span>
+        <div>
+          <h3 id="question-report-title">${existing ? "Your report" : "Report this question"}</h3>
+          <p>Tell us what's wrong. Our team reviews every report.</p>
+        </div>
+        <button type="button" class="question-report-x" data-question-report-close aria-label="Close">×</button>
+      </header>
+      <fieldset class="question-report-fieldset">
+        <legend>What's wrong?</legend>
+        <div class="question-report-reasons">${reasonTiles}</div>
+      </fieldset>
+      ${choiceLabels.length ? `<fieldset class="question-report-fieldset question-report-suggest" ${existing?.reason === "wrong_answer" ? "" : "hidden"}>
+        <legend>Which answer do you think is right? <small>Optional</small></legend>
+        <div class="question-report-letters">${letters}</div>
+      </fieldset>` : ""}
+      <label class="question-report-note">
+        <span>Details <small>(optional)</small></span>
+        <textarea name="note" rows="3" maxlength="1000" autocomplete="off" placeholder="For example: the reference says B, page 214.">${escapeHtml(existing?.note || "")}</textarea>
+      </label>
+      <p class="question-report-followup">You'll get a notification when we've checked it.</p>
+      <p class="question-report-error" role="alert" hidden></p>
+      <div class="question-report-actions">
+        ${existing ? `<button type="button" class="btn ghost question-report-withdraw" data-question-report-withdraw>Withdraw my report</button>` : ""}
+        <button type="button" class="btn ghost" data-question-report-close>Cancel</button>
+        <button type="submit" class="btn" data-question-report-send ${existing ? "" : "disabled"}>${existing ? "Update report" : "Send report"}</button>
+      </div>
+    </form>`, { opener });
+
+  const form = panel.querySelector("form");
+  const send = form.querySelector("[data-question-report-send]");
+  const suggest = form.querySelector(".question-report-suggest");
+  const errorEl = form.querySelector(".question-report-error");
+  const showError = (message) => {
+    errorEl.textContent = message;
+    errorEl.hidden = !message;
+  };
+  form.querySelectorAll("input[name='question-report-reason']").forEach((input) => {
+    input.addEventListener("change", () => {
+      send.disabled = false;
+      if (suggest) {
+        suggest.hidden = input.value !== "wrong_answer";
+      }
+    });
+  });
+  // A second click on the chosen letter clears it: the answer is optional.
+  form.querySelectorAll("input[name='question-report-suggested']").forEach((input) => {
+    input.addEventListener("click", () => {
+      if (input.dataset.wasChecked === "true") {
+        input.checked = false;
+      }
+      form.querySelectorAll("input[name='question-report-suggested']").forEach((other) => {
+        other.dataset.wasChecked = String(other.checked);
+      });
+    });
+    input.dataset.wasChecked = String(input.checked);
+  });
+  (form.querySelector("input[name='question-report-reason']:checked") || form.querySelector("input[name='question-report-reason']"))?.focus();
+
+  const setBusy = (busy) => {
+    form.querySelectorAll("button, input, textarea").forEach((element) => {
+      if (!element.hasAttribute("data-question-report-close")) {
+        element.disabled = busy;
+      }
+    });
+    send.classList.toggle("is-loading", busy);
+  };
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const reason = form.querySelector("input[name='question-report-reason']:checked")?.value || "";
+    if (!reason) {
+      showError("Choose what's wrong first.");
+      return;
+    }
+    const suggested = reason === "wrong_answer"
+      ? (form.querySelector("input[name='question-report-suggested']:checked")?.value || "")
+      : "";
+    const note = String(form.querySelector("textarea[name='note']")?.value || "").trim();
+    const client = getRelationalClient();
+    if (!client) {
+      showError("You're offline. Try again when you're connected.");
+      return;
+    }
+    showError("");
+    setBusy(true);
+    try {
+      const { error } = await client.rpc("report_question", {
+        p_question_id: questionId,
+        p_reason: reason,
+        p_note: note || null,
+        p_suggested_choice_label: suggested || null,
+        p_source: "website",
+      });
+      if (error) {
+        throw error;
+      }
+      state.myQuestionReports = { ...(state.myQuestionReports || {}), [questionId]: { reason, note, suggested } };
+      closeQuestionReportDialog();
+      toast(existing ? "Your report was updated." : "Thanks — we'll review this question.");
+      state.skipNextRouteAnimation = true;
+      render();
+    } catch (error) {
+      setBusy(false);
+      showError(error?.hint === "rate_limited"
+        ? "You've sent a lot of reports today. Please try again tomorrow."
+        : String(error?.message || "The report could not be sent. Try again."));
+    }
+  });
+
+  form.querySelector("[data-question-report-withdraw]")?.addEventListener("click", async () => {
+    const client = getRelationalClient();
+    const userId = client ? await getQuestionReportUserId(client) : "";
+    if (!client || !userId) {
+      showError("You're offline. Try again when you're connected.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await client
+        .from("question_reports")
+        .delete()
+        .eq("question_id", questionId)
+        .eq("reporter_id", userId)
+        .eq("status", "open");
+      if (error) {
+        throw error;
+      }
+      const next = { ...(state.myQuestionReports || {}) };
+      delete next[questionId];
+      state.myQuestionReports = next;
+      closeQuestionReportDialog();
+      toast("Your report was withdrawn.");
+      state.skipNextRouteAnimation = true;
+      render();
+    } catch (error) {
+      setBusy(false);
+      showError(String(error?.message || "Could not withdraw the report."));
+    }
+  });
+}
+
+// One listener for every "Report a problem" link, wherever it is drawn, in
+// the capture phase so the exam's own click handling never sees the click.
+document.addEventListener("click", (event) => {
+  const trigger = event.target?.closest?.("[data-report-question]");
+  if (!trigger) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  openQuestionReportDialog(
+    String(trigger.getAttribute("data-report-question") || "").trim(),
+    trigger.getAttribute("data-report-labels"),
+    trigger,
+  );
+}, true);
+
+// ── Admin side ──
+
+function getAdminQuestionReportsState() {
+  if (!state.adminQuestionReports) {
+    state.adminQuestionReports = {
+      closed: false,
+      level: "",
+      page: null,
+      loading: false,
+      error: "",
+      loadedKey: "",
+      summary: null,
+      summaryLoading: false,
+      summaryLoadedAt: 0,
+    };
+  }
+  return state.adminQuestionReports;
+}
+
+function refreshAdminQuestionReportsView() {
+  if (state.route === "admin" && (state.adminPage === "question-reports" || state.adminPage === "dashboard")) {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+// Open counts per level, for the dashboard, the sidebar badge and the page's
+// filters. A minute old is fresh enough for a badge.
+function ensureAdminQuestionReportSummary(options = {}) {
+  const reports = getAdminQuestionReportsState();
+  if (!canAdminAccessPage(getCurrentAdminAccess(), "question-reports")) {
+    return;
+  }
+  if (reports.summaryLoading || (!options.force && reports.summaryLoadedAt && Date.now() - reports.summaryLoadedAt < 60000)) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return;
+  }
+  reports.summaryLoading = true;
+  runRelationalQueryWithTimeout(client.rpc("admin_question_report_summary"), "Question report counts timed out.")
+    .then((summary) => {
+      reports.summary = summary || null;
+    })
+    .catch((error) => {
+      console.warn("Question report counts unavailable.", error?.message || error);
+    })
+    .finally(() => {
+      reports.summaryLoading = false;
+      reports.summaryLoadedAt = Date.now();
+      refreshAdminQuestionReportsView();
+    });
+}
+
+function loadAdminQuestionReports(options = {}) {
+  const reports = getAdminQuestionReportsState();
+  const key = `${reports.closed ? "closed" : "open"}:${reports.closed ? "" : reports.level}`;
+  if (!options.force && (reports.loading || (reports.loadedKey === key && (reports.page || reports.error)))) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    reports.error = "Reports could not be loaded. Check your connection and try again.";
+    return;
+  }
+  reports.loading = true;
+  reports.error = "";
+  reports.loadedKey = key;
+  runRelationalQueryWithTimeout(
+    client.rpc("admin_question_report_queue", {
+      p_status: reports.closed ? "closed" : "open",
+      p_level: reports.closed ? null : (reports.level || null),
+      p_limit: 50,
+      p_offset: 0,
+    }),
+    "Question reports timed out.",
+  )
+    .then((page) => {
+      reports.page = page || { total: 0, items: [] };
+    })
+    .catch((error) => {
+      console.warn("Question reports could not be loaded.", error?.message || error);
+      // The key stays recorded, so a failing query is not retried on every
+      // render; Reload (force) tries again.
+      reports.page = null;
+      reports.error = String(error?.message || "Reports could not be loaded.");
+    })
+    .finally(() => {
+      reports.loading = false;
+      refreshAdminQuestionReportsView();
+    });
+}
+
+function formatQuestionReportDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+// The answer most reporters suggest, when it is not the key.
+function getQuestionReportLeadingSuggestion(item) {
+  const key = Array.isArray(item?.correct_labels) ? item.correct_labels : [];
+  const entries = Object.entries(item?.suggested_labels || {})
+    .filter(([label]) => !key.includes(label))
+    .sort((a, b) => Number(b[1]) - Number(a[1]));
+  return entries.length ? { label: entries[0][0], count: Number(entries[0][1]) || 0 } : null;
+}
+
+function renderQuestionReportAgreement(item) {
+  const suggestion = getQuestionReportLeadingSuggestion(item);
+  if (!suggestion || suggestion.count < 2) {
+    return "";
+  }
+  const key = (item.correct_labels || []).join(", ");
+  return `<p class="question-report-agreement">
+    <b>${escapeHtml(String(suggestion.count))} students</b> say the answer is <b>${escapeHtml(suggestion.label)}</b>${key ? ` — the key says <b>${escapeHtml(key)}</b>` : ""}
+  </p>`;
+}
+
+function renderQuestionReportShare(item) {
+  const reporters = Number(item?.reporters) || 0;
+  const answerers = Number(item?.answerers) || 0;
+  if (!answerers) {
+    return `<div class="question-report-share"><span class="question-report-share-track"><span style="width:0%"></span></span><small>No answers recorded yet</small></div>`;
+  }
+  const share = Math.min(1, reporters / answerers);
+  // The bar is full at 20%: by then a question is urgent whatever its size.
+  const width = Math.max(4, Math.min(100, (share / 0.2) * 100));
+  return `<div class="question-report-share">
+    <span class="question-report-share-track"><span style="width:${width.toFixed(1)}%"></span></span>
+    <small>${Math.round(share * 100)}% of the ${escapeHtml(String(answerers))} students who answered it</small>
+  </div>`;
+}
+
+function renderAdminQuestionReportCard(item, index, closed) {
+  const level = QUESTION_REPORT_LEVELS.some((entry) => entry.id === item.level) ? item.level : "low";
+  const levelLabel = QUESTION_REPORT_LEVELS.find((entry) => entry.id === level)?.label || "Low";
+  const reasons = Object.entries(item.reasons || {})
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map(([reason, count]) => `<span class="question-report-chip">${escapeHtml(getQuestionReportReasonLabel(reason))} · ${escapeHtml(String(count))}</span>`)
+    .join("");
+  const location = [item.course_name, item.topic_name].filter(Boolean).map((part) => escapeHtml(part)).join(" · ");
+  const statusPill = closed
+    ? `<span class="badge ${item.closed_status === "resolved" ? "good" : "neutral"}">${item.closed_status === "resolved" ? "Fixed" : "Checked · correct"}</span>`
+    : `<span class="question-report-level is-${level}">${levelLabel}</span>`;
+  const questionState = item.question_status && item.question_status !== "published"
+    ? `<span class="badge neutral">${item.question_status === "draft" ? "Now a draft" : "Deleted"}</span>`
+    : "";
+  const reporters = Number(item.reporters) || 0;
+  const when = closed && item.closed_at
+    ? `Closed ${formatQuestionReportDate(item.closed_at)}`
+    : `Last report ${formatQuestionReportDate(item.last_reported_at)}`;
+  return `<button type="button" class="question-report-card ${closed ? "is-closed" : `is-${level}`}" data-question-report-open="${escapeHtml(item.question_id)}" data-question-report-closed="${closed ? "1" : ""}">
+    <span class="question-report-card-top">
+      <span class="question-report-card-pills">${statusPill}${questionState}${!closed && index < 3 ? `<span class="question-report-rank">#${index + 1}</span>` : ""}</span>
+      <span class="question-report-count"><b>${escapeHtml(String(reporters))}</b><small>${reporters === 1 ? "student" : "students"}</small></span>
+    </span>
+    ${location ? `<span class="question-report-location">${location}</span>` : ""}
+    <span class="question-report-stem">${escapeHtml(item.stem || "")}</span>
+    ${renderQuestionReportShare(item)}
+    ${reasons ? `<span class="question-report-chips">${reasons}</span>` : ""}
+    ${renderQuestionReportAgreement(item)}
+    <span class="question-report-when">${escapeHtml(when)}</span>
+  </button>`;
+}
+
+function renderAdminQuestionReportsSection() {
+  const reports = getAdminQuestionReportsState();
+  ensureAdminQuestionReportSummary();
+  loadAdminQuestionReports();
+  const summary = reports.summary || {};
+  const openCount = Number(summary.open) || 0;
+  const tabs = `<div class="question-report-tabs" role="tablist" aria-label="Report status">
+    <button type="button" role="tab" aria-selected="${reports.closed ? "false" : "true"}" class="${reports.closed ? "" : "is-active"}" data-question-report-tab="open">Open${openCount ? ` · ${escapeHtml(String(openCount))}` : ""}</button>
+    <button type="button" role="tab" aria-selected="${reports.closed ? "true" : "false"}" class="${reports.closed ? "is-active" : ""}" data-question-report-tab="closed">Closed</button>
+  </div>`;
+  const levels = reports.closed ? "" : `<div class="question-report-levels">${QUESTION_REPORT_LEVELS.map((level) => {
+    const count = Number(summary[level.id]) || 0;
+    return `<button type="button" class="question-report-level-tile is-${level.id} ${count ? "is-live" : ""} ${reports.level === level.id ? "is-selected" : ""}" data-question-report-level="${level.id}" aria-pressed="${reports.level === level.id ? "true" : "false"}">
+      <b>${escapeHtml(String(count))}</b><span>${level.label}</span>
+    </button>`;
+  }).join("")}</div>`;
+  const items = Array.isArray(reports.page?.items) ? reports.page.items : [];
+  let body;
+  if (!reports.page && !reports.error) {
+    body = `<p class="subtle question-report-empty">Loading reports…</p>`;
+  } else if (reports.error) {
+    body = `<div class="admin-popup-notice" role="status">${escapeHtml(reports.error)}</div>`;
+  } else if (!items.length) {
+    body = `<div class="question-report-empty">
+      <b>${reports.closed ? "No reports closed in the last 60 days" : reports.level ? "Nothing at this level" : "No open reports"}</b>
+      ${reports.closed ? "" : `<p class="subtle">When students report a question it shows up here, loudest first.</p>`}
+    </div>`;
+  } else {
+    const total = Number(reports.page?.total) || items.length;
+    body = `<div class="question-report-list">${items.map((item, index) => renderAdminQuestionReportCard(item, index, reports.closed)).join("")}</div>
+      ${total > items.length ? `<p class="subtle question-report-more">Showing ${items.length} of ${total}</p>` : ""}`;
+  }
+  const pageHeader = renderAdminPageHeader({
+    id: "question-reports",
+    title: "Question reports",
+    count: openCount,
+    actions: renderAdminIconButton({
+      icon: "refresh",
+      label: "Reload reports",
+      attrs: "data-question-report-refresh",
+      busy: Boolean(reports.loading),
+    }),
+    notes: [
+      "Students report questions they think are wrong, from the app and the website.",
+      "The more students agree, the higher a question goes: <b>Urgent</b> is 10 or more students, or 10% of the students who answered it (with at least 3).",
+      "Each student counts once per question. Marking a question fixed or correct closes its reports and tells every student who reported it.",
+    ],
+  });
+  return `<section class="card admin-section" id="admin-question-reports-section">
+    ${pageHeader}
+    ${tabs}
+    ${levels}
+    ${body}
+  </section>`;
+}
+
+function wireAdminQuestionReports() {
+  const section = appEl.querySelector("#admin-question-reports-section");
+  if (!section) {
+    return;
+  }
+  const reports = getAdminQuestionReportsState();
+  section.querySelector("[data-question-report-refresh]")?.addEventListener("click", () => {
+    ensureAdminQuestionReportSummary({ force: true });
+    loadAdminQuestionReports({ force: true });
+    refreshAdminQuestionReportsView();
+  });
+  section.querySelectorAll("[data-question-report-tab]").forEach((tab) => tab.addEventListener("click", () => {
+    reports.closed = tab.getAttribute("data-question-report-tab") === "closed";
+    reports.page = null;
+    refreshAdminQuestionReportsView();
+  }));
+  section.querySelectorAll("[data-question-report-level]").forEach((tile) => tile.addEventListener("click", () => {
+    const level = String(tile.getAttribute("data-question-report-level") || "");
+    reports.level = reports.level === level ? "" : level;
+    reports.page = null;
+    refreshAdminQuestionReportsView();
+  }));
+  section.querySelectorAll("[data-question-report-open]").forEach((card) => card.addEventListener("click", () => {
+    const questionId = String(card.getAttribute("data-question-report-open") || "");
+    const item = (reports.page?.items || []).find((entry) => entry.question_id === questionId) || null;
+    openAdminQuestionReportDetail(questionId, item, card.getAttribute("data-question-report-closed") === "1", card);
+  }));
+}
+
+async function openAdminQuestionReportDetail(questionId, item, closed, opener) {
+  const client = getRelationalClient();
+  if (!client) {
+    toast("Reports could not be loaded. Check your connection and try again.");
+    return;
+  }
+  const canEdit = adminAccessCan(getCurrentAdminAccess(), "mcq.questions_edit");
+  const panel = openQuestionReportOverlay(`
+    <header class="question-report-head">
+      <span class="question-report-badge" aria-hidden="true">${QUESTION_REPORT_ICON}</span>
+      <div>
+        <h3 id="question-report-title">Reported question</h3>
+        <p>${item ? `${escapeHtml(String(item.reporters))} ${Number(item.reporters) === 1 ? "student" : "students"} reported this` : "Loading…"}</p>
+      </div>
+      <button type="button" class="question-report-x" data-question-report-close aria-label="Close">×</button>
+    </header>
+    <div class="question-report-detail-body"><p class="subtle">Loading…</p></div>`, { opener, wide: true });
+  try {
+    const [question, entries] = await Promise.all([
+      runRelationalQueryWithTimeout(
+        client
+          .from("questions")
+          .select("id, stem, explanation, question_choices(choice_label, choice_text, is_correct)")
+          .eq("id", questionId)
+          .maybeSingle(),
+        "The question could not be loaded.",
+      ),
+      runRelationalQueryWithTimeout(
+        client.rpc("admin_question_report_details", { p_question_id: questionId, p_status: closed ? "closed" : "open" }),
+        "The reports could not be loaded.",
+      ),
+    ]);
+    if (!document.contains(panel)) {
+      return;
+    }
+    const suggestions = item?.suggested_labels || {};
+    const choices = [...(question?.question_choices || [])]
+      .sort((a, b) => String(a.choice_label).localeCompare(String(b.choice_label)))
+      .map((choice) => {
+        const count = Number(suggestions[choice.choice_label]) || 0;
+        return `<li class="${choice.is_correct ? "is-correct" : ""}">
+          <b>${escapeHtml(normalizeQuestionChoiceLabel(choice.choice_label))}</b>
+          <span>${escapeHtml(choice.choice_text || "")}</span>
+          ${count && !choice.is_correct ? `<span class="question-report-chip is-warn">${escapeHtml(String(count))} say this</span>` : ""}
+          ${choice.is_correct ? `<span class="question-report-key">Key</span>` : ""}
+        </li>`;
+      }).join("");
+    const reportRows = (Array.isArray(entries) ? entries : []).map((entry) => `
+      <li class="question-report-entry">
+        <div class="question-report-entry-head">
+          <b>${escapeHtml(entry.reporter_name || "Student")}</b>
+          ${entry.reporter_public_id ? `<small>ID ${escapeHtml(String(entry.reporter_public_id))}</small>` : ""}
+          <span class="question-report-chip">${escapeHtml(getQuestionReportReasonLabel(entry.reason))}</span>
+          ${entry.suggested_choice_label ? `<span class="question-report-chip is-warn">Says ${escapeHtml(entry.suggested_choice_label)}</span>` : ""}
+        </div>
+        ${entry.note ? `<p class="question-report-entry-note">${escapeHtml(entry.note)}</p>` : ""}
+        <small class="subtle">${entry.source === "website" ? "Website" : "App"} · ${escapeHtml(formatQuestionReportDate(entry.created_at))}</small>
+      </li>`).join("");
+    const open = !closed && Array.isArray(entries) && entries.length > 0;
+    panel.querySelector(".question-report-detail-body").innerHTML = `
+      ${item ? `<div class="question-report-summary is-${escapeHtml(item.level || "low")}">
+        ${renderQuestionReportShare(item)}
+        ${renderQuestionReportAgreement(item)}
+      </div>` : ""}
+      <article class="question-report-question">
+        <p class="question-report-question-stem">${escapeHtml(question?.stem || "This question was deleted.")}</p>
+        ${choices ? `<ol class="question-report-choices">${choices}</ol>` : ""}
+        ${question?.explanation ? `<details><summary>Explanation</summary><p>${escapeHtml(question.explanation)}</p></details>` : ""}
+      </article>
+      <h4 class="question-report-subhead">What students said (${escapeHtml(String((entries || []).length))})</h4>
+      <ul class="question-report-entries">${reportRows || `<li class="subtle">No reports on this question.</li>`}</ul>
+      ${open && canEdit ? `<form class="question-report-close-form" novalidate>
+        <label class="question-report-note">
+          <span>Note to students <small>(optional — sent with their notification)</small></span>
+          <textarea name="resolution" rows="2" maxlength="1000" autocomplete="off" placeholder="For example: the key is now B."></textarea>
+        </label>
+        <div class="question-report-actions">
+          <button type="button" class="btn ghost" data-question-report-edit>Edit question</button>
+          <button type="button" class="btn ghost" data-question-report-decide="dismissed">It's correct</button>
+          <button type="button" class="btn" data-question-report-decide="resolved">Mark fixed</button>
+        </div>
+      </form>` : ""}`;
+    wireAdminQuestionReportDecision(panel, questionId, (entries || []).length);
+  } catch (error) {
+    if (document.contains(panel)) {
+      panel.querySelector(".question-report-detail-body").innerHTML = `<div class="admin-popup-notice" role="status">${escapeHtml(String(error?.message || "The reports could not be loaded."))}</div>`;
+    }
+  }
+}
+
+function wireAdminQuestionReportDecision(panel, questionId, count) {
+  const form = panel.querySelector(".question-report-close-form");
+  if (!form) {
+    return;
+  }
+  form.querySelector("[data-question-report-edit]")?.addEventListener("click", () => {
+    const local = getQuestions().find((entry) => String(entry?.dbId || "").trim() === questionId);
+    closeQuestionReportDialog();
+    const previousPage = state.adminPage;
+    state.adminPage = "questions";
+    if (local) {
+      const meta = getQbankCourseTopicMeta(local);
+      state.adminEditQuestionId = local.id;
+      state.adminEditorCourse = meta?.course || state.adminEditorCourse;
+      state.adminEditorTopic = meta?.topic || state.adminEditorTopic;
+      state.adminQuestionModalOpen = true;
+    } else {
+      toast("Find the question in Questions to edit it.");
+    }
+    applyAdminPageTransition(previousPage, "questions");
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+  form.querySelectorAll("[data-question-report-decide]").forEach((button) => button.addEventListener("click", async () => {
+    const outcome = button.getAttribute("data-question-report-decide");
+    const fixed = outcome === "resolved";
+    const confirmText = fixed
+      ? `Mark as fixed? ${count === 1 ? "The student who reported it" : `The ${count} students who reported it`} will get a notification that it's fixed.`
+      : `Keep the question as it is? ${count === 1 ? "The student who reported it" : `The ${count} students who reported it`} will be told it was checked and is correct.`;
+    if (!window.confirm(confirmText)) {
+      return;
+    }
+    const client = getRelationalClient();
+    if (!client) {
+      toast("You're offline. Try again when you're connected.");
+      return;
+    }
+    form.querySelectorAll("button, textarea").forEach((element) => {
+      element.disabled = true;
+    });
+    button.classList.add("is-loading");
+    try {
+      const { error } = await client.rpc("admin_close_question_reports", {
+        p_question_id: questionId,
+        p_status: outcome,
+        p_note: String(form.querySelector("textarea[name='resolution']")?.value || "").trim() || null,
+      });
+      if (error) {
+        throw error;
+      }
+      closeQuestionReportDialog();
+      toast(fixed ? "Reports closed. The students were told it's fixed." : "Reports closed. The students were told it's correct.");
+      ensureAdminQuestionReportSummary({ force: true });
+      loadAdminQuestionReports({ force: true });
+      refreshAdminQuestionReportsView();
+    } catch (error) {
+      form.querySelectorAll("button, textarea").forEach((element) => {
+        element.disabled = false;
+      });
+      button.classList.remove("is-loading");
+      toast(String(error?.message || "The reports could not be closed."));
+    }
+  }));
 }
 
 window.__MCQ_ON_GSAP_READY__ = handleGsapReadyForCurrentRoute;

@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-23 — Students can report wrong questions
+- "Report a problem" under every MCQ (exam and review): pick what's wrong,
+  optionally the answer you think is right, and a note.
+- Admin → Question reports: questions ranked by how many students agree
+  (Urgent / High / Watch / Low), with what they said and "Mark fixed" /
+  "It's correct". Students are notified either way.
+
 ### 2026-10-21 — Pop-ups can open a website
 - Admin → Pop-ups: new "Website (external link)" destination with an https
   link field, plus "Join organization". The app opens the link in the browser
