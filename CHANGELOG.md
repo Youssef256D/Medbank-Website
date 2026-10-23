@@ -9,6 +9,19 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-24 — Admin loads questions one course at a time
+- Admin → Questions loads only the subject on screen (at most ~3,100
+  questions) instead of the whole 23,000-question bank; it reloads after
+  3 minutes, and Bulk import no longer downloads anything.
+- A course that fails to load says so on the page, with Retry, instead of
+  quietly showing an old copy. Students see the same notice on Create Test
+  when their download failed and an older copy is in use.
+- The student download pages by question id (`get_question_catalog_page_after`),
+  so questions imported mid-download are no longer skipped or doubled.
+- Saving keeps each question's own position; new questions go after the
+  highest position in the bank, so they land at the end of their course.
+  Reordering only rewrites the moved questions.
+
 ### 2026-10-23 — Admin catches up with the app
 - Question editor: "N students reported this question" banner, and after
   saving a reported question an offer to mark its reports fixed (with an

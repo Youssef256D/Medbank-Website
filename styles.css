@@ -25252,6 +25252,25 @@ body.theme-dark .question-report-question summary { color: var(--ink); }
 .question-report-editor-banner-text { flex: 1 1 auto; min-width: 0; font-weight: 600; }
 .question-report-editor-banner-view { flex: 0 0 auto; font-weight: 800; }
 
+/* A question download that failed: admin Questions page and student Create
+   Test (main.js renderQuestionLoadNotice). */
+.question-load-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.9rem;
+  margin-block: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface-strong));
+  color: var(--ink);
+}
+.question-load-notice-copy { flex: 1 1 16rem; min-width: 0; }
+.question-load-notice-text { margin: 0; font-weight: 600; }
+.question-load-notice-detail { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.question-load-notice .btn { flex: 0 0 auto; }
+
 /* Dashboard: urgent question reports lead the page. */
 .admin-dash-urgent-reports {
   display: flex;

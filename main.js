@@ -387,6 +387,8 @@ const RELATIONAL_DELETE_BATCH_SIZE = 250;
 const QUESTION_RELATIONAL_TIMEOUT_MS = Math.max(SUPABASE_QUERY_TIMEOUT_MS, 30000);
 const STUDENT_AUTH_CONTENT_WARMUP_TIMEOUT_MS = Math.max(QUESTION_RELATIONAL_TIMEOUT_MS, SUPABASE_QUERY_TIMEOUT_MS, 15000) + 5000;
 const QUESTION_RELATIONAL_PAGE_SIZE = 1000;
+const QUESTION_HYDRATION_BUSY_MESSAGE = "Saving your changes first.";
+const ADMIN_COURSE_QUESTION_BUSY_RETRY_MS = 2000;
 const QUESTION_CHOICE_RELATIONAL_PAGE_SIZE = 1000;
 const QUESTION_RELATIONAL_BATCH_SIZE = 100;
 const STUDENT_NON_CRITICAL_HYDRATION_DELAY_MS = 250;
@@ -1464,7 +1466,12 @@ let studentBootRefreshKey = "";
 let studentNonCriticalHydrationTimer = null;
 let studentNonCriticalHydrationKey = "";
 let studentNonCriticalHydrationInFlight = false;
-let adminQuestionsLastHydratedAt = 0;
+// Admin Questions page: what this browser has loaded, per course (keyed by
+// normalizeAdminQuestionFilterToken): { status: "loading" | "loaded" |
+// "failed", loadedAt, error }. Only the course on screen is ever fetched.
+const adminCourseQuestionLoads = new Map();
+const adminCourseQuestionLoadPromises = new Map();
+let lastQuestionHydrationError = "";
 let adminQuestionCountSnapshotRequestSeq = 0;
 let adminImportHistoryRequestSeq = 0;
 const presenceRuntime = {
@@ -10882,11 +10889,8 @@ async function hydrateRelationalState(user) {
   }
   await Promise.all(baseHydrationTasks);
 
-  const activeAdminPage = String(state.adminPage || "").trim();
-  const shouldHydrateQuestionRows = current?.role !== "admin"
-    || activeAdminPage === "questions"
-    || activeAdminPage === "bulk-import";
-  if (!hasPendingQuestionWrites && shouldHydrateQuestionRows) {
+  // Admins load questions one course at a time on the Questions page.
+  if (!hasPendingQuestionWrites && current?.role !== "admin") {
     await hydrateRelationalQuestions();
   }
   if (!hasPendingSessionWrites) {
@@ -11642,12 +11646,153 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
   syncUsersWithCurriculum();
 }
 
-async function hydrateRelationalQuestions() {
+// Pages by the last row's id rather than an offset. Offset pages are counted
+// at the moment each one is read, so a question imported or re-sorted while
+// the bank downloads shifted rows across pages: some came twice, some never.
+async function fetchRowsByKeyset(fetchPage, options = {}) {
+  const pageSize = Math.max(1, Number(options?.pageSize) || 1000);
+  const timeoutMs = Math.max(1, Number(options?.timeoutMs) || SUPABASE_QUERY_TIMEOUT_MS);
+  const timeoutMessage = String(options?.timeoutMessage || "Supabase query timed out.").trim() || "Supabase query timed out.";
+  const rows = [];
+  let afterId = null;
+  while (true) {
+    const { data, error } = await runWithTimeoutResult(fetchPage(afterId, pageSize), timeoutMs, timeoutMessage);
+    if (error) {
+      return { data: null, error };
+    }
+    const page = Array.isArray(data) ? data : [];
+    rows.push(...page);
+    if (page.length < pageSize) {
+      return { data: rows, error: null };
+    }
+    const lastId = String(page[page.length - 1]?.id || "");
+    if (!lastId || (afterId !== null && lastId <= afterId)) {
+      return { data: null, error: new Error("Question pages stopped advancing.") };
+    }
+    afterId = lastId;
+  }
+}
+
+// One course's questions, choices included, for the admin Questions page.
+// Rows come back in the catalog RPC's shape so the same mapping reads both.
+async function fetchAdminCourseQuestionRows(client, courseName, columnSupport) {
+  const coursesResult = await runWithTimeoutResult(
+    client.from("courses").select("id,course_name").eq("course_name", courseName),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Course lookup timed out.",
+  );
+  if (coursesResult.error) {
+    return { data: null, error: coursesResult.error };
+  }
+  const courseIds = (Array.isArray(coursesResult.data) ? coursesResult.data : [])
+    .map((course) => String(course?.id || "").trim())
+    .filter(isUuidValue);
+  if (!courseIds.length) {
+    return { data: [], error: null };
+  }
+  const columns = [
+    "id",
+    "external_id",
+    "course_id",
+    "topic_id",
+    "author_id",
+    "stem",
+    "explanation",
+    "objective",
+    "difficulty",
+    "status",
+    "created_at",
+    ...(columnSupport?.sortOrder ? ["sort_order"] : []),
+    ...(columnSupport?.questionImageUrl ? ["question_image_url"] : []),
+    ...(columnSupport?.explanationImageUrl ? ["explanation_image_url"] : []),
+    "choices:question_choices(question_id,choice_label,choice_text,is_correct)",
+  ].join(",");
+  const result = await fetchRowsByKeyset((afterId, limit) => {
+    let query = client.from("questions").select(columns).in("course_id", courseIds);
+    if (afterId) {
+      query = query.gt("id", afterId);
+    }
+    return query.order("id", { ascending: true }).limit(limit);
+  }, {
+    pageSize: QUESTION_RELATIONAL_PAGE_SIZE,
+    timeoutMs: QUESTION_RELATIONAL_TIMEOUT_MS,
+    timeoutMessage: "Question hydration timed out.",
+  });
+  if (result.error) {
+    return result;
+  }
+  return {
+    data: result.data.map((row) => ({ ...row, course_name: courseName })),
+    error: null,
+  };
+}
+
+function compareQuestionsBySortOrder(a, b) {
+  const aSort = normalizeQuestionSortOrder(a?.sortOrder);
+  const bSort = normalizeQuestionSortOrder(b?.sortOrder);
+  if (aSort !== null && bSort !== null && aSort !== bSort) return aSort - bSort;
+  if (aSort !== null && bSort === null) return -1;
+  if (aSort === null && bSort !== null) return 1;
+  return String(a?.dateAdded || "").localeCompare(String(b?.dateAdded || ""))
+    || String(a?.id || "").localeCompare(String(b?.id || ""));
+}
+
+// Replaces one course's questions in the local copy with the server's, and
+// leaves every other course exactly as it was. A local question of this
+// course the server no longer has is dropped (deleted or moved elsewhere),
+// unless it never reached the server: that one is a new question still
+// saving. A question the server has now in this course replaces its local
+// copy wherever that copy was filed.
+function mergeCourseScopedQuestions(localQuestions, remoteQuestions, options = {}) {
+  const courseKey = String(options?.courseKey || "");
+  const pendingDeletionIds = new Set(Array.isArray(options?.pendingDeletionIds) ? options.pendingDeletionIds : []);
+  const remote = Array.isArray(remoteQuestions) ? remoteQuestions : [];
+  const remoteExternalIds = new Set(remote.map((question) => String(question?.id || "").trim()).filter(Boolean));
+  const remoteDbIds = new Set(remote.map((question) => String(question?.dbId || "").trim()).filter(isUuidValue));
+  const kept = [];
+  const unsynced = [];
+  const replacedExternalIds = [];
+  (Array.isArray(localQuestions) ? localQuestions : []).forEach((question) => {
+    const externalId = String(question?.id || "").trim();
+    const dbId = String(question?.dbId || "").trim();
+    if (remoteExternalIds.has(externalId) || (isUuidValue(dbId) && remoteDbIds.has(dbId))) {
+      replacedExternalIds.push(externalId);
+      return;
+    }
+    if (normalizeAdminQuestionFilterToken(getQbankCourseTopicMeta(question).course) !== courseKey) {
+      kept.push(question);
+      return;
+    }
+    replacedExternalIds.push(externalId);
+    if (
+      isUuidValue(dbId)
+      || !String(question?.stem || "").trim()
+      || toRelationalQuestionStatus(question?.status) === "archived"
+      || pendingDeletionIds.has(externalId)
+    ) {
+      return;
+    }
+    unsynced.push(question);
+  });
+  const scoped = [...remote].sort(compareQuestionsBySortOrder);
+  return {
+    questions: [...kept, ...scoped, ...unsynced],
+    replacedExternalIds: replacedExternalIds.filter(Boolean),
+    scopeCount: scoped.length + unsynced.length,
+  };
+}
+
+async function hydrateRelationalQuestions(options = {}) {
   const client = getRelationalClient();
   if (!client || !relationalSync.enabled) {
     return false;
   }
 
+  // Admins load one course at a time (the Questions page); students load
+  // every question they can read, which Create Test needs all of.
+  const scopeCourseName = String(options?.courseName || "").trim();
+  const scopeCourseKey = scopeCourseName ? normalizeAdminQuestionFilterToken(scopeCourseName) : "";
+  lastQuestionHydrationError = "";
   const users = getUsers();
   const localQuestionsBefore = getQuestions();
   const localQuestionOrderByExternalId = new Map(
@@ -11706,8 +11851,11 @@ async function hydrateRelationalQuestions() {
       .range(from, to);
   };
 
+  // Every catalog source but the oldest direct-table read returns choices
+  // embedded in the row; `useResilientCatalogRpc` stays true for those.
   let useResilientCatalogRpc = true;
   let useFastCatalogRpc = true;
+  let catalogSource = scopeCourseKey ? "admin_course_tables" : "keyset_catalog_rpc";
   const fetchQuestionsPage = (from, to) => (
     useResilientCatalogRpc
       ? client.rpc("get_accessible_question_catalog_page", {
@@ -11722,15 +11870,32 @@ async function hydrateRelationalQuestions() {
       : buildQuestionsQuery(from, to)
   );
 
-  let questionsResult = await fetchRowsPaged(
-    fetchQuestionsPage,
-    {
-      pageSize: QUESTION_RELATIONAL_PAGE_SIZE,
-      timeoutMs: QUESTION_RELATIONAL_TIMEOUT_MS,
-      timeoutMessage: "Question hydration timed out.",
-    },
-  );
-  if (questionsResult.error && useResilientCatalogRpc && isMissingRpcFunctionError(questionsResult.error)) {
+  let questionsResult = scopeCourseKey
+    ? await fetchAdminCourseQuestionRows(client, scopeCourseName, questionColumnSupport)
+    : await fetchRowsByKeyset(
+      (afterId, limit) => client.rpc("get_question_catalog_page_after", {
+        after_id: afterId,
+        requested_limit: limit,
+      }),
+      {
+        pageSize: QUESTION_RELATIONAL_PAGE_SIZE,
+        timeoutMs: QUESTION_RELATIONAL_TIMEOUT_MS,
+        timeoutMessage: "Question hydration timed out.",
+      },
+    );
+  if (!scopeCourseKey && questionsResult.error && isMissingRpcFunctionError(questionsResult.error)) {
+    catalogSource = "resilient_catalog_rpc";
+    questionsResult = await fetchRowsPaged(
+      fetchQuestionsPage,
+      {
+        pageSize: QUESTION_RELATIONAL_PAGE_SIZE,
+        timeoutMs: QUESTION_RELATIONAL_TIMEOUT_MS,
+        timeoutMessage: "Question hydration timed out.",
+      },
+    );
+  }
+  if (!scopeCourseKey && questionsResult.error && useResilientCatalogRpc && isMissingRpcFunctionError(questionsResult.error)) {
+    catalogSource = "fast_catalog_rpc";
     useResilientCatalogRpc = false;
     questionsResult = await fetchRowsPaged(
       fetchQuestionsPage,
@@ -11741,7 +11906,8 @@ async function hydrateRelationalQuestions() {
       },
     );
   }
-  if (questionsResult.error && useFastCatalogRpc && isMissingRpcFunctionError(questionsResult.error)) {
+  if (!scopeCourseKey && questionsResult.error && useFastCatalogRpc && isMissingRpcFunctionError(questionsResult.error)) {
+    catalogSource = "direct_tables";
     useFastCatalogRpc = false;
     questionsResult = await fetchRowsPaged(
       fetchQuestionsPage,
@@ -11754,13 +11920,21 @@ async function hydrateRelationalQuestions() {
   }
   if (questionsResult.error) {
     console.warn("Could not hydrate relational questions.", questionsResult.error?.message || questionsResult.error);
+    lastQuestionHydrationError = String(questionsResult.error?.message || "Could not load questions.");
     return finishStudentQuestionRead(false, {
       message: questionsResult.error?.message || "Could not hydrate relational questions.",
-      source: useResilientCatalogRpc ? "resilient_catalog_rpc" : useFastCatalogRpc ? "fast_catalog_rpc" : "direct_tables",
+      source: catalogSource,
     });
   }
+  // A save that started while the rows were downloading is newer than they
+  // are; merging now would put the old version back on screen. The caller
+  // loads again once the save is through.
+  if (scopeCourseKey && (isRelationalStorageKeyBusy(STORAGE_KEYS.questions) || isQuestionSyncBusy())) {
+    lastQuestionHydrationError = QUESTION_HYDRATION_BUSY_MESSAGE;
+    return false;
+  }
   const remoteQuestionRows = Array.isArray(questionsResult.data) ? questionsResult.data : [];
-  if (!remoteQuestionRows.length) {
+  if (!remoteQuestionRows.length && !scopeCourseKey) {
     const hasLocalQuestions = localQuestionsBefore.some((question) => String(question?.stem || "").trim());
     if (
       currentUser?.role === "admin" &&
@@ -12038,6 +12212,49 @@ async function hydrateRelationalQuestions() {
     return String(a?.id || "").localeCompare(String(b?.id || ""));
   });
 
+  const rememberSyncedQuestionSignatures = (question) => {
+    const externalId = String(question?.id || "").trim();
+    if (!externalId || !isUuidValue(question?.dbId)) {
+      return;
+    }
+    relationalSync.questionRowSignaturesByExternalId.set(
+      externalId,
+      buildQuestionRowSyncSignature(question, {
+        columnSupport: questionColumnSupport,
+      }),
+    );
+    const choiceSignature = buildQuestionChoiceSyncSignatureFromQuestion(question, question.dbId);
+    if (choiceSignature && !hasOnlyQuestionChoicePlaceholders(question?.choices)) {
+      relationalSync.questionChoiceSignaturesByExternalId.set(externalId, choiceSignature);
+    }
+  };
+
+  if (scopeCourseKey) {
+    // One course: swap it in and touch nothing else. Positions stay the
+    // server's (no renumbering), so other courses' rows do not look edited,
+    // and no topic repair runs: a read never writes on a partial copy.
+    const merged = mergeCourseScopedQuestions(localQuestionsBefore, mappedQuestions, {
+      courseKey: scopeCourseKey,
+      pendingDeletionIds: getPendingQuestionDeletions(),
+    });
+    merged.replacedExternalIds.forEach((externalId) => {
+      relationalSync.questionRowSignaturesByExternalId.delete(externalId);
+      relationalSync.questionChoiceSignaturesByExternalId.delete(externalId);
+    });
+    mappedQuestions.forEach(rememberSyncedQuestionSignatures);
+    if (getSyncPayloadSignature(localQuestionsBefore) !== getSyncPayloadSignature(merged.questions)) {
+      saveLocalOnly(STORAGE_KEYS.questions, merged.questions, { audit: false });
+    }
+    if (needsChoiceRepairSync && currentUser?.role === "admin") {
+      if (scheduleRelationalWrite(STORAGE_KEYS.questions, merged.questions)) {
+        flushPendingSyncNow({ throwOnRelationalFailure: false }).catch((syncError) => {
+          console.warn("Could not repair remote question choices from local cache.", syncError?.message || syncError);
+        });
+      }
+    }
+    return true;
+  }
+
   const remoteExternalIdSet = new Set(
     mappedQuestions
       .map((question) => String(question?.id || "").trim())
@@ -12116,19 +12333,8 @@ async function hydrateRelationalQuestions() {
   relationalSync.questionRowSignaturesByExternalId.clear();
   relationalSync.questionChoiceSignaturesByExternalId.clear();
   normalizedMappedQuestions.forEach((question) => {
-    const externalId = String(question?.id || "").trim();
-    if (!externalId || !hydratedRemoteQuestionIds.has(externalId) || !isUuidValue(question?.dbId)) {
-      return;
-    }
-    relationalSync.questionRowSignaturesByExternalId.set(
-      externalId,
-      buildQuestionRowSyncSignature(question, {
-        columnSupport: questionColumnSupport,
-      }),
-    );
-    const choiceSignature = buildQuestionChoiceSyncSignatureFromQuestion(question, question.dbId);
-    if (choiceSignature && !hasOnlyQuestionChoicePlaceholders(question?.choices)) {
-      relationalSync.questionChoiceSignaturesByExternalId.set(externalId, choiceSignature);
+    if (hydratedRemoteQuestionIds.has(String(question?.id || "").trim())) {
+      rememberSyncedQuestionSignatures(question);
     }
   });
 
@@ -12166,7 +12372,7 @@ async function hydrateRelationalQuestions() {
     }
   }
   return finishStudentQuestionRead(true, {
-    source: useResilientCatalogRpc ? "resilient_catalog_rpc" : useFastCatalogRpc ? "fast_catalog_rpc" : "direct_tables",
+    source: catalogSource,
     remoteQuestionCount: questionRows.length,
     questionCount: normalizedMappedQuestions.length,
     unresolvedChoiceCount: preservedMissingChoiceQuestionIds.length,
@@ -17410,6 +17616,85 @@ async function syncQuestionsToRelational(questionsPayload) {
   }
 }
 
+// A question is saved at the position it already has. Only a new one (no
+// position yet) is placed, after the highest position this browser or the
+// server knows of, so it lands at the end of its course. This used to be the
+// question's index in the local list, which matched the server only while
+// the browser held the whole bank; with one course loaded, an edited
+// question would have jumped to the top of its course.
+// Reordering hands the reordered questions the positions they already held,
+// in their new order (made strictly increasing, since imports left ties).
+// Renumbering the whole local list instead only matched the server while the
+// browser held the whole bank; with one course loaded it rewrote the
+// position of every loaded question and resaved them all.
+function applyReorderedQuestionPositions(questions, reorderedQuestions) {
+  const list = Array.isArray(questions) ? questions : [];
+  const reordered = Array.isArray(reorderedQuestions) ? reorderedQuestions : [];
+  const slots = reordered.map((question) => normalizeQuestionSortOrder(question?.sortOrder));
+  if (slots.some((slot) => slot === null)) {
+    return list.map((question, index) => ({ ...question, sortOrder: index + 1 }));
+  }
+  slots.sort((a, b) => a - b);
+  for (let index = 1; index < slots.length; index += 1) {
+    if (slots[index] <= slots[index - 1]) {
+      slots[index] = slots[index - 1] + 1;
+    }
+  }
+  const sortOrderById = new Map(
+    reordered.map((question, index) => [String(question?.id || "").trim(), slots[index]]),
+  );
+  return list.map((question) => {
+    const questionId = String(question?.id || "").trim();
+    return sortOrderById.has(questionId)
+      ? { ...question, sortOrder: sortOrderById.get(questionId) }
+      : question;
+  });
+}
+
+function assignQuestionSortOrdersForSync(questions, bankMaxSortOrder = 0) {
+  const list = Array.isArray(questions) ? questions : [];
+  let nextSortOrder = Math.max(0, Number(bankMaxSortOrder) || 0);
+  list.forEach((question) => {
+    const sortOrder = normalizeQuestionSortOrder(question?.sortOrder);
+    if (sortOrder !== null && sortOrder > nextSortOrder) {
+      nextSortOrder = sortOrder;
+    }
+  });
+  const sortOrderByExternalId = new Map();
+  list.forEach((question) => {
+    const externalId = String(question?.id || "").trim();
+    if (!externalId) {
+      return;
+    }
+    const sortOrder = normalizeQuestionSortOrder(question?.sortOrder);
+    if (sortOrder !== null) {
+      sortOrderByExternalId.set(externalId, sortOrder);
+      return;
+    }
+    nextSortOrder += 1;
+    sortOrderByExternalId.set(externalId, nextSortOrder);
+  });
+  return sortOrderByExternalId;
+}
+
+async function fetchQuestionBankMaxSortOrder(client) {
+  const result = await runWithTimeoutResult(
+    client
+      .from("questions")
+      .select("sort_order")
+      .not("sort_order", "is", null)
+      .order("sort_order", { ascending: false })
+      .limit(1),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Question position lookup timed out.",
+  );
+  if (result.error) {
+    console.warn("Could not read the highest question position.", result.error?.message || result.error);
+    return 0;
+  }
+  return normalizeQuestionSortOrder(result.data?.[0]?.sort_order) || 0;
+}
+
 async function syncQuestionsToRelationalUnsafe(questionsPayload) {
   const client = getRelationalClient();
   const currentUser = getCurrentUser();
@@ -17611,10 +17896,11 @@ async function syncQuestionsToRelationalUnsafe(questionsPayload) {
     }
   }
 
-  const questionSortOrderByExternalId = new Map(
-    questions
-      .map((question, index) => [String(question?.id || "").trim(), index + 1])
-      .filter(([externalId]) => Boolean(externalId)),
+  const hasUnplacedQuestion = questionColumnSupport.sortOrder
+    && questions.some((question) => normalizeQuestionSortOrder(question?.sortOrder) === null);
+  const questionSortOrderByExternalId = assignQuestionSortOrdersForSync(
+    questions,
+    hasUnplacedQuestion ? await fetchQuestionBankMaxSortOrder(client) : 0,
   );
   const upsertRows = [];
   const unresolvedQuestionMappings = [];
@@ -17740,7 +18026,11 @@ async function syncQuestionsToRelationalUnsafe(questionsPayload) {
     }
     questionsDbIdChanged = true;
     questionDbIdChangedExternalIds.add(String(question.id || "").trim());
-    return { ...question, dbId: nextDbId };
+    // A new question keeps the position it was just saved at.
+    const placedSortOrder = questionColumnSupport.sortOrder && normalizeQuestionSortOrder(question.sortOrder) === null
+      ? questionSortOrderByExternalId.get(String(question.id || "").trim())
+      : null;
+    return { ...question, dbId: nextDbId, ...(placedSortOrder ? { sortOrder: placedSortOrder } : {}) };
   });
   if (questionsDbIdChanged) {
     saveLocalOnly(STORAGE_KEYS.questions, updatedLocalQuestions, { audit: false });
@@ -22553,13 +22843,153 @@ function isQuestionSyncBusy() {
   return Boolean(questionSyncInFlightPromise || queuedQuestionSyncPayload);
 }
 
+function markAdminCourseQuestionsStale() {
+  adminCourseQuestionLoads.forEach((entry) => {
+    entry.loadedAt = 0;
+  });
+}
+
+// Whether the Questions page should fetch a course now. A failed load waits
+// for the admin's Retry rather than looping; "waiting" (unsaved edits) has
+// its own timer.
+function shouldLoadAdminCourseQuestions(entry, now = Date.now()) {
+  if (!entry) {
+    return true;
+  }
+  if (entry.status === "loading" || entry.status === "failed" || entry.status === "waiting") {
+    return false;
+  }
+  return !entry.loadedAt || (now - entry.loadedAt) > ADMIN_QUESTION_BACKGROUND_REFRESH_MS;
+}
+
+// Called while the Questions page renders: returns what to show for the
+// course and, when it is due, starts loading it after this render.
+function requestAdminCourseQuestions(courseName) {
+  const courseKey = normalizeAdminQuestionFilterToken(courseName);
+  if (!courseKey) {
+    return null;
+  }
+  const entry = adminCourseQuestionLoads.get(courseKey) || null;
+  if (!shouldLoadAdminCourseQuestions(entry)) {
+    return entry;
+  }
+  const loading = { status: "loading", loadedAt: entry?.loadedAt || 0, error: "" };
+  adminCourseQuestionLoads.set(courseKey, loading);
+  window.setTimeout(() => {
+    loadAdminCourseQuestions(courseName).catch((error) => {
+      console.warn("Could not load the course's questions.", error?.message || error);
+    });
+  }, 0);
+  return loading;
+}
+
+function rerenderAdminQuestionsForCourse(courseKey) {
+  if (
+    state.route !== "admin"
+    || state.adminPage !== "questions"
+    || state.adminQuestionModalOpen
+    || normalizeAdminQuestionFilterToken(state.adminFilters?.course) !== courseKey
+  ) {
+    return;
+  }
+  state.skipNextRouteAnimation = true;
+  render();
+}
+
+async function loadAdminCourseQuestions(courseName) {
+  const course = String(courseName || "").trim();
+  const courseKey = normalizeAdminQuestionFilterToken(course);
+  if (!courseKey) {
+    return false;
+  }
+  const inFlight = adminCourseQuestionLoadPromises.get(courseKey);
+  if (inFlight) {
+    return inFlight;
+  }
+  const previous = adminCourseQuestionLoads.get(courseKey) || null;
+  const promise = (async () => {
+    adminCourseQuestionLoads.set(courseKey, { status: "loading", loadedAt: previous?.loadedAt || 0, error: "" });
+    const ready = await ensureRelationalSyncReady().catch(() => false);
+    let ok = false;
+    let error = "";
+    if (!ready) {
+      error = String(relationalSync.lastReadyError || "The database connection is not ready.");
+    } else {
+      // Unsaved edits go first; a course loaded over them would show the old text.
+      if (isRelationalStorageKeyBusy(STORAGE_KEYS.questions) || isQuestionSyncBusy()) {
+        await flushPendingSyncNow({ throwOnRelationalFailure: false }).catch(() => { });
+      }
+      ok = await hydrateRelationalQuestions({ courseName: course }).catch((hydrateError) => {
+        lastQuestionHydrationError = String(hydrateError?.message || hydrateError || "");
+        return false;
+      });
+      error = ok ? "" : (lastQuestionHydrationError || "Could not load questions.");
+    }
+    if (!ok && error === QUESTION_HYDRATION_BUSY_MESSAGE) {
+      adminCourseQuestionLoads.set(courseKey, { status: "waiting", loadedAt: previous?.loadedAt || 0, error });
+      window.setTimeout(() => {
+        if (state.route === "admin" && state.adminPage === "questions") {
+          loadAdminCourseQuestions(course).catch(() => { });
+        } else {
+          adminCourseQuestionLoads.delete(courseKey);
+        }
+      }, ADMIN_COURSE_QUESTION_BUSY_RETRY_MS);
+    } else {
+      adminCourseQuestionLoads.set(courseKey, ok
+        ? { status: "loaded", loadedAt: Date.now(), error: "" }
+        : { status: "failed", loadedAt: previous?.loadedAt || 0, error });
+    }
+    rerenderAdminQuestionsForCourse(courseKey);
+    return ok;
+  })().finally(() => {
+    adminCourseQuestionLoadPromises.delete(courseKey);
+  });
+  adminCourseQuestionLoadPromises.set(courseKey, promise);
+  return promise;
+}
+
+// A load that failed, said on the page that shows the questions, with a way
+// to try again. Before this, a failed download quietly kept the old copy.
+function renderQuestionLoadNotice({ message, detail = "", retryAttrs = "", retryLabel = "Retry" } = {}) {
+  return `
+    <div class="question-load-notice" role="alert">
+      <div class="question-load-notice-copy">
+        <p class="question-load-notice-text">${escapeHtml(message)}</p>
+        ${detail ? `<p class="question-load-notice-detail">${escapeHtml(detail)}</p>` : ""}
+      </div>
+      ${retryAttrs ? `<button class="btn ghost admin-btn-sm" type="button" ${retryAttrs}>${escapeHtml(retryLabel)}</button>` : ""}
+    </div>
+  `;
+}
+
+// What the Questions page says about the course it shows.
+function renderAdminCourseQuestionLoadNotice(courseName, entry) {
+  if (!entry) {
+    return "";
+  }
+  if (entry.status === "waiting") {
+    return renderQuestionLoadNotice({
+      message: `Saving your changes first. The ${courseName} questions reload when they're saved.`,
+    });
+  }
+  if (entry.status !== "failed") {
+    return "";
+  }
+  return renderQuestionLoadNotice({
+    message: entry.loadedAt
+      ? `Couldn't load the latest ${courseName} questions. This list may be out of date.`
+      : `Couldn't load the ${courseName} questions, so none are shown.`,
+    detail: entry.error,
+    retryAttrs: `data-action="admin-retry-course-questions" data-course="${escapeHtml(courseName)}"`,
+  });
+}
+
 async function refreshAdminDataSnapshot(user, options = {}) {
   if (!user || user.role !== "admin") {
     return false;
   }
   const force = Boolean(options?.force);
   const surfaceErrors = options?.surfaceErrors !== false;
-  const includeHeavyData = options?.includeHeavyData === true;
   const deferBackupRestore = options?.deferBackupRestore === true;
   const renderLoadingState = options?.renderLoadingState === true;
   if (!force && !shouldRefreshAdminData(user)) {
@@ -22608,18 +23038,7 @@ async function refreshAdminDataSnapshot(user, options = {}) {
     const hasPendingUserWrites = isRelationalStorageKeyBusy(STORAGE_KEYS.users);
     const hasPendingCourseWrites = isRelationalStorageKeyBusy(STORAGE_KEYS.curriculum)
       || isRelationalStorageKeyBusy(STORAGE_KEYS.courseTopics);
-    const hasPendingQuestionWrites = isRelationalStorageKeyBusy(STORAGE_KEYS.questions)
-      || isQuestionSyncBusy();
     const activeAdminPage = String(state.adminPage || "").trim();
-    const adminPageNeedsQuestionHydration = activeAdminPage === "questions" || activeAdminPage === "bulk-import";
-    const shouldHydrateQuestions = (force || !hasPendingQuestionWrites)
-      && !hasPendingQuestionWrites
-      && (includeHeavyData || adminPageNeedsQuestionHydration)
-      && (
-        force
-        || !adminQuestionsLastHydratedAt
-        || (Date.now() - adminQuestionsLastHydratedAt) > ADMIN_QUESTION_BACKGROUND_REFRESH_MS
-      );
 
     const hydrateTasks = [];
     if (!hasPendingCourseWrites) {
@@ -22641,10 +23060,8 @@ async function refreshAdminDataSnapshot(user, options = {}) {
     hydrateTasks.push(hydrateSupabaseSyncKeys([STORAGE_KEYS.siteMaintenance]).catch(() => ({ hadRemoteData: false })));
     await Promise.all(hydrateTasks);
 
-    if (shouldHydrateQuestions) {
-      await hydrateRelationalQuestions();
-      adminQuestionsLastHydratedAt = Date.now();
-    }
+    // No question download here: the admin never needs the whole bank. The
+    // Questions page loads the course it shows (ensureAdminCourseQuestionsLoaded).
 
     let backupRestoreMessage = "";
     const runBackupRestoreCheck = () => restoreAdminContentFromSupabaseBackupIfNeeded({
@@ -22967,7 +23384,7 @@ function render() {
     state.adminImportHistoryMissing = false;
     state.adminQuestionExportRunning = false;
     adminImportHistoryRequestSeq += 1;
-    adminQuestionsLastHydratedAt = 0;
+    adminCourseQuestionLoads.clear();
     clearAdminPresencePolling();
     clearAdminDashboardPolling();
   }
@@ -28255,6 +28672,7 @@ function renderCreateTest() {
         <h2 class="title">Create a Test</h2>
         <p class="subtle">Pick your topics, choose how you want to practise, then start.</p>
       </div>
+      ${renderStudentQuestionReadNotice()}
       ${inProgress
       ? `
         <div class="card create-test-active-block">
@@ -37231,6 +37649,9 @@ function renderAdmin() {
       state.adminFilters.course = selectedCourse;
       state.adminFilters.topic = selectedTopic;
     }
+    // Only this course's questions are fetched, when it is shown.
+    const courseQuestionLoad = requestAdminCourseQuestions(selectedCourse);
+    const courseQuestionsFirstLoad = Boolean(courseQuestionLoad?.status === "loading" && !courseQuestionLoad.loadedAt);
     const questionOpsLocked = questionSaveRunning || Boolean(questionDeleteQid) || bulkActionRunning;
     // Single actions ticked on the Admin access page (the database enforces them).
     const questionsAccess = getCurrentAdminAccess();
@@ -37372,7 +37793,7 @@ function renderAdmin() {
     const questionsPageHeaderHtml = renderAdminPageHeader({
       id: "questions",
       title: "Questions",
-      count: courseQuestions.length,
+      count: courseQuestionsFirstLoad ? null : courseQuestions.length,
       actions: questionsHeaderActions,
       notes: [
         "Pick the year, then the MCQ subject and topic. Edit the stem, choices, and explanation for a question.",
@@ -37411,6 +37832,7 @@ function renderAdmin() {
       <section class="card admin-section" id="admin-questions-section">
         ${questionsPageHeaderHtml}
         ${questionsFiltersToolbarHtml}
+        ${renderAdminCourseQuestionLoadNotice(selectedCourse, courseQuestionLoad)}
         ${selectedQuestionCount
         ? `<div class="admin-question-bulk-bar" style="margin-top: 0.74rem;">
             <p class="admin-question-selection-count">Selected: <b>${selectedQuestionCount}</b></p>
@@ -37454,7 +37876,10 @@ function renderAdmin() {
               </tr>
             </thead>
             <tbody>
-              ${questionRows || `<tr><td colspan="6" class="subtle">${questionSearchActive ? `No questions match “${escapeHtml(questionSearchQuery.trim())}” in this ${selectedTopic ? "topic" : "subject"}.` : "No questions found for this course/topic."}</td></tr>`}
+              ${questionRows || (courseQuestionsFirstLoad
+        ? `<tr><td colspan="6" class="subtle"><span class="loading-inline"><span class="inline-loader" aria-hidden="true"></span><span>Loading ${escapeHtml(selectedCourse)} questions...</span></span></td></tr>`
+        : "")
+      || `<tr><td colspan="6" class="subtle">${questionSearchActive ? `No questions match “${escapeHtml(questionSearchQuery.trim())}” in this ${selectedTopic ? "topic" : "subject"}.` : "No questions found for this course/topic."}</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -39114,6 +39539,7 @@ function wireAdmin() {
     // Clear all pending writes so the DB is treated as authoritative.
     // This prevents stale local data from blocking or overwriting the refresh.
     relationalSync.pendingWrites.clear();
+    markAdminCourseQuestionsStale();
     clearRelationalFlushTimer();
     // Reset the refreshing flag if a previous refresh got stuck.
     state.adminDataRefreshing = false;
@@ -42572,10 +42998,7 @@ function wireAdmin() {
       return replacement || question;
     });
 
-    const nextQuestionsWithOrder = nextQuestions.map((question, index) => ({
-      ...question,
-      sortOrder: index + 1,
-    }));
+    const nextQuestionsWithOrder = applyReorderedQuestionPositions(nextQuestions, reorderedVisibleQuestions);
     save(STORAGE_KEYS.questions, nextQuestionsWithOrder);
     // Prevent immediate admin auto-refresh from rehydrating stale cloud order before this reorder flushes.
     state.adminDataLastSyncAt = Date.now();
@@ -42876,8 +43299,23 @@ function wireAdmin() {
         "admin-bulk-publish",
         "admin-bulk-delete",
         "admin-clear-selection",
+        "admin-retry-course-questions",
       ].includes(action)
     ) {
+      return;
+    }
+
+    if (action === "admin-retry-course-questions") {
+      const course = String(actionEl.getAttribute("data-course") || "").trim();
+      const courseKey = normalizeAdminQuestionFilterToken(course);
+      if (!courseKey) {
+        return;
+      }
+      const previous = adminCourseQuestionLoads.get(courseKey);
+      adminCourseQuestionLoads.set(courseKey, { status: "loading", loadedAt: previous?.loadedAt || 0, error: "" });
+      state.skipNextRouteAnimation = true;
+      render();
+      await loadAdminCourseQuestions(course);
       return;
     }
 
@@ -50271,6 +50709,19 @@ function resolveEffectiveCourseLocks(universalRows, overrideRows) {
     });
   });
   return [...byCourseId.values()].filter((lock) => lock.locked && lock.courseName);
+}
+
+// The last question download failed but an older copy is on this device,
+// so Create Test still works; say the list may be missing new questions.
+function renderStudentQuestionReadNotice(readState = getStudentQuestionReadState()) {
+  if (readState.status !== "error") {
+    return "";
+  }
+  return renderQuestionLoadNotice({
+    message: "Couldn't load the latest questions. You're seeing the copy from your last visit, so new questions may be missing.",
+    detail: readState.error,
+    retryAttrs: `data-action="refresh-student-analytics"`,
+  });
 }
 
 function renderStudentLockedCoursesNotice(user, lockedCourses) {
@@ -63725,14 +64176,45 @@ async function openAdminQuestionReportDetail(questionId, item, closed, opener, {
   }
 }
 
+async function fetchQuestionCourseName(questionDbId) {
+  const client = getRelationalClient();
+  if (!client || !isUuidValue(questionDbId)) {
+    return "";
+  }
+  const questionResult = await runWithTimeoutResult(
+    client.from("questions").select("course_id").eq("id", questionDbId).limit(1),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Question lookup timed out.",
+  );
+  const courseId = String(questionResult.data?.[0]?.course_id || "");
+  if (questionResult.error || !isUuidValue(courseId)) {
+    return "";
+  }
+  const courseResult = await runWithTimeoutResult(
+    client.from("courses").select("course_name").eq("id", courseId).limit(1),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Course lookup timed out.",
+  );
+  return String(courseResult.data?.[0]?.course_name || "").trim();
+}
+
 function wireAdminQuestionReportDecision(panel, questionId, count) {
   const form = panel.querySelector(".question-report-close-form");
   if (!form) {
     return;
   }
-  form.querySelector("[data-question-report-edit]")?.addEventListener("click", () => {
-    const local = getQuestions().find((entry) => String(entry?.dbId || "").trim() === questionId);
+  form.querySelector("[data-question-report-edit]")?.addEventListener("click", async () => {
+    const findLocal = () => getQuestions().find((entry) => String(entry?.dbId || "").trim() === questionId);
+    let local = findLocal();
     closeQuestionReportDialog();
+    if (!local) {
+      // The admin holds only the courses they opened; load this one's.
+      const courseName = await fetchQuestionCourseName(questionId);
+      if (courseName) {
+        await loadAdminCourseQuestions(courseName);
+        local = findLocal();
+      }
+    }
     const previousPage = state.adminPage;
     state.adminPage = "questions";
     if (local) {
