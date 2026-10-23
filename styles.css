@@ -6193,12 +6193,82 @@ body.theme-comfort .maintenance-badge {
   padding-bottom: 0.4rem;
 }
 
-.admin-topic-table td:first-child {
+.admin-topic-table-index-head,
+.admin-topic-table-index {
+  width: 2.4rem;
+  text-align: center;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.admin-topic-table-name {
+  min-width: 220px;
+  width: 100%;
+}
+
+.admin-topic-table-status {
+  white-space: nowrap;
+  padding-left: 0.7rem;
   padding-right: 0.7rem;
 }
 
-.admin-topic-table td:nth-child(2) {
-  min-width: 220px;
+.admin-topic-table-status small {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+}
+
+/* Phones: one card-like block per topic instead of a sideways-scrolling
+   table: number and name on top, status and buttons underneath. */
+@media (max-width: 640px) {
+  .admin-topic-table,
+  .admin-topic-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  /* Beats the generic `.table-wrap table` phone minimum widths. */
+  .table-wrap.admin-topic-table-wrap .admin-topic-table {
+    min-width: 0;
+  }
+
+  .admin-topic-table thead {
+    display: none;
+  }
+
+  .admin-topic-table tr {
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    grid-template-areas:
+      "index name name"
+      "index status actions";
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .admin-topic-table td {
+    display: block;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+
+  .admin-topic-table .admin-topic-table-index { grid-area: index; width: auto; }
+  .admin-topic-table .admin-topic-table-name { grid-area: name; min-width: 0; width: auto; }
+  .admin-topic-table .admin-topic-table-status { grid-area: status; padding: 0; white-space: normal; }
+  .admin-topic-table td:last-child { grid-area: actions; }
+
+  .admin-topic-table-create-row td[colspan] { grid-area: name; }
+  .admin-topic-table tr > td[colspan="4"] { grid-column: 1 / -1; }
+}
+
+/* A topic students cannot see (all drafts, or empty) reads quieter. */
+.admin-topic-row.is-draft input[data-field='courseTopicName'],
+.admin-topic-row.is-empty input[data-field='courseTopicName'] {
+  color: var(--muted);
 }
 
 .admin-topic-table-actions-head {
@@ -6209,8 +6279,9 @@ body.theme-comfort .maintenance-badge {
 .admin-topic-table-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 0.34rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   white-space: nowrap;
 }
 
@@ -13194,7 +13265,8 @@ html body :is(.exam-choice .exam-choice-text,
     overflow-x: auto;
   }
 
-  .table-wrap:not(.admin-users-table-wrap):not(.previous-tests-table-wrap) table {
+  /* The topics table stacks its rows on phones instead (see .admin-topic-table). */
+  .table-wrap:not(.admin-users-table-wrap):not(.previous-tests-table-wrap):not(.admin-topic-table-wrap) table {
     min-width: 680px;
   }
 
@@ -16735,6 +16807,34 @@ body.theme-dark .admin-badge-draft,
 body.theme-comfort .admin-badge-draft {
   background: rgba(230, 81, 0, 0.1);
   color: #ffb74d;
+}
+
+.admin-badge-mixed,
+.admin-badge-empty {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-badge-mixed {
+  background: rgba(244, 162, 89, 0.16);
+  color: #8a4b12;
+  border: 1px solid rgba(244, 162, 89, 0.35);
+}
+
+.admin-badge-empty {
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--line-strong);
+}
+
+body.theme-dark .admin-badge-mixed,
+body.theme-comfort .admin-badge-mixed {
+  background: rgba(244, 162, 89, 0.12);
+  color: #f4c08e;
 }
 
 /* Layout split for admin workspace builder grids */

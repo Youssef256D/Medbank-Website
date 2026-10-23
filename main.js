@@ -33436,10 +33436,31 @@ function positionAdminRowMenu(menu) {
   list.style.maxHeight = "";
   list.style.overflowY = "";
   const menuBox = list.getBoundingClientRect();
-  // Always below the toggle. If it would run past the bottom of the screen,
-  // scroll the page down first (adding room at the end when the page is too
-  // short to scroll that far).
+  // Below the toggle. If it would run past the bottom of the screen, scroll
+  // the page down first (adding room at the end when the page is too short
+  // to scroll that far). Inside a dialog that sits fixed over the page
+  // (e.g. Course details), scrolling the page cannot help, so the menu opens
+  // above the toggle instead when it fits there.
   const shortfall = Math.ceil(toggle.getBoundingClientRect().bottom + gap + menuBox.height - (viewportHeight - gutter));
+  const inFixedDialog = Boolean(toggle.closest("[aria-modal='true'], .admin-course-topic-modal"));
+  const roomAbove = toggle.getBoundingClientRect().top - gap - gutter;
+  if (shortfall > 0 && inFixedDialog) {
+    const aboveBox = toggle.getBoundingClientRect();
+    const height = Math.min(menuBox.height, Math.max(120, Math.max(roomAbove, viewportHeight - gutter - aboveBox.bottom - gap)));
+    const openAbove = roomAbove >= Math.min(menuBox.height, 120) && roomAbove >= viewportHeight - gutter - aboveBox.bottom - gap;
+    if (height < menuBox.height) {
+      list.style.maxHeight = `${height}px`;
+      list.style.overflowY = "auto";
+    }
+    const targetLeft = Math.round(Math.max(gutter, Math.min(aboveBox.right - menuBox.width, viewportWidth - menuBox.width - gutter)));
+    const targetTop = Math.round(openAbove ? aboveBox.top - gap - height : aboveBox.bottom + gap);
+    list.style.left = `${targetLeft}px`;
+    list.style.top = `${targetTop}px`;
+    const placed = list.getBoundingClientRect();
+    list.style.left = `${targetLeft - (Math.round(placed.left) - targetLeft)}px`;
+    list.style.top = `${targetTop - (Math.round(placed.top) - targetTop)}px`;
+    return;
+  }
   if (shortfall > 0) {
     const scroller = document.scrollingElement || document.documentElement;
     const scrollable = scroller.scrollHeight - window.innerHeight - window.scrollY;
@@ -38251,99 +38272,110 @@ function renderAdmin() {
   `;
 }
 
+// Published / draft counts per topic of `course`, keyed by normalizeTopicKey.
+function getCourseTopicStatusCounts(course, questions = []) {
+  const counts = new Map();
+  (questions || []).forEach((question) => {
+    const meta = getQbankCourseTopicMeta(question);
+    if (meta.course !== course || !meta.topic) return;
+    const key = normalizeTopicKey(meta.topic);
+    const entry = counts.get(key) || { published: 0, draft: 0 };
+    if (String(question.status || "draft").trim().toLowerCase() === "published") {
+      entry.published += 1;
+    } else {
+      entry.draft += 1;
+    }
+    counts.set(key, entry);
+  });
+  return counts;
+}
+
+// The status badge and question count shown on a topic row. Students only
+// see a topic with at least one published question.
+function describeCourseTopicStatus(counts) {
+  const published = Number(counts?.published || 0);
+  const draft = Number(counts?.draft || 0);
+  const total = published + draft;
+  if (!total) {
+    return { tone: "empty", label: "No questions", detail: "Hidden from students" };
+  }
+  if (!draft) {
+    return { tone: "published", label: "Published", detail: `${published} question${published === 1 ? "" : "s"}` };
+  }
+  if (!published) {
+    return { tone: "draft", label: "Draft", detail: `${draft} question${draft === 1 ? "" : "s"} · hidden from students` };
+  }
+  return { tone: "mixed", label: "Partly published", detail: `${published} of ${total} published` };
+}
+
 function renderAdminCourseTopicControls(course) {
   const topics = QBANK_COURSE_TOPICS[course] || [];
   const canEditQuestions = adminAccessCan(getCurrentAdminAccess(), "mcq.questions_edit");
-  const groups = getCourseTopicGroups(course);
-  const groupNames = Object.keys(groups);
-  const groupOptionListId = `course-topic-groups-${String(course || "course").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "course"}`;
+  const statusCounts = getCourseTopicStatusCounts(course, getQuestions());
+  const statusBadgeClass = {
+    published: "admin-badge-published",
+    draft: "admin-badge-draft",
+    mixed: "admin-badge-mixed",
+    empty: "admin-badge-empty",
+  };
+  // Subgroups are hidden for now; existing ones are kept untouched (saving a
+  // row without the subgroup field leaves its subgroup as it was).
   return `
     <div class="admin-course-topics admin-course-topic-manager">
       <div class="admin-course-topic-manager-topbar">
         <div>
           <h4 style="margin: 0;">Topics</h4>
-          <p class="subtle" style="margin: 0.22rem 0 0;">Add, edit, and group topics directly in the table.</p>
+          <p class="subtle" style="margin: 0.22rem 0 0;">Students see topics in this order. Use ⋯ to move, publish, or merge a topic.</p>
         </div>
+        <button
+          class="btn admin-btn-sm"
+          type="button"
+          data-action="course-topic-inline-open"
+          ${state.adminCourseTopicInlineCreateOpen ? "hidden" : ""}
+        >
+          + Add topic
+        </button>
       </div>
-
-      <datalist id="${groupOptionListId}">
-        ${groupNames.map((groupName) => `<option value="${escapeHtml(groupName)}"></option>`).join("")}
-      </datalist>
 
       <div class="table-wrap admin-topic-table-wrap">
         <table class="admin-topic-table">
           <thead>
             <tr>
-              <th>Topic</th>
-              <th>Subgroup</th>
-              <th class="admin-topic-table-actions-head">Actions</th>
+              <th class="admin-topic-table-index-head" scope="col"><span aria-hidden="true">#</span><span class="sr-only">Order</span></th>
+              <th scope="col">Topic</th>
+              <th scope="col">Status</th>
+              <th class="admin-topic-table-actions-head" scope="col"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             ${state.adminCourseTopicInlineCreateOpen
       ? `
             <tr class="admin-topic-table-create-row is-open" data-role="course-topic-create-row">
-              <td>
-                <input name="newCourseTopicInline" data-field="newCourseTopicInline" autocomplete="off" placeholder="Add topic (e.g., Diabetes Mellitus)" />
-              </td>
-              <td>
-                <input
-                  name="newCourseTopicGroupInline"
-                  data-field="newCourseTopicGroupInline"
-                  autocomplete="off"
-                  list="${groupOptionListId}"
-                  placeholder="Type or create subgroup"
-                />
+              <td class="admin-topic-table-index">${topics.length + 1}</td>
+              <td colspan="2">
+                <input name="newCourseTopicInline" data-field="newCourseTopicInline" autocomplete="off" placeholder="New topic name (e.g., Diabetes Mellitus)" aria-label="New topic name" />
               </td>
               <td>
                 <div class="admin-topic-table-actions">
-                  <button
-                    class="btn admin-btn-sm admin-topic-inline-add-btn"
-                    type="button"
-                    data-action="course-topic-inline-add"
-                    aria-label="Add topic"
-                    title="Add topic"
-                  >
-                    +
-                  </button>
+                  <button class="btn admin-btn-sm" type="button" data-action="course-topic-inline-add">Add</button>
                 </div>
               </td>
             </tr>
             `
-      : `
-            <tr class="admin-topic-table-create-row is-collapsed" data-role="course-topic-create-row">
-              <td colspan="2"></td>
-              <td>
-                <div class="admin-topic-table-actions">
-                  <button
-                    class="btn admin-btn-sm admin-topic-inline-add-btn"
-                    type="button"
-                    data-action="course-topic-inline-open"
-                    aria-label="Show add topic fields"
-                    title="Add topic"
-                  >
-                    +
-                  </button>
-                </div>
-              </td>
-            </tr>
-            `}
+      : ""}
             ${topics.length
       ? topics
-        .map((topic, topicIdx) => `
-                  <tr data-role="course-topic-row" data-topic-index="${topicIdx}">
-                    <td>
-                      <input name="courseTopicName" data-field="courseTopicName" autocomplete="off" value="${escapeHtml(topic)}" />
+        .map((topic, topicIdx) => {
+          const status = describeCourseTopicStatus(statusCounts.get(normalizeTopicKey(topic)));
+          return `
+                  <tr data-role="course-topic-row" data-topic-index="${topicIdx}" class="admin-topic-row is-${status.tone}">
+                    <td class="admin-topic-table-index">${topicIdx + 1}</td>
+                    <td class="admin-topic-table-name">
+                      <input name="courseTopicName" data-field="courseTopicName" autocomplete="off" value="${escapeHtml(topic)}" aria-label="Topic ${topicIdx + 1} name" />
                     </td>
-                    <td>
-                      <input
-                        name="courseTopicGroupName"
-                        data-field="courseTopicGroupName"
-                        autocomplete="off"
-                        list="${groupOptionListId}"
-                        value="${escapeHtml(getTopicGroupNameForCourseTopic(course, topic))}"
-                        placeholder="Type or create subgroup"
-                      />
+                    <td class="admin-topic-table-status">
+                      <span class="${statusBadgeClass[status.tone]}">${escapeHtml(status.label)}</span>
+                      <small class="subtle">${escapeHtml(status.detail)}</small>
                     </td>
                     <td>
                       <div class="admin-topic-table-actions">
@@ -38357,7 +38389,7 @@ function renderAdminCourseTopicControls(course) {
                         </button>
                         ${renderAdminRowMenu({
           id: `course-topic-${topicIdx}`,
-          label: `More actions for topic ${topicIdx + 1}`,
+          label: `More actions for ${topic}`,
           items: [
             topicIdx > 0 && { label: "Move to top", attrs: `data-action="course-topic-move" data-move="top" data-topic-index="${topicIdx}"` },
             topicIdx > 0 && { label: "Move up", attrs: `data-action="course-topic-move" data-move="up" data-topic-index="${topicIdx}"` },
@@ -38371,9 +38403,10 @@ function renderAdminCourseTopicControls(course) {
                       </div>
                     </td>
                   </tr>
-                `)
+                `;
+        })
         .join("")
-      : `<tr><td colspan="3" class="subtle">No topics yet. Press + to add the first one.</td></tr>`}
+      : `<tr><td colspan="4" class="subtle">No topics yet. Press “Add topic” to add the first one.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -40112,6 +40145,7 @@ function wireAdmin() {
     if (action === "course-topic-inline-open") {
       state.adminCourseTopicInlineCreateOpen = true;
       rerenderCoursesPage();
+      appEl.querySelector("input[data-field='newCourseTopicInline']")?.focus();
       return;
     }
 
@@ -40229,7 +40263,6 @@ function wireAdmin() {
       const groupInput = topicRow?.querySelector("input[data-field='courseTopicGroupName']");
       const nextTopic = String(topicInput?.value || "").trim();
       const requestedGroupName = String(groupInput?.value || "").trim();
-      const currentGroupName = getTopicGroupNameForCourseTopic(course, currentTopic);
       if (!nextTopic) {
         toast("Topic name is required.");
         return;
@@ -40253,12 +40286,16 @@ function wireAdmin() {
       }
 
       const canonicalTopicName = nextTopic || currentTopic;
-      const canonicalGroupName = requestedGroupName
-        ? (findMatchingCourseTopicGroupName(getCourseTopicGroups(course), requestedGroupName) || requestedGroupName)
-        : "";
-      const resolvedCurrentGroupName = getTopicGroupNameForCourseTopic(course, canonicalTopicName);
-      if (canonicalGroupName !== resolvedCurrentGroupName) {
-        changed = setCourseTopicParentGroup(course, canonicalTopicName, canonicalGroupName) || changed;
+      // Subgroups are hidden for now: with no subgroup field on the row,
+      // leave the topic's subgroup exactly as it is.
+      if (groupInput) {
+        const canonicalGroupName = requestedGroupName
+          ? (findMatchingCourseTopicGroupName(getCourseTopicGroups(course), requestedGroupName) || requestedGroupName)
+          : "";
+        const resolvedCurrentGroupName = getTopicGroupNameForCourseTopic(course, canonicalTopicName);
+        if (canonicalGroupName !== resolvedCurrentGroupName) {
+          changed = setCourseTopicParentGroup(course, canonicalTopicName, canonicalGroupName) || changed;
+        }
       }
 
       if (!changed) {
