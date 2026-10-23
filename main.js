@@ -38249,6 +38249,7 @@ function renderAdmin() {
 
 function renderAdminCourseTopicControls(course) {
   const topics = QBANK_COURSE_TOPICS[course] || [];
+  const canEditQuestions = adminAccessCan(getCurrentAdminAccess(), "mcq.questions_edit");
   const groups = getCourseTopicGroups(course);
   const groupNames = Object.keys(groups);
   const groupOptionListId = `course-topic-groups-${String(course || "course").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "course"}`;
@@ -38354,6 +38355,8 @@ function renderAdminCourseTopicControls(course) {
           id: `course-topic-${topicIdx}`,
           label: `More actions for topic ${topicIdx + 1}`,
           items: [
+            canEditQuestions && { label: "Publish all questions", attrs: `data-action="course-topic-publish-all" data-topic-index="${topicIdx}"` },
+            canEditQuestions && { label: "Draft all questions", attrs: `data-action="course-topic-draft-all" data-topic-index="${topicIdx}"` },
             { label: "Remove topic", attrs: `data-action="course-topic-remove" data-topic-index="${topicIdx}"`, danger: true },
           ],
         })}
@@ -38368,6 +38371,57 @@ function renderAdminCourseTopicControls(course) {
       </div>
     </div>
   `;
+}
+
+// Publishes or drafts every question in one topic, the same way the
+// Questions page's bulk buttons do: change the local copy, then sync it.
+async function setCourseTopicQuestionsStatus(course, topic, targetStatus) {
+  if (state.adminBulkActionRunning || state.adminQuestionSaveRunning) {
+    return;
+  }
+  const questions = getQuestions();
+  const topicKey = normalizeTopicKey(topic);
+  const isInTopic = (question) => {
+    const meta = getQbankCourseTopicMeta(question);
+    return meta.course === course && normalizeTopicKey(meta.topic) === topicKey;
+  };
+  const topicCount = questions.filter(isInTopic).length;
+  if (!topicCount) {
+    toast(`"${topic}" has no questions yet.`);
+    return;
+  }
+  let changedCount = 0;
+  const nextQuestions = questions.map((question) => {
+    if (!isInTopic(question)) return question;
+    if (String(question.status || "draft").trim().toLowerCase() === targetStatus) return question;
+    changedCount += 1;
+    return { ...question, status: targetStatus };
+  });
+  if (!changedCount) {
+    toast(targetStatus === "draft"
+      ? `All ${topicCount} question(s) in "${topic}" are already drafts.`
+      : `All ${topicCount} question(s) in "${topic}" are already published.`);
+    return;
+  }
+  const confirmed = window.confirm(targetStatus === "draft"
+    ? `Move ${changedCount} question(s) in "${topic}" to draft? Students will stop seeing them.`
+    : `Publish ${changedCount} question(s) in "${topic}"? Students will see them.`);
+  if (!confirmed) {
+    return;
+  }
+  save(STORAGE_KEYS.questions, nextQuestions);
+  markAdminQuestionCountsStale();
+  state.adminDataLastSyncAt = Date.now();
+  const message = targetStatus === "draft"
+    ? `Moved ${changedCount} question(s) in "${topic}" to draft.`
+    : `Published ${changedCount} question(s) in "${topic}".`;
+  toast(message);
+  try {
+    await flushPendingSyncNow();
+    refreshAdminQuestionCountSnapshot({ force: true }).catch(() => { });
+  } catch (syncError) {
+    toast(`${message} Saved locally, but DB sync failed: ${getErrorMessage(syncError, "Sync failed.")}`);
+  }
 }
 
 function applyAdminPageTransition(previousPage, nextPage) {
@@ -39832,6 +39886,8 @@ function wireAdmin() {
         "course-topic-inline-add",
         "course-topic-save",
         "course-topic-remove",
+        "course-topic-publish-all",
+        "course-topic-draft-all",
         "course-topic-clear",
         "course-notebook-link-save",
         "course-question-edit",
@@ -40078,6 +40134,11 @@ function wireAdmin() {
       toast("Topic updated.");
       rerenderCoursesPage();
       flushPendingSyncInBackground();
+      return;
+    }
+
+    if (action === "course-topic-publish-all" || action === "course-topic-draft-all") {
+      await setCourseTopicQuestionsStatus(course, currentTopic, action === "course-topic-draft-all" ? "draft" : "published");
       return;
     }
 
