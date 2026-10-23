@@ -14625,8 +14625,14 @@ async function flushRelationalWrites(options = {}) {
       try {
         await syncRelationalKey(storageKey, payload, entryMeta || {});
         succeededCount += 1;
-        relationalSync.pendingWrites.delete(storageKey);
-        relationalSync.pendingWriteMeta.delete(storageKey);
+        // Clear the queue entry only if it is still the one just sent. A save
+        // made while this request was in flight replaced it, and deleting
+        // that would drop the newer change (e.g. a second topic published
+        // right after the first); the finally block schedules it instead.
+        if (relationalSync.pendingWrites.get(storageKey) === queuedPayload) {
+          relationalSync.pendingWrites.delete(storageKey);
+          relationalSync.pendingWriteMeta.delete(storageKey);
+        }
         if (
           storageKey === STORAGE_KEYS.curriculum
           && payload
@@ -38353,6 +38359,9 @@ function renderAdminCourseTopicControls(course) {
           id: `course-topic-${topicIdx}`,
           label: `More actions for topic ${topicIdx + 1}`,
           items: [
+            topicIdx > 0 && { label: "Move to top", attrs: `data-action="course-topic-move" data-move="top" data-topic-index="${topicIdx}"` },
+            topicIdx > 0 && { label: "Move up", attrs: `data-action="course-topic-move" data-move="up" data-topic-index="${topicIdx}"` },
+            topicIdx < topics.length - 1 && { label: "Move down", attrs: `data-action="course-topic-move" data-move="down" data-topic-index="${topicIdx}"` },
             canEditQuestions && { label: "Publish all questions", attrs: `data-action="course-topic-publish-all" data-topic-index="${topicIdx}"` },
             canEditQuestions && { label: "Draft all questions", attrs: `data-action="course-topic-draft-all" data-topic-index="${topicIdx}"` },
             topics.length > 1 && { label: "Merge into another topic…", attrs: `data-action="course-topic-merge" data-topic-index="${topicIdx}"` },
@@ -38370,6 +38379,20 @@ function renderAdminCourseTopicControls(course) {
       </div>
     </div>
   `;
+}
+
+// The topic list with the topic at `index` moved "top", "up" or "down".
+// Returns the same list when it cannot move.
+function moveCourseTopic(topics, index, direction) {
+  const list = Array.isArray(topics) ? topics : [];
+  const target = direction === "top" ? 0 : direction === "up" ? index - 1 : direction === "down" ? index + 1 : -1;
+  if (index < 0 || index >= list.length || target < 0 || target >= list.length || target === index) {
+    return topics;
+  }
+  const next = [...list];
+  const [moved] = next.splice(index, 1);
+  next.splice(target, 0, moved);
+  return next;
 }
 
 // Publishes or drafts every question in one topic, the same way the
@@ -39998,6 +40021,7 @@ function wireAdmin() {
         "course-topic-publish-all",
         "course-topic-draft-all",
         "course-topic-merge",
+        "course-topic-move",
         "course-topic-clear",
         "course-notebook-link-save",
         "course-question-edit",
@@ -40249,6 +40273,18 @@ function wireAdmin() {
 
     if (action === "course-topic-publish-all" || action === "course-topic-draft-all") {
       await setCourseTopicQuestionsStatus(course, currentTopic, action === "course-topic-draft-all" ? "draft" : "published");
+      return;
+    }
+
+    if (action === "course-topic-move") {
+      // Topic order is the students' order: it is synced as sort_order and
+      // the website and the app list topics by it.
+      const nextTopics = moveCourseTopic(topics, topicIndex, actionEl.getAttribute("data-move"));
+      if (nextTopics === topics) return;
+      applyCourseTopicsUpdate(course, nextTopics);
+      toast(`Moved "${currentTopic}".`);
+      rerenderCoursesPage();
+      flushPendingSyncInBackground();
       return;
     }
 
