@@ -38272,6 +38272,23 @@ function renderAdmin() {
   `;
 }
 
+// Loads the server's question counts when the topics table needs them and
+// they are missing (cleared after an edit), then redraws once they arrive.
+let adminQuestionCountAutoRefresh = null;
+function ensureAdminQuestionCountSnapshot() {
+  if (state.adminQuestionCountSnapshot || state.adminQuestionCountLoading || adminQuestionCountAutoRefresh) return;
+  if (!getRelationalClient() || !relationalSync.enabled) return;
+  adminQuestionCountAutoRefresh = refreshAdminQuestionCountSnapshot({ force: true })
+    .catch(() => false)
+    .then(() => {
+      adminQuestionCountAutoRefresh = null;
+      if (state.route === "admin" && state.adminCourseTopicModalCourse) {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+    });
+}
+
 // Published / draft counts per topic of `course`, keyed by normalizeTopicKey.
 function getCourseTopicStatusCounts(course, questions = []) {
   const counts = new Map();
@@ -38293,6 +38310,9 @@ function getCourseTopicStatusCounts(course, questions = []) {
 // The status badge and question count shown on a topic row. Students only
 // see a topic with at least one published question.
 function describeCourseTopicStatus(counts) {
+  if (counts === "checking") {
+    return { tone: "checking", label: "Checking…", detail: "Counting questions" };
+  }
   const published = Number(counts?.published || 0);
   const draft = Number(counts?.draft || 0);
   const total = published + draft;
@@ -38311,12 +38331,25 @@ function describeCourseTopicStatus(counts) {
 function renderAdminCourseTopicControls(course) {
   const topics = QBANK_COURSE_TOPICS[course] || [];
   const canEditQuestions = adminAccessCan(getCurrentAdminAccess(), "mcq.questions_edit");
-  const statusCounts = getCourseTopicStatusCounts(course, getQuestions());
+  // Counts come from the database (see getCourseTopicServerCounts). Until
+  // they arrive the badge says "Checking…"; if they cannot be loaded, the
+  // local copy is the fallback.
+  ensureAdminQuestionCountSnapshot();
+  const serverCountsReady = Boolean(state.adminQuestionCountSnapshot);
+  const localCounts = serverCountsReady || state.adminQuestionCountLoading
+    ? null
+    : getCourseTopicStatusCounts(course, getQuestions());
+  const countsForTopic = (topic) => {
+    if (serverCountsReady) return getCourseTopicServerCounts(course, topic);
+    if (!localCounts) return "checking";
+    return localCounts.get(normalizeTopicKey(topic));
+  };
   const statusBadgeClass = {
     published: "admin-badge-published",
     draft: "admin-badge-draft",
     mixed: "admin-badge-mixed",
     empty: "admin-badge-empty",
+    checking: "admin-badge-empty",
   };
   // Subgroups are hidden for now; existing ones are kept untouched (saving a
   // row without the subgroup field leaves its subgroup as it was).
@@ -38366,7 +38399,7 @@ function renderAdminCourseTopicControls(course) {
             ${topics.length
       ? topics
         .map((topic, topicIdx) => {
-          const status = describeCourseTopicStatus(statusCounts.get(normalizeTopicKey(topic)));
+          const status = describeCourseTopicStatus(countsForTopic(topic));
           return `
                   <tr data-role="course-topic-row" data-topic-index="${topicIdx}" class="admin-topic-row is-${status.tone}">
                     <td class="admin-topic-table-index">${topicIdx + 1}</td>
@@ -38428,55 +38461,120 @@ function moveCourseTopic(topics, index, direction) {
   return next;
 }
 
-// Publishes or drafts every question in one topic, the same way the
-// Questions page's bulk buttons do: change the local copy, then sync it.
-async function setCourseTopicQuestionsStatus(course, topic, targetStatus) {
-  if (state.adminBulkActionRunning || state.adminQuestionSaveRunning) {
-    return;
-  }
-  const questions = getQuestions();
+// The topics table works from the database, not the local question copy:
+// with 20,000+ questions the admin's download can time out and keep an
+// older copy, so a topic could read "No questions" (and a topic-wide action
+// skip questions) when the database has hundreds.
+
+// Published / draft / total for one topic from the server's count summary
+// (get_admin_question_count_summary), or null before it has loaded.
+function getCourseTopicServerCounts(course, topic) {
+  const snapshot = state.adminQuestionCountSnapshot;
+  if (!snapshot) return null;
   const topicKey = normalizeTopicKey(topic);
-  const isInTopic = (question) => {
-    const meta = getQbankCourseTopicMeta(question);
-    return meta.course === course && normalizeTopicKey(meta.topic) === topicKey;
-  };
-  const topicCount = questions.filter(isInTopic).length;
-  if (!topicCount) {
-    toast(`"${topic}" has no questions yet.`);
-    return;
+  const entry = (snapshot.byTopic || []).find((row) => (
+    row.courseName === course && normalizeTopicKey(row.topicName) === topicKey
+  ));
+  const published = Number(entry?.published || 0);
+  const draft = Number(entry?.draft || 0);
+  return { published, draft, total: Number(entry?.total || published + draft) };
+}
+
+// The id of a topic row in the database, or "" when it is not saved there
+// yet. Course names are unique today; more than one match is refused rather
+// than guessed.
+async function fetchCourseTopicId(client, course, topic) {
+  const { data, error } = await runWithTimeoutResult(
+    client
+      .from("course_topics")
+      .select("id,courses!inner(course_name)")
+      .eq("topic_name", topic)
+      .eq("courses.course_name", course),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Topic lookup timed out.",
+  );
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  if (rows.length > 1) throw new Error(`More than one course is named "${course}".`);
+  return String(rows[0]?.id || "");
+}
+
+// Topic-wide changes run one after another, so clicking several topics in a
+// row never drops one.
+let courseTopicServerActionQueue = Promise.resolve();
+function queueCourseTopicServerAction(run) {
+  const next = courseTopicServerActionQueue.then(run, run);
+  courseTopicServerActionQueue = next.catch(() => { });
+  return next;
+}
+
+// Publishes or drafts every question in one topic, in the database (so no
+// question is missed), then updates the local copy to match. True when
+// something changed.
+async function setCourseTopicQuestionsStatus(course, topic, targetStatus) {
+  const client = getRelationalClient();
+  if (!client || !relationalSync.enabled) {
+    toast("Sign in with your admin account to change questions.");
+    return false;
   }
-  let changedCount = 0;
-  const nextQuestions = questions.map((question) => {
-    if (!isInTopic(question)) return question;
-    if (String(question.status || "draft").trim().toLowerCase() === targetStatus) return question;
-    changedCount += 1;
-    return { ...question, status: targetStatus };
-  });
-  if (!changedCount) {
-    toast(targetStatus === "draft"
-      ? `All ${topicCount} question(s) in "${topic}" are already drafts.`
-      : `All ${topicCount} question(s) in "${topic}" are already published.`);
-    return;
+  const fromStatus = targetStatus === "draft" ? "published" : "draft";
+  const counts = getCourseTopicServerCounts(course, topic);
+  const toChange = counts ? counts[fromStatus] : null;
+  if (toChange === 0) {
+    toast(counts.total
+      ? `Every question in "${topic}" is already ${targetStatus === "draft" ? "a draft" : "published"}.`
+      : `"${topic}" has no questions yet.`);
+    return false;
   }
+  const amount = toChange ? `${toChange} question(s)` : "every question";
   const confirmed = window.confirm(targetStatus === "draft"
-    ? `Move ${changedCount} question(s) in "${topic}" to draft? Students will stop seeing them.`
-    : `Publish ${changedCount} question(s) in "${topic}"? Students will see them.`);
+    ? `Move ${amount} in "${topic}" to draft? Students will stop seeing them.`
+    : `Publish ${amount} in "${topic}"? Students will see them.`);
   if (!confirmed) {
-    return;
+    return false;
   }
-  save(STORAGE_KEYS.questions, nextQuestions);
-  markAdminQuestionCountsStale();
-  state.adminDataLastSyncAt = Date.now();
-  const message = targetStatus === "draft"
-    ? `Moved ${changedCount} question(s) in "${topic}" to draft.`
-    : `Published ${changedCount} question(s) in "${topic}".`;
-  toast(message);
-  try {
-    await flushPendingSyncNow();
-    refreshAdminQuestionCountSnapshot({ force: true }).catch(() => { });
-  } catch (syncError) {
-    toast(`${message} Saved locally, but DB sync failed: ${getErrorMessage(syncError, "Sync failed.")}`);
-  }
+  return queueCourseTopicServerAction(async () => {
+    try {
+      // Send anything queued first, so an older copy cannot overwrite this.
+      await flushPendingSyncNow();
+      const topicId = await fetchCourseTopicId(client, course, topic);
+      if (!topicId) {
+        toast(`"${topic}" is not saved to the database yet. Try again in a moment.`);
+        return false;
+      }
+      const { data, error } = await runWithTimeoutResult(
+        client
+          .from("questions")
+          .update({ status: targetStatus })
+          .eq("topic_id", topicId)
+          .eq("status", fromStatus)
+          .select("external_id"),
+        QUESTION_RELATIONAL_TIMEOUT_MS,
+        "Updating the questions timed out.",
+      );
+      if (error) throw error;
+      const changedIds = new Set((data || []).map((row) => String(row?.external_id || "").trim()).filter(Boolean));
+      const questions = getQuestions();
+      if (questions.some((question) => changedIds.has(String(question?.id || "").trim()))) {
+        saveLocalOnly(
+          STORAGE_KEYS.questions,
+          questions.map((question) => (
+            changedIds.has(String(question?.id || "").trim()) ? { ...question, status: targetStatus } : question
+          )),
+          { audit: false },
+        );
+      }
+      markAdminQuestionCountsStale();
+      await refreshAdminQuestionCountSnapshot({ force: true }).catch(() => false);
+      toast(targetStatus === "draft"
+        ? `Moved ${changedIds.size} question(s) in "${topic}" to draft.`
+        : `Published ${changedIds.size} question(s) in "${topic}".`);
+      return changedIds.size > 0;
+    } catch (error) {
+      toast(`Could not update "${topic}": ${getErrorMessage(error, "Request failed.")}`);
+      return false;
+    }
+  });
 }
 
 // Moves every question in `topic` to another topic of the same course, then
@@ -38487,10 +38585,11 @@ async function mergeCourseTopicIntoAnother(course, topic) {
   const topics = QBANK_COURSE_TOPICS[course] || [];
   const topicKey = normalizeTopicKey(topic);
   const questions = getQuestions();
-  const countFor = (name) => questions.filter((question) => {
-    const meta = getQbankCourseTopicMeta(question);
-    return meta.course === course && normalizeTopicKey(meta.topic) === normalizeTopicKey(name);
-  }).length;
+  const countFor = (name) => getCourseTopicServerCounts(course, name)?.total
+    ?? questions.filter((question) => {
+      const meta = getQbankCourseTopicMeta(question);
+      return meta.course === course && normalizeTopicKey(meta.topic) === normalizeTopicKey(name);
+    }).length;
   const targets = topics
     .filter((name) => normalizeTopicKey(name) !== topicKey)
     .map((name) => ({ topic: name, count: countFor(name) }));
@@ -38511,6 +38610,39 @@ async function mergeCourseTopicIntoAnother(course, topic) {
   if (!confirmed) {
     return false;
   }
+  // Move the questions in the database first: the local copy may not hold
+  // all of them. Stop here if that fails, so nothing is half-merged.
+  const client = getRelationalClient();
+  if (client && relationalSync.enabled) {
+    const moved = await queueCourseTopicServerAction(async () => {
+      try {
+        await flushPendingSyncNow();
+        const [sourceId, targetId] = await Promise.all([
+          fetchCourseTopicId(client, course, topic),
+          fetchCourseTopicId(client, course, target),
+        ]);
+        if (sourceId && !targetId) {
+          toast(`"${target}" is not saved to the database yet. Try again in a moment.`);
+          return false;
+        }
+        if (sourceId) {
+          const { error } = await runWithTimeoutResult(
+            client.from("questions").update({ topic_id: targetId }).eq("topic_id", sourceId),
+            QUESTION_RELATIONAL_TIMEOUT_MS,
+            "Moving the questions timed out.",
+          );
+          if (error) throw error;
+        }
+        return true;
+      } catch (error) {
+        toast(`Could not merge "${topic}": ${getErrorMessage(error, "Request failed.")}`);
+        return false;
+      }
+    });
+    if (!moved) {
+      return false;
+    }
+  }
   // Take the merged topic out of its subgroup first: the rename step would
   // otherwise put the target into that subgroup too.
   const groups = getCourseTopicGroups(course);
@@ -38526,6 +38658,7 @@ async function mergeCourseTopicIntoAnother(course, topic) {
     { renamedFrom: topic, renamedTo: target },
   );
   markAdminQuestionCountsStale();
+  refreshAdminQuestionCountSnapshot({ force: true }).catch(() => false);
   toast(movedCount
     ? `Merged "${topic}" into "${target}". Moved ${movedCount} question(s).`
     : `Merged "${topic}" into "${target}".`);
@@ -40310,6 +40443,7 @@ function wireAdmin() {
 
     if (action === "course-topic-publish-all" || action === "course-topic-draft-all") {
       await setCourseTopicQuestionsStatus(course, currentTopic, action === "course-topic-draft-all" ? "draft" : "published");
+      rerenderCoursesPage();
       return;
     }
 
@@ -40345,7 +40479,12 @@ function wireAdmin() {
       })
       .map((question) => String(question?.id || "").trim())
       .filter(Boolean);
-    const topicQuestionCount = topicQuestionIds.length;
+    // The database may hold questions the local copy lacks; they are
+    // deleted too (see the orphan cleanup in the topic sync), so say so.
+    const topicQuestionCount = Math.max(
+      topicQuestionIds.length,
+      Number(getCourseTopicServerCounts(course, currentTopic)?.total || 0),
+    );
     const deleteTopicConfirmed = window.confirm(
       topicQuestionCount
         ? `Delete topic "${currentTopic}" from "${course}"? ${topicQuestionCount} related question(s) will be permanently deleted.`
