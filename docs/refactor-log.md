@@ -2,6 +2,16 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-24 — Topic rename happens in the database first
+- `course-topic-save` calls `renameCourseTopicOnServer` before the local
+  rename: it updates `course_topics.topic_name` in place (same id, so every
+  question stays), or, when a row with the new name exists, moves the
+  questions to it and reactivates it. A failure stops the rename.
+- **Do not go back to moving questions only in the local copy** — the local
+  copy is partial since admin questions load per course, and the questions
+  left behind sit on a deactivated topic (IHI 103 lost four exam topics this
+  way on 2026-10-23).
+
 ### 2026-10-23 — Question reports (students flag wrong MCQs)
 - Migration `20261023120000_question_reports` (also in the Flutter repo):
   `question_reports`, written only through `report_question` (one open

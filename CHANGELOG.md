@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-24 — Renaming a topic keeps its questions
+- Renaming a topic in Admin → Courses now renames it in the database first,
+  so every question stays on it. Before, only the questions in the admin's
+  local copy moved (which is now one course or less), and the rest stayed on
+  the old, switched-off topic: the renamed topic showed "No questions".
+
 ### 2026-10-24 — Admin loads questions one course at a time
 - Admin → Questions loads only the subject on screen (at most ~3,100
   questions) instead of the whole 23,000-question bank; it reloads after

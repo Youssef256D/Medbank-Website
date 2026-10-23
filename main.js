@@ -39002,6 +39002,53 @@ async function setCourseTopicQuestionsStatus(course, topic, targetStatus) {
   });
 }
 
+// Renames a topic in the database before the local rename. The local copy may
+// hold only part of the topic's questions, so moving them locally would leave
+// the rest on the old, switched-off topic (they vanished from the admin and
+// from students). The topic row keeps its id, so every question stays on it.
+// If a row with the new name already exists, the questions move to it. True
+// when done (or when there is no database to update).
+async function renameCourseTopicOnServer(course, topic, nextTopic) {
+  const client = getRelationalClient();
+  if (!client || !relationalSync.enabled) {
+    return true;
+  }
+  return queueCourseTopicServerAction(async () => {
+    try {
+      await flushPendingSyncNow();
+      const [sourceId, targetId] = await Promise.all([
+        fetchCourseTopicId(client, course, topic),
+        fetchCourseTopicId(client, course, nextTopic),
+      ]);
+      if (!sourceId) {
+        return true;
+      }
+      const request = targetId
+        ? client.from("questions").update({ topic_id: targetId }).eq("topic_id", sourceId)
+        : client.from("course_topics").update({ topic_name: nextTopic }).eq("id", sourceId);
+      const { error } = await runWithTimeoutResult(
+        request,
+        QUESTION_RELATIONAL_TIMEOUT_MS,
+        "Renaming the topic timed out.",
+      );
+      if (error) throw error;
+      if (targetId) {
+        const { error: activateError } = await runWithTimeoutResult(
+          client.from("course_topics").update({ is_active: true }).eq("id", targetId),
+          QUESTION_RELATIONAL_TIMEOUT_MS,
+          "Renaming the topic timed out.",
+        );
+        if (activateError) throw activateError;
+      }
+      markAdminQuestionCountsStale();
+      return true;
+    } catch (error) {
+      toast(`Could not rename "${topic}": ${getErrorMessage(error, "Request failed.")}`);
+      return false;
+    }
+  });
+}
+
 // Moves every question in `topic` to another topic of the same course, then
 // removes `topic`. The same path as a rename (applyCourseTopicsUpdate moves
 // the questions), except the new name already exists. The old topic is
@@ -40837,10 +40884,14 @@ function wireAdmin() {
 
       let changed = false;
       if (nextTopic !== currentTopic) {
+        if (!(await renameCourseTopicOnServer(course, currentTopic, nextTopic))) {
+          return;
+        }
         queuePendingCourseTopicDeletion(course, currentTopic);
         const nextTopics = [...topics];
         nextTopics[topicIndex] = nextTopic;
         applyCourseTopicsUpdate(course, nextTopics, { renamedFrom: currentTopic, renamedTo: nextTopic });
+        refreshAdminQuestionCountSnapshot({ force: true }).catch(() => false);
         changed = true;
       }
 
