@@ -53622,7 +53622,7 @@ const COURSE_PLATFORM_TABLES = new Set([
 
 const COURSE_PLATFORM_COURSE_SELECT = "id,course_code,course_name,is_active,description,cover_image_url,intro_video_url,instructor_name,instructor_bio,level,estimated_duration,is_published,enrollment_mode,price,updated_at";
 // Admins additionally see the creator review workflow. Students never do.
-const ADMIN_COURSE_PLATFORM_COURSE_SELECT = `${COURSE_PLATFORM_COURSE_SELECT},owner_id,review_status,review_note,submitted_at,reviewed_at,progression_mode,visibility`;
+const ADMIN_COURSE_PLATFORM_COURSE_SELECT = `${COURSE_PLATFORM_COURSE_SELECT},owner_id,review_status,review_note,submitted_at,reviewed_at,progression_mode,visibility,spoken_watermark_enabled`;
 const COURSE_PLATFORM_LESSON_SELECT = "id,course_id,module_id,is_published,is_free_preview,position,title,description,lesson_type,duration_seconds,video_url,video_provider,youtube_video_id,video_original_url,content_html,created_at,updated_at";
 const LOCAL_DEMO_PLATFORM_IDS = {
   enrolledCourse: "11111111-1111-4111-8111-111111111111",
@@ -57925,6 +57925,11 @@ function coerceAdminCourseMetadataPayload(data) {
     ...(Object.prototype.hasOwnProperty.call(data, "progression_mode_field")
       ? { progression_mode: data.progression_sequential ? "sequential" : "open" }
       : {}),
+    // Same for the spoken MedBank ID switch (spoken_watermark_field). The
+    // database lets only an admin change it.
+    ...(Object.prototype.hasOwnProperty.call(data, "spoken_watermark_field")
+      ? { spoken_watermark_enabled: Boolean(data.spoken_watermark_enabled) }
+      : {}),
     // Only forms with the instructor picker send owner_id; other callers leave
     // the course owner untouched.
     ...(Object.prototype.hasOwnProperty.call(data, "owner_id")
@@ -58931,6 +58936,20 @@ function renderAdminCourseProgressionField(checkedAttr) {
       <input type="checkbox" name="progression_sequential" ${checkedAttr || ""} />
       Unlock lessons in order
       <small class="subtle" style="display: block; margin-top: 0.2rem;">Students finish each lesson (watching it to the end) and pass required quizzes before the next one opens. Coupons still decide which modules each student owns; a module they do not own never blocks them.</small>
+    </label>
+  `;
+}
+
+// Migration 20261024150000. Lessons speak the student's MedBank ID every few
+// minutes in the app (the audio watermark); an admin can turn it off per
+// course. The on-screen watermark is not affected.
+function renderAdminCourseSpokenWatermarkField(checkedAttr) {
+  return `
+    <label class="course-builder-check course-builder-wide">
+      <input type="hidden" name="spoken_watermark_field" value="1" />
+      <input type="checkbox" name="spoken_watermark_enabled" ${checkedAttr || ""} />
+      Speak the student's MedBank ID
+      <small class="subtle" style="display: block; margin-top: 0.2rem;">Every few minutes the lesson pauses in the app and says the student's MedBank ID, so a voice recording shows whose copy it was. Off: no voice in this course's lessons. The name on the video stays either way.</small>
     </label>
   `;
 }
@@ -62061,6 +62080,7 @@ function renderFocusedEditorPanel(selectedCourse, rows) {
           <label class="course-builder-check"><input type="checkbox" name="is_published" ${getAdminCourseBuilderCheckboxState(dk, "is_published", selectedCourse.is_published)} /> Published course</label>
           <label class="course-builder-check"><input type="checkbox" name="is_active" ${getAdminCourseBuilderCheckboxState(dk, "is_active", selectedCourse.is_active !== false)} /> Active course</label>
           ${renderAdminCourseProgressionField(getAdminCourseBuilderCheckboxState(dk, "progression_sequential", selectedCourse.progression_mode === "sequential"))}
+          ${renderAdminCourseSpokenWatermarkField(getAdminCourseBuilderCheckboxState(dk, "spoken_watermark_enabled", selectedCourse.spoken_watermark_enabled !== false))}
         </div>
         <div class="stack" style="margin-top: 0.75rem;">
           <button class="btn admin-btn-sm" type="submit">Save course metadata</button>
@@ -62333,6 +62353,11 @@ function renderAdminCourseDetailsPanel(selectedCourse) {
               <input type="hidden" name="progression_mode_field" value="1" />
               <input type="checkbox" name="progression_sequential" ${selectedCourse.progression_mode === "sequential" ? "checked" : ""} />
               <span><b>Unlock lessons in order</b><small>Each lesson (and its required quiz) must be finished before the next opens. Activation codes still decide which modules a student owns.</small></span>
+            </label>
+            <label class="vc-switch">
+              <input type="hidden" name="spoken_watermark_field" value="1" />
+              <input type="checkbox" name="spoken_watermark_enabled" ${selectedCourse.spoken_watermark_enabled !== false ? "checked" : ""} />
+              <span><b>Speak the student's MedBank ID</b><small>Every few minutes the lesson pauses in the app and says the student's MedBank ID, so a voice recording names whose copy it was. Off: no voice in this course. The name on the video stays.</small></span>
             </label>
           </div>
         </fieldset>

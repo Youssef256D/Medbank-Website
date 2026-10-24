@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-24 — Admins can turn off the spoken MedBank ID per course
+- The admin course page has a "Speak the student's MedBank ID" switch. Off
+  stops the app's lessons in that course from saying the student's ID every
+  few minutes; the name on the video stays.
+
 ### 2026-10-24 — Renaming a topic keeps its questions
 - Renaming a topic in Admin → Courses now renames it in the database first,
   so every question stays on it. Before, only the questions in the admin's

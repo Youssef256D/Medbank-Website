@@ -2,6 +2,17 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-24 — Per-course switch for the spoken MedBank ID
+- Migration `20261024150000_course_spoken_watermark_switch` adds
+  `platform_courses.spoken_watermark_enabled` (default true). The app's
+  lesson player reads it: off, lessons in that course never speak the
+  student's MedBank ID. The on-screen watermark is unchanged.
+- Both admin course forms carry the switch behind a hidden
+  `spoken_watermark_field`, like `progression_mode_field`, so other callers of
+  `coerceAdminCourseMetadataPayload` leave it alone.
+- **Only an admin may change it**: a trigger refuses a creator's change and
+  forces it on for a creator's new course. Do not expose it in creator UI.
+
 ### 2026-10-24 — Topic rename happens in the database first
 - `course-topic-save` calls `renameCourseTopicOnServer` before the local
   rename: it updates `course_topics.topic_name` in place (same id, so every
