@@ -60,6 +60,8 @@ function parseCloudflareStreamUid(value: string): string {
   return String(match?.[1] || "").trim();
 }
 
+const TOKEN_LIFETIME_SECONDS = 4 * 60 * 60;
+
 Deno.serve(async (req) => {
   const requestOrigin = String(req.headers.get("origin") || "").trim();
 
@@ -136,6 +138,16 @@ Deno.serve(async (req) => {
 
   const role = String(actorProfile.role || "").trim().toLowerCase();
   let allowed = role === "admin";
+  // A creator previews the lessons of their own courses, published or not.
+  if (!allowed && role === "creator") {
+    const { data: ownCourse } = await adminClient
+      .from("platform_courses")
+      .select("id")
+      .eq("id", lesson.course_id)
+      .eq("owner_id", actorId)
+      .maybeSingle();
+    allowed = Boolean(ownCourse);
+  }
   if (!allowed && role === "student" && actorProfile.approved === true && lesson.is_published === true) {
     const { data: course } = await adminClient
       .from("platform_courses")
@@ -169,7 +181,7 @@ Deno.serve(async (req) => {
   // The service role bypasses RLS, so the organization audience is asked
   // explicitly: a student removed from an organization loses its courses,
   // bought ones and free previews included.
-  if (allowed && role !== "admin") {
+  if (allowed && role === "student") {
     const { data: inAudience, error: audienceError } = await adminClient.rpc("user_in_video_course_audience", {
       p_user_id: actorId,
       p_course_id: lesson.course_id,
@@ -185,7 +197,10 @@ Deno.serve(async (req) => {
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/stream/${encodeURIComponent(videoUid)}/token`,
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${cloudflareApiToken}` },
+      headers: { Authorization: `Bearer ${cloudflareApiToken}`, "Content-Type": "application/json" },
+      // Long enough for a whole lecture with pauses: the app plays HLS, and
+      // every segment request is checked against this expiry.
+      body: JSON.stringify({ exp: Math.floor(Date.now() / 1000) + TOKEN_LIFETIME_SECONDS }),
     },
   );
   const tokenPayload = await tokenResponse.json().catch(() => null);
@@ -203,6 +218,8 @@ Deno.serve(async (req) => {
     videoUid,
     token,
     iframeUrl: `https://customer-${customerCode}.cloudflarestream.com/${token}/iframe`,
-    expiresInSeconds: 3600,
+    // The MedBank app plays this with its own player, watermark included.
+    hlsUrl: `https://customer-${customerCode}.cloudflarestream.com/${token}/manifest/video.m3u8`,
+    expiresInSeconds: TOKEN_LIFETIME_SECONDS,
   }, requestOrigin);
 });

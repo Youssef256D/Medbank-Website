@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-24 — Cloudflare Stream functions ready for the app (not deployed)
+- `cloudflare-stream-token`: adds `hlsUrl`
+  (`customer-<code>.cloudflarestream.com/<token>/manifest/video.m3u8`) for the
+  app's own player, asks Cloudflare for a 4-hour `exp`, and lets a creator who
+  owns the course play its lessons. The organization audience check now runs
+  for students only (admins and owning creators skip it).
+- `cloudflare-stream-tus-upload`: creators may upload too (admins still need
+  the Video Courses area). The function rebuilds `Upload-Metadata` itself —
+  only `name` comes from the client; `requiresignedurls` and
+  `maxdurationseconds` (6h) are always set — and sends `Upload-Creator`.
+  **Never pass the client's metadata through**: it could drop
+  `requiresignedurls` and create a public video.
+- The app shows the upload only when the `cloudflare_stream_uploads` flag row
+  exists and is on; its migration waits in the app repo's `supabase/pending/`.
+  Deploy both functions (and set the Cloudflare secrets) before turning it on.
+
 ### 2026-10-24 — Per-course switch for the spoken MedBank ID
 - Migration `20261024150000_course_spoken_watermark_switch` adds
   `platform_courses.spoken_watermark_enabled` (default true). The app's

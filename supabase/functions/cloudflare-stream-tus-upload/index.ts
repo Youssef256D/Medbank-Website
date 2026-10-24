@@ -83,6 +83,24 @@ function adminHasArea(access: AdminAccess, area: string): boolean {
   return access.isSuper || access.areas.includes(area);
 }
 
+// The longest lecture Stream accepts from an upload, and the largest file.
+const MAX_DURATION_SECONDS = 6 * 60 * 60;
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024;
+
+// tus Upload-Metadata is "key base64value" pairs joined by commas. Only the
+// file name is taken from the caller; signed playback and the length cap are
+// always set here, so a client can never create a public video.
+function buildUploadMetadata(clientMetadata: string): string {
+  const pairs = clientMetadata.split(",").map((entry) => entry.trim().split(/\s+/));
+  const name = pairs.find((pair) => pair[0] === "name" && pair[1]);
+  const encode = (value: string) => btoa(value);
+  return [
+    ...(name ? [`name ${name[1]}`] : []),
+    "requiresignedurls",
+    `maxdurationseconds ${encode(String(MAX_DURATION_SECONDS))}`,
+  ].join(",");
+}
+
 async function anyTargetIsAdmin(client: ReturnType<typeof createClient>, ids: string[]): Promise<boolean | null> {
   if (!ids.length) return false;
   const { data, error } = await client.from("profiles").select("id").in("id", ids).eq("role", "admin").limit(1);
@@ -126,6 +144,9 @@ Deno.serve(async (req) => {
   if (!uploadMetadata) {
     return jsonResponse(400, { ok: false, error: "Missing Upload-Metadata header." }, requestOrigin);
   }
+  if (Number(uploadLength) > MAX_UPLOAD_BYTES) {
+    return jsonResponse(413, { ok: false, error: "This video file is too large." }, requestOrigin);
+  }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -145,16 +166,22 @@ Deno.serve(async (req) => {
   if (profileError) {
     return jsonResponse(500, { ok: false, error: "Could not verify actor profile role." }, requestOrigin);
   }
-  if (String(actorProfile?.role || "").trim().toLowerCase() !== "admin") {
-    return jsonResponse(403, { ok: false, error: "Only admins can upload course videos." }, requestOrigin);
+  // Admins with the Video Courses area, and creators (lecturers) uploading
+  // for their own lessons. The upload only makes a video; attaching it to a
+  // lesson is an ordinary lesson update, which RLS limits to the course owner.
+  const actorRole = String(actorProfile?.role || "").trim().toLowerCase();
+  if (actorRole !== "admin" && actorRole !== "creator") {
+    return jsonResponse(403, { ok: false, error: "Only admins and creators can upload course videos." }, requestOrigin);
   }
 
-  const adminAccess = await loadAdminAccess(adminClient, actorId);
-  if (!adminAccess.ok) {
-    return jsonResponse(500, { ok: false, error: "Could not verify admin permissions." }, requestOrigin);
-  }
-  if (!adminHasArea(adminAccess, "video_courses")) {
-    return jsonResponse(403, { ok: false, error: "Your admin account does not include the Video Courses area." }, requestOrigin);
+  if (actorRole === "admin") {
+    const adminAccess = await loadAdminAccess(adminClient, actorId);
+    if (!adminAccess.ok) {
+      return jsonResponse(500, { ok: false, error: "Could not verify admin permissions." }, requestOrigin);
+    }
+    if (!adminHasArea(adminAccess, "video_courses")) {
+      return jsonResponse(403, { ok: false, error: "Your admin account does not include the Video Courses area." }, requestOrigin);
+    }
   }
 
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/stream?direct_user=true`;
@@ -164,7 +191,9 @@ Deno.serve(async (req) => {
       Authorization: `Bearer ${cloudflareApiToken}`,
       "Tus-Resumable": "1.0.0",
       "Upload-Length": uploadLength,
-      "Upload-Metadata": uploadMetadata,
+      "Upload-Metadata": buildUploadMetadata(uploadMetadata),
+      // Stream records who uploaded each video.
+      "Upload-Creator": actorId,
     },
   });
 

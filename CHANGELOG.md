@@ -9,6 +9,16 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-24 — Cloudflare Stream prepared for the app (not deployed, hidden)
+- `cloudflare-stream-token` also returns an `hlsUrl` for the app's own
+  player, signs links for 4 hours instead of 1 (long lectures), and lets a
+  creator play the lessons of their own courses.
+- `cloudflare-stream-tus-upload` accepts creators as well as Video Courses
+  admins, always asks Stream for signed playback with a 6-hour cap, ignores
+  any other metadata from the client, and refuses files over 8 GB.
+- Neither is deployed yet, and the website admin keeps
+  `cloudflareStreamEnabled: false`. Nothing changes until the owner turns it on.
+
 ### 2026-10-24 — Admins can turn off the spoken MedBank ID per course
 - The admin course page has a "Speak the student's MedBank ID" switch. Off
   stops the app's lessons in that course from saying the student's ID every
