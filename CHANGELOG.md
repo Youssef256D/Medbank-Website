@@ -9,6 +9,12 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-25 — Resume a test on the other device
+- A test you leave unfinished in the app now shows "Resume" on the website,
+  and a test left unfinished on the website now shows in the app's unfinished
+  tests. Answers, the current question and the timer carry over. Finishing it
+  on either side removes it from the other.
+
 ### 2026-10-24 — Cloudflare Stream prepared for the app (not deployed, hidden)
 - `cloudflare-stream-token` also returns an `hlsUrl` for the app's own
   player, signs links for 4 hours instead of 1 (long lectures), and lets a

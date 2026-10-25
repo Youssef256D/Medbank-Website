@@ -12899,6 +12899,486 @@ async function hydrateRelationalSessions(currentUser) {
   if (shouldResyncMergedSessionState(localSessions, mappedSessions)) {
     scheduleRecoveredSessionSync({ immediate: true });
   }
+  await hydrateLiveTestBlocks(currentUser).catch((error) => {
+    console.warn("[live-blocks] Could not load unfinished tests from the app.", error?.message || error);
+  });
+  scheduleLiveTestBlockSync();
+}
+
+// Unfinished tests are shared with the MedBank app through test_blocks,
+// test_block_items and test_responses (the app's own tables). A website test
+// gets a block keyed on external_id = session.id; an app test becomes a local
+// session whose id is the block id, so either side can finish it and the
+// history entry lands under one id. Completed tests still go through
+// test_history_entries as before.
+const LIVE_TEST_BLOCK_SYNC_DELAY_MS = 4000;
+const LIVE_TEST_BLOCK_PULL_LIMIT = 20;
+// The website keeps one active test and ends it when a new one starts, so
+// only the newest app test is brought in.
+const LIVE_TEST_BLOCK_NEW_PER_HYDRATE = 1;
+const LIVE_TEST_BLOCK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const liveTestBlockRuntime = {
+  timer: null,
+  inFlight: false,
+  queued: false,
+};
+
+function getLiveTestBlockQuestionDbId(session, questionId, questionStore) {
+  const normalizedQuestionId = String(questionId || "").trim();
+  if (isUuidValue(normalizedQuestionId)) {
+    return normalizedQuestionId;
+  }
+  const storeDbId = String(questionStore.byId.get(normalizedQuestionId)?.dbId || "").trim();
+  if (isUuidValue(storeDbId)) {
+    return storeDbId;
+  }
+  const snapshotDbId = String(session?.questionSnapshots?.[normalizedQuestionId]?.dbId || "").trim();
+  return isUuidValue(snapshotDbId) ? snapshotDbId : "";
+}
+
+function getLiveTestBlockResponseRow(blockId, questionDbId, response) {
+  const selected = (Array.isArray(response?.selected) ? response.selected : [])
+    .map((label) => normalizeQuestionChoiceLabel(label))
+    .filter(Boolean);
+  const flagged = response?.flagged === true;
+  const notes = String(response?.notes || "");
+  const submitted = response?.submitted === true;
+  if (!selected.length && !flagged && !notes && !submitted) {
+    return null;
+  }
+  return {
+    block_id: blockId,
+    question_id: questionDbId,
+    selected_choice_labels: selected,
+    flagged,
+    submitted,
+    notes,
+    answered_at: selected.length ? (response?.answeredAt || nowISO()) : null,
+  };
+}
+
+function buildLiveTestBlockSignature(session) {
+  const responses = isRecordObject(session?.responses) ? session.responses : {};
+  const answers = Object.keys(responses).sort().map((questionId) => {
+    const response = responses[questionId] || {};
+    return [
+      questionId,
+      (Array.isArray(response.selected) ? response.selected : []).join(""),
+      response.flagged === true ? 1 : 0,
+      response.submitted === true ? 1 : 0,
+      String(response.notes || "").length,
+    ].join(":");
+  });
+  return JSON.stringify([
+    String(session?.status || ""),
+    Math.floor(Number(session?.currentIndex || 0) || 0),
+    Math.floor((Number(session?.elapsedSec || 0) || 0) / 30),
+    session?.timeRemainingSec == null ? null : Math.floor((Number(session.timeRemainingSec) || 0) / 30),
+    answers,
+  ]);
+}
+
+function getLiveTestBlockProgressPatch(session) {
+  const isTimed = session?.mode === "timed";
+  return {
+    current_index: Math.max(0, Math.floor(Number(session?.currentIndex || 0) || 0)),
+    elapsed_seconds: Math.max(0, Math.round(Number(session?.elapsedSec || 0) || 0)),
+    time_remaining_sec: isTimed && session?.timeRemainingSec != null
+      ? Math.max(0, Math.round(Number(session.timeRemainingSec) || 0))
+      : null,
+  };
+}
+
+function scheduleLiveTestBlockSync(options = {}) {
+  if (liveTestBlockRuntime.timer) {
+    if (!options?.immediate) {
+      return;
+    }
+    window.clearTimeout(liveTestBlockRuntime.timer);
+  }
+  liveTestBlockRuntime.timer = window.setTimeout(() => {
+    liveTestBlockRuntime.timer = null;
+    syncLiveTestBlocks().catch((error) => {
+      console.warn("[live-blocks] Sync failed.", error?.message || error);
+    });
+  }, options?.immediate ? 0 : LIVE_TEST_BLOCK_SYNC_DELAY_MS);
+}
+
+function getLiveTestBlockContext() {
+  const currentUser = getCurrentUser();
+  const client = getRelationalClient();
+  const profileId = String(getCurrentSessionProfileId(currentUser) || "").trim();
+  if (!currentUser || !client || !relationalSync.enabled || !isUuidValue(profileId)) {
+    return null;
+  }
+  if (!hasActiveSupabaseSessionForUser(currentUser)) {
+    return null;
+  }
+  return { currentUser, client, profileId };
+}
+
+// Pushes this browser's unfinished tests (and the finish of a shared one) to
+// test_blocks so the app can resume them.
+async function syncLiveTestBlocks() {
+  if (liveTestBlockRuntime.inFlight) {
+    liveTestBlockRuntime.queued = true;
+    return;
+  }
+  const context = getLiveTestBlockContext();
+  if (!context) {
+    return;
+  }
+  const { currentUser, client } = context;
+  liveTestBlockRuntime.inFlight = true;
+  try {
+    const questionStore = getQuestionStore();
+    const cutoffMs = Date.now() - LIVE_TEST_BLOCK_MAX_AGE_MS;
+    const candidates = getSessionsForUser(currentUser.id).filter((session) => {
+      const status = String(session?.status || "").trim();
+      if (status === "in_progress") {
+        return parseSyncTimestampMs(session?.updatedAt || session?.createdAt) >= cutoffMs;
+      }
+      return status === "completed" && isUuidValue(String(session?.liveBlockId || "")) && !session?.liveBlockClosed;
+    });
+    for (const candidate of candidates) {
+      const sessionId = String(candidate?.id || "").trim();
+      const session = getSessionById(sessionId) || candidate;
+      const signature = buildLiveTestBlockSignature(session);
+      if (session.liveBlockSig === signature && isUuidValue(String(session.liveBlockId || ""))) {
+        continue;
+      }
+      const questionDbIds = (Array.isArray(session.questionIds) ? session.questionIds : [])
+        .map((questionId) => getLiveTestBlockQuestionDbId(session, questionId, questionStore));
+      if (!questionDbIds.length || questionDbIds.some((dbId) => !dbId)) {
+        continue;
+      }
+      const isCompleted = session.status === "completed";
+      const progress = getLiveTestBlockProgressPatch(session);
+      let blockId = String(session.liveBlockId || "").trim();
+      let remoteUpdatedAt = "";
+      if (!isUuidValue(blockId)) {
+        const row = await runRelationalQueryWithTimeout(
+          client.rpc("create_test_block_with_items", {
+            p_mode: session.mode === "timed" ? "timed" : "tutor",
+            p_source: ["all", "unused", "incorrect", "flagged"].includes(session.source) ? session.source : "all",
+            p_question_ids: questionDbIds,
+            p_course_id: null,
+            p_question_count: questionDbIds.length,
+            p_duration_minutes: session.mode === "timed" ? Math.max(5, Number(session.durationMin || 20) || 20) : null,
+            p_time_remaining_sec: progress.time_remaining_sec,
+            p_current_index: progress.current_index,
+            p_elapsed_seconds: progress.elapsed_seconds,
+            p_status: "in_progress",
+            p_external_id: sessionId,
+          }),
+          "Shared test creation timed out.",
+        );
+        const block = Array.isArray(row) ? row[0] : row;
+        blockId = String(block?.id || "").trim();
+        if (!isUuidValue(blockId)) {
+          continue;
+        }
+        remoteUpdatedAt = String(block?.updated_at || "");
+      }
+      const responseRows = (Array.isArray(session.questionIds) ? session.questionIds : [])
+        .map((questionId, index) => {
+          const resolvedQuestionId = resolveSessionQuestionId(questionId, questionStore);
+          const response = session.responses?.[questionId] || session.responses?.[resolvedQuestionId];
+          return getLiveTestBlockResponseRow(blockId, questionDbIds[index], response);
+        })
+        .filter(Boolean);
+      for (const rowBatch of splitIntoBatches(responseRows, 200)) {
+        await runRelationalQueryWithTimeout(
+          client.from("test_responses").upsert(rowBatch, { onConflict: "block_id,question_id" }),
+          "Shared test answers timed out.",
+        );
+      }
+      const updated = await runRelationalQueryWithTimeout(
+        client
+          .from("test_blocks")
+          .update({
+            ...progress,
+            status: isCompleted ? "completed" : "in_progress",
+            ...(isCompleted ? { completed_at: session.completedAt || nowISO() } : {}),
+          })
+          .eq("id", blockId)
+          .select("updated_at"),
+        "Shared test progress timed out.",
+      );
+      remoteUpdatedAt = String((Array.isArray(updated) ? updated[0] : updated)?.updated_at || remoteUpdatedAt);
+      const target = getSessionById(sessionId);
+      if (target) {
+        target.liveBlockId = blockId;
+        target.liveBlockSig = signature;
+        target.liveBlockRemoteAt = remoteUpdatedAt;
+        if (isCompleted) {
+          target.liveBlockClosed = true;
+        }
+        scheduleSessionStorePersist();
+      }
+    }
+  } finally {
+    liveTestBlockRuntime.inFlight = false;
+    if (liveTestBlockRuntime.queued) {
+      liveTestBlockRuntime.queued = false;
+      scheduleLiveTestBlockSync();
+    }
+  }
+}
+
+function mapLiveTestBlockToLocalSession(block, questionIds, responseRows, currentUser, profileId, questionStore) {
+  const responses = {};
+  const questionSnapshots = {};
+  const sessionCourses = [];
+  questionIds.forEach((questionId) => {
+    responses[questionId] = {
+      selected: [],
+      flagged: false,
+      struck: [],
+      notes: "",
+      timeSpentSec: 0,
+      highlightedLines: [],
+      highlightedLineColors: {},
+      highlightedChoices: {},
+      textHighlights: buildEmptyTextHighlightStore(),
+      submitted: false,
+    };
+    const question = questionStore.byDbId.get(questionId) || null;
+    const snapshot = question ? normalizeQuestionForSessionSnapshot(question) : null;
+    if (snapshot) {
+      questionSnapshots[questionId] = deepClone(snapshot);
+      const course = String(getQbankCourseTopicMeta(question).course || "").trim();
+      if (course && !sessionCourses.includes(course)) {
+        sessionCourses.push(course);
+      }
+    }
+  });
+  applyLiveTestBlockResponses(responses, responseRows);
+  const mode = block.mode === "timed" ? "timed" : "tutor";
+  const createdAt = block.created_at || nowISO();
+  return {
+    id: block.id,
+    userId: currentUser.id,
+    ownerProfileId: profileId,
+    ownerAuthId: profileId,
+    ownerIds: normalizeSessionOwnerIdList([...getStoredUserIdentityAliases(currentUser), profileId]),
+    name: buildAutoSessionName({ courses: sessionCourses, mode, source: block.source, questionCount: questionIds.length }),
+    testId: `TEST-${String(block.id).slice(0, 8).toUpperCase()}`,
+    mode,
+    source: getSessionHistorySourceValue(block.source),
+    durationMin: Math.max(5, Number(block.duration_minutes || 20) || 20),
+    timeRemainingSec: mode === "timed" ? Math.max(0, Number(block.time_remaining_sec ?? (Number(block.duration_minutes || 20) * 60)) || 0) : null,
+    paused: false,
+    courses: sessionCourses,
+    academicYear: normalizeAcademicYearOrNull(currentUser.academicYear),
+    academicSemester: normalizeAcademicSemesterOrNull(currentUser.academicSemester),
+    questionIds,
+    responses,
+    questionSnapshots,
+    currentIndex: Math.max(0, Math.min(questionIds.length - 1, Math.floor(Number(block.current_index || 0) || 0))),
+    status: "in_progress",
+    lastQuestionAt: Date.now(),
+    lastTimerSyncAt: Date.now(),
+    elapsedSec: Math.max(0, Number(block.elapsed_seconds || 0) || 0),
+    createdAt,
+    updatedAt: block.updated_at || createdAt,
+    completedAt: null,
+    originSessionId: null,
+    liveBlockId: block.id,
+    liveBlockRemoteAt: String(block.updated_at || ""),
+  };
+}
+
+function applyLiveTestBlockResponses(responses, responseRows) {
+  responseRows.forEach((row) => {
+    const questionId = String(row?.question_id || "").trim();
+    if (!questionId) {
+      return;
+    }
+    const key = Object.prototype.hasOwnProperty.call(responses, questionId)
+      ? questionId
+      : (Object.keys(responses).find((entry) => resolveSessionQuestionId(entry) === resolveSessionQuestionId(questionId)) || questionId);
+    const previous = isRecordObject(responses[key]) ? responses[key] : {};
+    responses[key] = {
+      struck: [],
+      timeSpentSec: 0,
+      highlightedLines: [],
+      highlightedLineColors: {},
+      highlightedChoices: {},
+      textHighlights: buildEmptyTextHighlightStore(),
+      ...previous,
+      selected: (Array.isArray(row.selected_choice_labels) ? row.selected_choice_labels : [])
+        .map((label) => normalizeQuestionChoiceLabel(label))
+        .filter(Boolean),
+      flagged: row.flagged === true,
+      notes: String(row.notes || ""),
+      submitted: row.submitted === true,
+    };
+  });
+}
+
+// Pulls unfinished tests started (or moved on) in the app, and drops local
+// copies of shared tests the app has already finished.
+async function hydrateLiveTestBlocks(currentUser) {
+  const context = getLiveTestBlockContext();
+  if (!context || context.currentUser?.id !== currentUser?.id) {
+    return;
+  }
+  const { client, profileId } = context;
+  const blocks = await runRelationalQueryWithTimeout(
+    client
+      .from("test_blocks")
+      .select("id,external_id,mode,source,status,question_count,duration_minutes,time_remaining_sec,current_index,elapsed_seconds,created_at,updated_at,test_block_items(count)")
+      .eq("user_id", profileId)
+      .in("status", ["in_progress", "suspended"])
+      .gte("updated_at", new Date(Date.now() - LIVE_TEST_BLOCK_MAX_AGE_MS).toISOString())
+      .order("updated_at", { ascending: false })
+      .limit(LIVE_TEST_BLOCK_PULL_LIMIT),
+    "Shared tests query timed out.",
+  );
+  const openBlocks = (Array.isArray(blocks) ? blocks : []).filter((block) => (
+    isUuidValue(String(block?.id || ""))
+    && Number(block?.test_block_items?.[0]?.count || 0) > 0
+  ));
+  const openBlockIds = new Set(openBlocks.map((block) => block.id));
+
+  const localSessions = getRawStoredSessions();
+  const ownSessions = localSessions.filter((session) => doesSessionBelongToUser(session, currentUser));
+  const sessionByBlockId = new Map();
+  const sessionById = new Map();
+  ownSessions.forEach((session) => {
+    const sessionId = String(session?.id || "").trim();
+    if (sessionId) {
+      sessionById.set(sessionId, session);
+    }
+    const blockId = String(session?.liveBlockId || "").trim();
+    if (isUuidValue(blockId)) {
+      sessionByBlockId.set(blockId, session);
+    }
+  });
+
+  // Linked tests the app has since finished: the app's history entry replaces them.
+  const closedLinkedIds = ownSessions
+    .filter((session) => session?.status === "in_progress")
+    .map((session) => String(session?.liveBlockId || "").trim())
+    .filter((blockId) => isUuidValue(blockId) && !openBlockIds.has(blockId));
+  const finishedBlockIds = new Set();
+  for (const idBatch of splitIntoBatches(closedLinkedIds, RELATIONAL_UUID_IN_BATCH_SIZE)) {
+    const rows = await runRelationalQueryWithTimeout(
+      client.from("test_blocks").select("id,status").in("id", idBatch),
+      "Shared test status query timed out.",
+    );
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      if (row?.status === "completed") {
+        finishedBlockIds.add(row.id);
+      }
+    });
+  }
+
+  let newBlockCount = 0;
+  const blocksToLoad = openBlocks.filter((block) => {
+    const local = sessionByBlockId.get(block.id)
+      || sessionById.get(block.id)
+      || sessionById.get(String(block.external_id || "").trim());
+    if (!local) {
+      newBlockCount += 1;
+      return newBlockCount <= LIVE_TEST_BLOCK_NEW_PER_HYDRATE;
+    }
+    if (local.status !== "in_progress") {
+      return false;
+    }
+    if (String(local.liveBlockRemoteAt || "") === String(block.updated_at || "")) {
+      return false;
+    }
+    const localChangedSincePush = local.liveBlockSig !== buildLiveTestBlockSignature(local);
+    return !localChangedSincePush
+      || parseSyncTimestampMs(block.updated_at) > parseSyncTimestampMs(local.updatedAt);
+  });
+
+  if (!blocksToLoad.length && !finishedBlockIds.size) {
+    return;
+  }
+
+  const blockIds = blocksToLoad.map((block) => block.id);
+  const itemsByBlockId = new Map();
+  const responsesByBlockId = new Map();
+  for (const idBatch of splitIntoBatches(blockIds, RELATIONAL_UUID_IN_BATCH_SIZE)) {
+    const [items, responses] = await Promise.all([
+      runRelationalQueryWithTimeout(
+        client.from("test_block_items").select("block_id,position,question_id").in("block_id", idBatch).order("position"),
+        "Shared test questions query timed out.",
+      ),
+      runRelationalQueryWithTimeout(
+        client.from("test_responses").select("block_id,question_id,selected_choice_labels,flagged,submitted,notes").in("block_id", idBatch),
+        "Shared test answers query timed out.",
+      ),
+    ]);
+    (Array.isArray(items) ? items : []).forEach((row) => {
+      const list = itemsByBlockId.get(row.block_id) || [];
+      list.push(String(row.question_id || "").trim());
+      itemsByBlockId.set(row.block_id, list);
+    });
+    (Array.isArray(responses) ? responses : []).forEach((row) => {
+      const list = responsesByBlockId.get(row.block_id) || [];
+      list.push(row);
+      responsesByBlockId.set(row.block_id, list);
+    });
+  }
+
+  // Re-read in case the session store changed while the queries ran.
+  const latestSessions = getRawStoredSessions();
+  const questionStore = getQuestionStore();
+  const nextSessions = latestSessions.filter((session) => !(
+    session?.status === "in_progress"
+    && finishedBlockIds.has(String(session?.liveBlockId || "").trim())
+  ));
+  finishedBlockIds.forEach((blockId) => {
+    const removed = latestSessions.find((session) => String(session?.liveBlockId || "").trim() === blockId);
+    if (removed?.id) {
+      clearPersistedActiveSessionId(removed.id);
+    }
+  });
+  blocksToLoad.forEach((block) => {
+    const questionIds = (itemsByBlockId.get(block.id) || []).filter((questionId) => isUuidValue(questionId));
+    if (!questionIds.length) {
+      return;
+    }
+    const responseRows = responsesByBlockId.get(block.id) || [];
+    const externalId = String(block.external_id || "").trim();
+    const index = nextSessions.findIndex((session) => {
+      const sessionId = String(session?.id || "").trim();
+      return String(session?.liveBlockId || "").trim() === block.id
+        || sessionId === block.id
+        || (externalId && sessionId === externalId);
+    });
+    if (index < 0) {
+      const created = mapLiveTestBlockToLocalSession(block, questionIds, responseRows, currentUser, profileId, questionStore);
+      normalizeSession(created, { questionStore });
+      created.liveBlockSig = buildLiveTestBlockSignature(created);
+      nextSessions.push(created);
+      return;
+    }
+    const local = nextSessions[index];
+    const merged = { ...local };
+    merged.responses = isRecordObject(local.responses) ? deepClone(local.responses) : {};
+    applyLiveTestBlockResponses(merged.responses, responseRows);
+    const progressMax = Math.max(0, (Array.isArray(merged.questionIds) ? merged.questionIds.length : questionIds.length) - 1);
+    merged.currentIndex = Math.max(0, Math.min(progressMax, Math.floor(Number(block.current_index || 0) || 0)));
+    merged.elapsedSec = Math.max(0, Number(block.elapsed_seconds || 0) || 0);
+    if (merged.mode === "timed" && block.time_remaining_sec != null) {
+      merged.timeRemainingSec = Math.max(0, Number(block.time_remaining_sec) || 0);
+    }
+    merged.status = "in_progress";
+    merged.paused = false;
+    merged.updatedAt = block.updated_at || merged.updatedAt;
+    merged.lastQuestionAt = Date.now();
+    merged.lastTimerSyncAt = Date.now();
+    merged.liveBlockId = block.id;
+    merged.liveBlockRemoteAt = String(block.updated_at || "");
+    merged.liveBlockSig = buildLiveTestBlockSignature(merged);
+    nextSessions[index] = merged;
+  });
+  saveLocalOnly(STORAGE_KEYS.sessions, nextSessions);
 }
 
 function getSyncScopeForUser(user = null) {
@@ -48822,6 +49302,7 @@ function upsertSession(updated, options = {}) {
   invalidateAnalyticsCacheForStorageKey(STORAGE_KEYS.sessions);
   scheduleSessionStateSync(options);
   scheduleSessionStorePersist(options);
+  scheduleLiveTestBlockSync(options);
 }
 
 function getFilterOptions(questions) {

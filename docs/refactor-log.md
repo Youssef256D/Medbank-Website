@@ -2,6 +2,34 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-25 — Unfinished tests shared between the website and the app
+- Before this, the app kept unfinished tests in `test_blocks` /
+  `test_block_items` / `test_responses`, while the website kept them only in
+  the browser and the `u:<uid>:mcq_sessions` app_state backup. Neither read
+  the other's, so a test left half-done on one never showed "Resume" on the
+  other. Finished tests already crossed over via `test_history_entries`.
+- New section in `main.js` (search `liveTestBlockRuntime`):
+  - `syncLiveTestBlocks()` (debounced from `upsertSession`, 4 s, not reset
+    by clock ticks) creates a block for each website in-progress session
+    through the app's RPC `create_test_block_with_items` with
+    `p_external_id = session.id` (idempotent), then upserts answers into
+    `test_responses` and progress/status into `test_blocks`. When the website
+    finishes a linked test it sets the block `completed`.
+  - `hydrateLiveTestBlocks()` runs at the end of `hydrateRelationalSessions`
+    (so never during the `session` / `review` route). It brings in the
+    newest open app block (only one per pass: the website ends the active
+    test when a new one starts) as a local session **whose id is the block
+    id**, so the history entry from either side lands under the same
+    external_id. It refreshes a linked local session when the block's
+    `updated_at` moved and the local copy hasn't changed since the last push,
+    and drops a local in-progress copy whose block the app completed (the
+    app's history entry replaces it).
+  - Session fields added: `liveBlockId`, `liveBlockSig` (signature of the
+    last pushed state), `liveBlockRemoteAt` (block `updated_at` last seen),
+    `liveBlockClosed`.
+- Sessions whose questions have no DB uuid are skipped. No schema, RLS or
+  app change; the app already reads these rows.
+
 ### 2026-10-24 — Cloudflare Stream functions ready for the app (not deployed)
 - `cloudflare-stream-token`: adds `hlsUrl`
   (`customer-<code>.cloudflarestream.com/<token>/manifest/video.m3u8`) for the
