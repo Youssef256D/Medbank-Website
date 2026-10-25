@@ -2,6 +2,24 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-25 — Shared answers can't be overwritten or cleared
+- Students' iPhone answers kept disappearing after the first two fixes. Edge
+  logs show website pushes from many browsers; tabs loaded between the first
+  deploy and their next reload still run the first version, which re-sent
+  whole answer sets with empty selections. The lost answers are not
+  recoverable (no prior copy anywhere).
+- **Database guard** (migration `20261025200000_protect_test_response_answers`):
+  BEFORE INSERT/UPDATE trigger `trg_protect_test_response_answer` on
+  `test_responses` keeps the previous selection, `submitted` and
+  `answered_at` when an update brings an empty selection, and never stores
+  an empty selection as submitted. It also runs the one-time unlock of open
+  blocks. This holds against any client, including stale tabs.
+- **Website** (`syncLiveTestBlocks`): an answer is written only over the
+  value this device last saw. Never-synced questions are insert-only
+  (`ignoreDuplicates`), changed ones are a compare-and-set on the previous
+  `selected_choice_labels`; a mismatch is left for the next pull. Flags and
+  notes still upsert alone.
+
 ### 2026-10-25 — Unlock questions "submitted" with no answer
 - `normalizeSession` now sets `submitted: false` on any response of an
   in-progress session that is submitted with an empty selection. The website's
