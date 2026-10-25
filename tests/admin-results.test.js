@@ -44,9 +44,10 @@ function loadResults({ rpc } = {}) {
     renderAdminPager: () => '',
     canAdminAccessPage: () => true,
     getCurrentAdminAccess: () => null,
+    adminAccessCan: () => true,
   });
   vm.runInContext(
-    [sliceFunction('escapeHtml'), sliceFunction('formatAdminCount'), sliceFunction('isUuidValue'), mainSource.slice(blockStart, blockEnd)].join('\n'),
+    [sliceFunction('escapeHtml'), sliceFunction('formatAdminCount'), sliceFunction('isUuidValue'), sliceFunction('toCsvCell'), mainSource.slice(blockStart, blockEnd)].join('\n'),
     context,
   );
   return context;
@@ -184,4 +185,58 @@ test('a student with no finished tests says so', async () => {
   ctx.ensureAdminResultsLastTests([student]);
   await flush();
   assert.ok(ctx.renderAdminUserLastTestCell(student).includes('No tests yet'));
+});
+
+test('a wrong answer key is flagged only when most students agree on one wrong choice', () => {
+  const ctx = loadResults();
+  assert.equal(ctx.getAdminResultsKeyWarning({ attempts: 29, correct_labels: ['A'], choice_counts: { A: 0, B: 22, C: 7 } }), 'B');
+  assert.equal(ctx.getAdminResultsKeyWarning({ attempts: 9, correct_labels: ['A'], choice_counts: { B: 9 } }), '', 'too few answers');
+  assert.equal(ctx.getAdminResultsKeyWarning({ attempts: 20, correct_labels: ['A'], choice_counts: { A: 6, B: 11, C: 3 } }), '', 'the key is picked often enough');
+  assert.equal(ctx.getAdminResultsKeyWarning({ attempts: 20, correct_labels: ['A'], choice_counts: { B: 7, C: 7, D: 6 } }), '', 'wrong picks are spread out');
+});
+
+test('a most-missed card escapes the question and its choices', () => {
+  const ctx = loadResults();
+  const html = ctx.renderAdminResultsMissedCard({
+    question_id: 'q"1',
+    stem: '<p>Pick <img src=x onerror=alert(1)></p>',
+    course_name: 'Gyn <b>',
+    topic_name: 'Topic & co',
+    status: 'published',
+    attempts: 29,
+    wrong: 29,
+    students: 25,
+    correct_labels: ['A'],
+    choice_counts: { A: 0, B: 22, C: 7 },
+    open_reports: 2,
+  }, 1, new Map([['A', 'Right <i>'], ['B', 'Wrong "one"']]));
+  assert.ok(!html.includes('<img'));
+  assert.ok(!html.includes('<i>'));
+  assert.ok(html.includes('Gyn &lt;b&gt; · Topic &amp; co'));
+  assert.ok(html.includes('Wrong &quot;one&quot;'));
+  assert.ok(html.includes('100% wrong'));
+  assert.ok(html.includes('Check the answer key: most students picked B'));
+  assert.ok(html.includes('data-admin-results-edit-question="q&quot;1"'));
+  assert.ok(html.includes('2 open reports'));
+  assert.match(html, /<b>A<\/b>[\s\S]*?0 · 0%/, 'a choice nobody picked shows 0');
+});
+
+test('CSV cells are quoted and formulas are neutralised', () => {
+  const ctx = loadResults();
+  const csv = ctx.buildAdminResultsCsv([['name', (row) => row.name], ['score', (row) => row.score]], [
+    { name: '=HYPERLINK("x")', score: 0 },
+    { name: 'Sara, "S"', score: 75 },
+  ]);
+  assert.equal(csv, '"name","score"\r\n"\'=HYPERLINK(""x"")","0"\r\n"Sara, ""S""","75"\r\n');
+});
+
+test('an export reads every page until a short one', async () => {
+  const sizes = [200, 200, 13];
+  const ctx = loadResults({
+    rpc: (name, params) => Promise.resolve({ data: Array.from({ length: sizes[params.p_offset / 200] }, (_, i) => ({ i })), error: null }),
+  });
+  const rows = await ctx.fetchAdminResultsAllPages('admin_results_students', { p_search: '' });
+  assert.equal(rows.length, 413);
+  assert.deepEqual(ctx.calls.map((call) => call.params.p_offset), [0, 200, 400]);
+  assert.ok(ctx.calls.every((call) => call.params.p_limit === 200 && call.params.p_search === ''));
 });

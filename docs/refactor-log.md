@@ -2,6 +2,29 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-26 — Admin Student results, phase 3 (Subjects, Most missed, CSV)
+- Subjects tab: every subject with students, tests, answers, % right and
+  bank covered; a subject opens its topics (weakest first, or by name / most
+  answered). Most missed tab: questions most often answered wrong, filtered by
+  subject, topic and a minimum number of answers (5/10/20/50); each card shows
+  how many students picked each choice (choice texts read from
+  `question_choices`), opens the question editor (`mcq.questions_edit`) or its
+  open reports (`question-reports` page access).
+- `getAdminResultsKeyWarning`: "Check the answer key" shows when a question has
+  at least 10 answers, one wrong choice got at least half of them and more
+  than twice the picks of the key. It is a hint, not a verdict.
+- `openAdminQuestionEditorForDbId(questionId)` was pulled out of
+  `wireAdminQuestionReportDecision` so Results can open the editor too.
+- CSV export on every Results table (`runAdminResultsExport`): columns use
+  `toCsvCell` (formula guard), the file starts with `\ufeff` for Excel.
+  Paged lists (students, most missed) are read in pages of 200, up to
+  `ADMIN_RESULTS_EXPORT_MAX_ROWS` (5,000).
+- Migration `20261026150000_results_coverage_published_only`: "bank covered"
+  counts only answered questions that are still published in that subject or
+  topic (before, deleted or moved questions made it read e.g. 743 of 571).
+- `.admin-results-table-wrap` is `position: relative` so the screen-reader-only
+  header labels stay inside the scroll box (they widened the page).
+
 ### 2026-10-26 — Admin Student results, phase 2 (Results page + Users column)
 - New admin page `results` ("Student results", People group): in
   `ADMIN_DATA_PAGES`, `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS` (`people`) and

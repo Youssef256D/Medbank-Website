@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-26 — Subjects, most-missed questions and CSV in Student results
+- **Subjects** tab: how students do in each subject and, inside it, in each
+  topic (weakest first), with how much of the bank they have covered.
+- **Most missed** tab: the questions students get wrong most often, with how
+  many picked each choice. When most students agree on one wrong answer, the
+  card suggests checking the answer key. Open the question to fix it, or its
+  reports.
+- Every Results table can be exported to CSV (opens in Excel).
+
 ### 2026-10-26 — Student results in the admin
 - New **Student results** page under People: an overview of all students
   (tests finished, questions answered, how many are right, active students,

@@ -64939,37 +64939,44 @@ async function fetchQuestionCourseName(questionDbId) {
   return String(courseResult.data?.[0]?.course_name || "").trim();
 }
 
+// Opens the Questions editor on a question by its database id, loading its
+// course first when this admin has not opened it yet. Used by question
+// reports and Student results.
+async function openAdminQuestionEditorForDbId(questionId) {
+  const findLocal = () => getQuestions().find((entry) => String(entry?.dbId || "").trim() === questionId);
+  let local = findLocal();
+  if (!local) {
+    // The admin holds only the courses they opened; load this one's.
+    const courseName = await fetchQuestionCourseName(questionId);
+    if (courseName) {
+      await loadAdminCourseQuestions(courseName);
+      local = findLocal();
+    }
+  }
+  const previousPage = state.adminPage;
+  state.adminPage = "questions";
+  if (local) {
+    const meta = getQbankCourseTopicMeta(local);
+    state.adminEditQuestionId = local.id;
+    state.adminEditorCourse = meta?.course || state.adminEditorCourse;
+    state.adminEditorTopic = meta?.topic || state.adminEditorTopic;
+    state.adminQuestionModalOpen = true;
+  } else {
+    toast("Find the question in Questions to edit it.");
+  }
+  applyAdminPageTransition(previousPage, "questions");
+  state.skipNextRouteAnimation = true;
+  render();
+}
+
 function wireAdminQuestionReportDecision(panel, questionId, count) {
   const form = panel.querySelector(".question-report-close-form");
   if (!form) {
     return;
   }
-  form.querySelector("[data-question-report-edit]")?.addEventListener("click", async () => {
-    const findLocal = () => getQuestions().find((entry) => String(entry?.dbId || "").trim() === questionId);
-    let local = findLocal();
+  form.querySelector("[data-question-report-edit]")?.addEventListener("click", () => {
     closeQuestionReportDialog();
-    if (!local) {
-      // The admin holds only the courses they opened; load this one's.
-      const courseName = await fetchQuestionCourseName(questionId);
-      if (courseName) {
-        await loadAdminCourseQuestions(courseName);
-        local = findLocal();
-      }
-    }
-    const previousPage = state.adminPage;
-    state.adminPage = "questions";
-    if (local) {
-      const meta = getQbankCourseTopicMeta(local);
-      state.adminEditQuestionId = local.id;
-      state.adminEditorCourse = meta?.course || state.adminEditorCourse;
-      state.adminEditorTopic = meta?.topic || state.adminEditorTopic;
-      state.adminQuestionModalOpen = true;
-    } else {
-      toast("Find the question in Questions to edit it.");
-    }
-    applyAdminPageTransition(previousPage, "questions");
-    state.skipNextRouteAnimation = true;
-    render();
+    openAdminQuestionEditorForDbId(questionId);
   });
   form.querySelectorAll("[data-question-report-decide]").forEach((button) => button.addEventListener("click", async () => {
     const outcome = button.getAttribute("data-question-report-decide");
@@ -65428,7 +65435,15 @@ const ADMIN_RESULTS_STUDENT_TABS = [
   { id: "mistakes", label: "Mistakes" },
   { id: "profile", label: "Profile & activity" },
 ];
+const ADMIN_RESULTS_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "subjects", label: "Subjects" },
+  { id: "missed", label: "Most missed" },
+  { id: "students", label: "Students" },
+];
+const ADMIN_RESULTS_MIN_ATTEMPTS = [5, 10, 20, 50];
 const ADMIN_RESULTS_PAGE_SIZE = 50;
+const ADMIN_RESULTS_EXPORT_MAX_ROWS = 5000;
 let adminResultsSearchTimer = 0;
 
 function getAdminResultsState() {
@@ -65444,6 +65459,13 @@ function getAdminResultsState() {
       page: 1,
       studentId: "",
       studentTab: "progress",
+      subjectId: "",
+      topicSort: "weakest",
+      missedCourse: "",
+      missedTopic: "",
+      missedMin: "10",
+      missedPage: 1,
+      exporting: "",
       slots: {},
       courseNames: null,
       courseNamesLoading: false,
@@ -65723,6 +65745,7 @@ function renderAdminResultsDailyChart(daily) {
       <span>${escapeHtml(formatDay(days[0].day))}</span>
       <span>${escapeHtml(formatDay(days[days.length - 1].day))}</span>
     </div>
+    <div class="admin-results-chart-actions">${renderAdminResultsExportButton("daily")}</div>
     <details class="admin-results-chart-table">
       <summary>Show as a table</summary>
       <div class="admin-results-table-wrap">
@@ -65789,6 +65812,7 @@ function renderAdminResultsStudents(results) {
       <input type="search" id="admin-results-search" placeholder="Search by name, email or ID" value="${escapeHtml(results.searchDraft)}" aria-label="Search students" autocomplete="off" />
     </form>
     ${renderAdminResultsSelect("sort", "Sort", ADMIN_RESULTS_STUDENT_SORTS, results.sort)}
+    ${renderAdminResultsExportButton("students")}
   </div>`;
   const rows = Array.isArray(slot.data) ? slot.data : [];
   if (!rows.length) {
@@ -65832,7 +65856,8 @@ function renderAdminResultsStudentProgress(data) {
     return `<p class="subtle admin-results-empty">No finished tests in this period.</p>`;
   }
   const topics = Array.isArray(data.topics) ? data.topics : [];
-  return `<div class="admin-results-courses">${courses.map((course) => {
+  return `<div class="admin-results-toolbar is-end">${renderAdminResultsExportButton("student-topics", "Export topics CSV")}</div>
+    <div class="admin-results-courses">${courses.map((course) => {
     const accuracy = getAdminResultsAccuracy(course.correct, course.answered);
     const published = Number(course.published_questions) || 0;
     const seen = Number(course.questions_answered) || 0;
@@ -65905,7 +65930,10 @@ function renderAdminResultsStudentTests(data) {
     <td class="is-number">${escapeHtml(`${formatAdminCount(Number(block.answered) || 0)} of ${formatAdminCount(Number(block.question_count) || 0)}`)}</td>
     <td>${escapeHtml(block.mode ? `${String(block.mode).charAt(0).toUpperCase()}${String(block.mode).slice(1)}` : "—")}</td>
   </tr>`).join("");
-  return `<h4 class="admin-results-subhead">Finished tests${tests.length ? ` · ${escapeHtml(formatAdminCount(tests.length))}` : ""}</h4>
+  return `<div class="admin-results-subhead-row">
+      <h4 class="admin-results-subhead">Finished tests${tests.length ? ` · ${escapeHtml(formatAdminCount(tests.length))}` : ""}</h4>
+      ${tests.length ? renderAdminResultsExportButton("student-tests") : ""}
+    </div>
     ${testRows ? `<div class="admin-results-table-wrap">
       <table class="admin-results-table">
         <thead><tr><th>Finished</th><th>Test</th><th>Mode</th><th>Score</th><th>Time</th><th>Where</th></tr></thead>
@@ -65941,7 +65969,10 @@ function renderAdminResultsStudentMistakes(data) {
     groups.get(groupKey).items.push(mistake);
   });
   const sorted = [...groups.values()].sort((a, b) => b.items.length - a.items.length || a.topic.localeCompare(b.topic));
-  return `<p class="subtle admin-results-note">${escapeHtml(`The latest ${formatAdminCount(mistakes.length)} wrong answers, grouped by topic, most first.`)}</p>
+  return `<div class="admin-results-subhead-row">
+      <p class="subtle admin-results-note">${escapeHtml(`The latest ${formatAdminCount(mistakes.length)} wrong answers, grouped by topic, most first.`)}</p>
+      ${renderAdminResultsExportButton("student-mistakes")}
+    </div>
     <div class="admin-results-mistakes">${sorted.map((group, index) => `<details class="admin-results-mistake-group" ${index < 3 ? "open" : ""}>
       <summary>
         <span><b>${escapeHtml(group.topic)}</b>${group.course ? `<small>${escapeHtml(group.course)}</small>` : ""}</span>
@@ -66056,15 +66087,22 @@ function renderAdminResultsStudent(results) {
 function renderAdminResultsSection() {
   const results = getAdminResultsState();
   const studentView = Boolean(results.studentId);
-  const tabs = studentView ? "" : `<div class="question-report-tabs admin-results-tabs" role="tablist" aria-label="Results view">
-    <button type="button" role="tab" aria-selected="${results.tab === "students" ? "false" : "true"}" class="${results.tab === "students" ? "" : "is-active"}" data-admin-results-tab="overview">Overview</button>
-    <button type="button" role="tab" aria-selected="${results.tab === "students" ? "true" : "false"}" class="${results.tab === "students" ? "is-active" : ""}" data-admin-results-tab="students">Students</button>
+  const activeTab = ADMIN_RESULTS_TABS.some((tab) => tab.id === results.tab) ? results.tab : "overview";
+  const tabs = studentView ? "" : `<div class="question-report-tabs admin-results-tabs" role="tablist" aria-label="Results view">${ADMIN_RESULTS_TABS.map((tab) => `
+    <button type="button" role="tab" aria-selected="${activeTab === tab.id ? "true" : "false"}" class="${activeTab === tab.id ? "is-active" : ""}" data-admin-results-tab="${escapeHtml(tab.id)}">${escapeHtml(tab.label)}</button>`).join("")}
   </div>`;
-  const body = studentView
-    ? renderAdminResultsStudent(results)
-    : results.tab === "students"
-      ? renderAdminResultsStudents(results)
-      : renderAdminResultsOverview(results);
+  let body;
+  if (studentView) {
+    body = renderAdminResultsStudent(results);
+  } else if (activeTab === "students") {
+    body = renderAdminResultsStudents(results);
+  } else if (activeTab === "subjects") {
+    body = renderAdminResultsSubjects(results);
+  } else if (activeTab === "missed") {
+    body = renderAdminResultsMissed(results);
+  } else {
+    body = renderAdminResultsOverview(results);
+  }
   const busy = Object.values(results.slots).some((slot) => slot.loading);
   const pageHeader = renderAdminPageHeader({
     id: "results",
@@ -66080,6 +66118,8 @@ function renderAdminResultsSection() {
       "<b>Answered right</b> is right answers out of answered questions; skipped questions are not counted.",
       "A test counts on the day it was finished. Unfinished tests are listed but not scored.",
       "Open a student for their progress per subject and topic, every test, their mistakes and their profile.",
+      "<b>Most missed</b> lists questions by how often they were answered wrong. When most students pick the same wrong choice, the card asks you to check the answer key.",
+      "<b>Export CSV</b> downloads what the tab shows; long lists (students, most missed) are downloaded in full.",
     ],
   });
   const back = studentView
@@ -66092,6 +66132,412 @@ function renderAdminResultsSection() {
     ${renderAdminResultsFilters(results, { studentView })}
     ${body}
   </section>`;
+}
+
+// Subjects tab: every subject with results, then one subject's topics.
+function getAdminResultsSubjectsSlot(results) {
+  return loadAdminResultsSlot("subjects", getAdminResultsFilterKey(results), "admin_results_subjects", () => getAdminResultsFilterParams(results));
+}
+
+function getAdminResultsTopicsSlot(results, courseId) {
+  return loadAdminResultsSlot("topics", `${getAdminResultsFilterKey(results)}|${courseId}`, "admin_results_topics", () => ({
+    p_course_id: courseId,
+    ...getAdminResultsFilterParams(results),
+  }));
+}
+
+function formatAdminResultsTerm(year, semester) {
+  return year ? `Y${String(year)}${semester ? ` · S${String(semester)}` : ""}` : "";
+}
+
+function renderAdminResultsCoverage(seen, published) {
+  const total = Number(published) || 0;
+  const answered = Number(seen) || 0;
+  if (!total) {
+    return `<span>${escapeHtml(formatAdminCount(answered))}</span>`;
+  }
+  const share = Math.min(100, Math.round((answered / total) * 100));
+  return `<span>${escapeHtml(`${formatAdminCount(answered)} of ${formatAdminCount(total)}`)}</span>
+    <span class="admin-results-coverage" role="img" aria-label="${escapeHtml(`${String(share)}% of the published questions answered`)}"><span style="width: ${String(share)}%"></span></span>`;
+}
+
+function renderAdminResultsAccuracyCell(correct, answered) {
+  const accuracy = getAdminResultsAccuracy(correct, answered);
+  return `<td class="admin-results-accuracy-cell">
+    <span>${escapeHtml(formatAdminResultsPercent(accuracy))}</span>
+    ${accuracy === null ? "" : renderAdminResultsMeter(accuracy, `${String(accuracy)}% right`)}
+  </td>`;
+}
+
+function renderAdminResultsExportButton(kind, label = "Export CSV") {
+  const busy = getAdminResultsState().exporting === kind;
+  return `<button type="button" class="btn ghost admin-btn-sm admin-results-export" data-admin-results-export="${escapeHtml(kind)}" ${busy ? "disabled" : ""}>${busy ? "Exporting…" : escapeHtml(label)}</button>`;
+}
+
+function renderAdminResultsSubjects(results) {
+  if (results.subjectId) {
+    return renderAdminResultsSubjectTopics(results);
+  }
+  const slot = getAdminResultsSubjectsSlot(results);
+  const rows = Array.isArray(slot.data) ? slot.data : [];
+  if (!rows.length) {
+    return renderAdminResultsStatus(slot, "No subjects yet.");
+  }
+  const body = rows.map((row) => {
+    const answered = Number(row.answered) || 0;
+    return `<tr>
+      <td>
+        <button type="button" class="admin-results-student-link" data-admin-results-subject="${escapeHtml(row.course_id)}">${escapeHtml(row.course_name || "Subject")}</button>
+        <small>${escapeHtml([formatAdminResultsTerm(row.academic_year, row.academic_semester), row.is_active ? "" : "Hidden from students"].filter(Boolean).join(" · "))}</small>
+      </td>
+      <td class="is-number">${escapeHtml(formatAdminCount(Number(row.students) || 0))}</td>
+      <td class="is-number">${escapeHtml(formatAdminCount(Number(row.tests) || 0))}</td>
+      <td class="is-number">${escapeHtml(formatAdminCount(answered))}</td>
+      ${renderAdminResultsAccuracyCell(row.correct, answered)}
+      <td class="admin-results-accuracy-cell">${renderAdminResultsCoverage(row.questions_answered, row.published_questions)}</td>
+      <td class="is-nowrap">${answered ? escapeHtml(formatAdminResultsAgo(row.last_answered_at)) : "—"}</td>
+      <td>${answered ? `<button type="button" class="admin-user-last-test-open" data-admin-results-missed-course="${escapeHtml(row.course_id)}">Most missed ›</button>` : ""}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="admin-results-toolbar is-end">${renderAdminResultsExportButton("subjects")}</div>
+    <div class="admin-results-table-wrap">
+      <table class="admin-results-table">
+        <thead><tr><th>Subject</th><th class="is-number">Students</th><th class="is-number">Tests</th><th class="is-number">Questions</th><th>Right</th><th>Bank covered</th><th>Last answer</th><th><span class="sr-only">Most missed</span></th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <p class="subtle admin-results-note">Bank covered counts different questions answered out of the subject's published questions.</p>`;
+}
+
+function renderAdminResultsSubjectTopics(results) {
+  const subjects = Array.isArray(getAdminResultsSubjectsSlot(results).data) ? getAdminResultsSubjectsSlot(results).data : [];
+  const subject = subjects.find((row) => row.course_id === results.subjectId) || null;
+  const slot = getAdminResultsTopicsSlot(results, results.subjectId);
+  const back = `<button type="button" class="btn ghost admin-btn-sm admin-results-back" data-admin-results-subjects-back>‹ All subjects</button>`;
+  const head = subject ? `<header class="admin-results-student-head">
+      <div>
+        <h4>${escapeHtml(subject.course_name || "Subject")}</h4>
+        <p class="subtle">${escapeHtml(formatAdminResultsTerm(subject.academic_year, subject.academic_semester))}</p>
+      </div>
+      <div class="admin-results-pills">${renderAdminResultsExportButton("topics")}</div>
+    </header>
+    <div class="admin-results-tiles">
+      ${renderAdminResultsTile("Students", formatAdminCount(Number(subject.students) || 0))}
+      ${renderAdminResultsTile("Questions answered", formatAdminCount(Number(subject.answered) || 0))}
+      ${renderAdminResultsTile("Answered right", formatAdminResultsPercent(getAdminResultsAccuracy(subject.correct, subject.answered)))}
+      ${renderAdminResultsTile("Bank covered", Number(subject.published_questions) ? formatAdminResultsPercent(Math.min(100, Math.round(((Number(subject.questions_answered) || 0) / Number(subject.published_questions)) * 100))) : "—", `${formatAdminCount(Number(subject.questions_answered) || 0)} of ${formatAdminCount(Number(subject.published_questions) || 0)} questions`)}
+    </div>` : "";
+  const rows = Array.isArray(slot.data) ? [...slot.data] : [];
+  if (!rows.length) {
+    return `${back}${head}${renderAdminResultsStatus(slot, "No topics with questions.")}`;
+  }
+  const byWeakest = results.topicSort !== "order";
+  if (byWeakest) {
+    rows.sort((a, b) => {
+      const accuracyA = getAdminResultsAccuracy(a.correct, a.answered);
+      const accuracyB = getAdminResultsAccuracy(b.correct, b.answered);
+      if (accuracyA === null || accuracyB === null) {
+        return accuracyA === null ? (accuracyB === null ? 0 : 1) : -1;
+      }
+      return accuracyA - accuracyB || (Number(b.answered) || 0) - (Number(a.answered) || 0);
+    });
+  }
+  const body = rows.map((row) => {
+    const answered = Number(row.answered) || 0;
+    return `<tr>
+      <td>${escapeHtml(row.topic_name || "Topic")}${row.is_active === false ? `<small>Hidden from students</small>` : ""}</td>
+      <td class="is-number">${escapeHtml(formatAdminCount(Number(row.students) || 0))}</td>
+      <td class="is-number">${escapeHtml(formatAdminCount(answered))}</td>
+      ${renderAdminResultsAccuracyCell(row.correct, answered)}
+      <td class="admin-results-accuracy-cell">${renderAdminResultsCoverage(row.questions_answered, row.published_questions)}</td>
+      <td>${answered ? `<button type="button" class="admin-user-last-test-open" data-admin-results-missed-topic="${escapeHtml(row.topic_id)}">Most missed ›</button>` : ""}</td>
+    </tr>`;
+  }).join("");
+  return `${back}${head}
+    <div class="admin-results-toolbar">
+      ${renderAdminResultsSelect("topicSort", "Order", [{ id: "weakest", label: "Weakest first" }, { id: "order", label: "Course order" }], byWeakest ? "weakest" : "order")}
+    </div>
+    <div class="admin-results-table-wrap">
+      <table class="admin-results-table">
+        <thead><tr><th>Topic</th><th class="is-number">Students</th><th class="is-number">Questions</th><th>Right</th><th>Covered</th><th><span class="sr-only">Most missed</span></th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
+// Most missed tab: questions answered wrong most often, with how often each
+// choice was picked. Choice texts are read for the page shown only.
+function ensureAdminResultsChoices(questionIds) {
+  const results = getAdminResultsState();
+  const ids = [...new Set(questionIds.filter((id) => isUuidValue(id)))];
+  const key = ids.join(",");
+  if (!ids.length || results.choices?.key === key) {
+    return results.choices?.key === key ? results.choices.map : null;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return null;
+  }
+  results.choices = { key, map: null };
+  runRelationalQueryWithTimeout(
+    client.from("question_choices").select("question_id,choice_label,choice_text").in("question_id", ids),
+    "Answer choices took too long to load.",
+  )
+    .then((rows) => {
+      if (results.choices?.key !== key) {
+        return;
+      }
+      const map = new Map();
+      (rows || []).forEach((row) => {
+        const questionId = String(row.question_id);
+        if (!map.has(questionId)) {
+          map.set(questionId, new Map());
+        }
+        map.get(questionId).set(String(row.choice_label || "").trim().toUpperCase(), String(row.choice_text || ""));
+      });
+      results.choices.map = map;
+    })
+    .catch((error) => {
+      console.warn("Answer choices unavailable.", error?.message || error);
+      if (results.choices?.key === key) {
+        results.choices.map = new Map();
+      }
+    })
+    .finally(refreshAdminResultsView);
+  return null;
+}
+
+// When most students pick the same wrong answer, the key may be wrong.
+function getAdminResultsKeyWarning(row) {
+  const counts = row.choice_counts || {};
+  const correct = new Set((row.correct_labels || []).map((label) => String(label).toUpperCase()));
+  const attempts = Number(row.attempts) || 0;
+  const correctPicks = [...correct].reduce((sum, label) => sum + (Number(counts[label]) || 0), 0);
+  const [topLabel, topCount] = Object.entries(counts)
+    .filter(([label]) => !correct.has(String(label).toUpperCase()))
+    .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))[0] || ["", 0];
+  const picks = Number(topCount) || 0;
+  return attempts >= 10 && picks >= attempts / 2 && picks > correctPicks * 2 ? topLabel : "";
+}
+
+function renderAdminResultsMissedCard(row, rank, choiceTexts) {
+  const access = getCurrentAdminAccess();
+  const attempts = Number(row.attempts) || 0;
+  const wrong = Number(row.wrong) || 0;
+  const wrongShare = attempts ? Math.round((wrong / attempts) * 100) : 0;
+  const counts = row.choice_counts || {};
+  const correct = new Set((row.correct_labels || []).map((label) => String(label).toUpperCase()));
+  const warnLabel = getAdminResultsKeyWarning(row);
+  const labels = [...new Set([...(choiceTexts ? [...choiceTexts.keys()] : []), ...Object.keys(counts), ...correct])]
+    .map((label) => String(label).toUpperCase())
+    .filter(Boolean)
+    .sort();
+  const topWrong = Math.max(0, ...labels.filter((label) => !correct.has(label)).map((label) => Number(counts[label]) || 0));
+  const choices = labels.map((label) => {
+    const count = Number(counts[label]) || 0;
+    const share = attempts ? Math.round((count / attempts) * 100) : 0;
+    const isKey = correct.has(label);
+    const isTopWrong = !isKey && count > 0 && count === topWrong;
+    return `<li class="${isKey ? "is-key" : isTopWrong ? "is-top-wrong" : ""}">
+      <b>${escapeHtml(label)}</b>
+      <span class="admin-results-choice-text">${escapeHtml(choiceTexts?.get(label) || "")}${isKey ? ` <em>Answer</em>` : isTopWrong ? ` <em>Most picked wrong</em>` : ""}</span>
+      <span class="admin-results-choice-bar" aria-hidden="true"><span style="width: ${String(share)}%"></span></span>
+      <span class="admin-results-choice-count">${escapeHtml(`${formatAdminCount(count)} · ${String(share)}%`)}</span>
+    </li>`;
+  }).join("");
+  const reports = Number(row.open_reports) || 0;
+  const actions = [
+    warnLabel ? `<span class="admin-results-key-warning">${escapeHtml(`Check the answer key: most students picked ${String(warnLabel).toUpperCase()}`)}</span>` : "",
+    reports && canAdminAccessPage(access, "question-reports")
+      ? `<button type="button" class="btn ghost admin-btn-sm" data-admin-results-reports="${escapeHtml(row.question_id)}">${escapeHtml(`${String(reports)} open report${reports === 1 ? "" : "s"}`)}</button>`
+      : "",
+    adminAccessCan(access, "mcq.questions_edit")
+      ? `<button type="button" class="btn ghost admin-btn-sm" data-admin-results-edit-question="${escapeHtml(row.question_id)}">Edit question</button>`
+      : "",
+  ].filter(Boolean).join("");
+  return `<article class="admin-results-missed-card">
+    <header>
+      <span class="admin-results-missed-rank">${escapeHtml(`#${String(rank)}`)}</span>
+      <span class="admin-results-missed-where">${escapeHtml([row.course_name, row.topic_name].filter(Boolean).join(" · ") || "Question removed")}${row.status && row.status !== "published" ? ` <span class="admin-user-access-tag is-off">${escapeHtml(row.status)}</span>` : ""}</span>
+      <b class="admin-results-missed-share">${escapeHtml(`${String(wrongShare)}% wrong`)}</b>
+    </header>
+    <p class="admin-results-missed-stem">${escapeHtml(getAdminResultsPlainStem(row.stem) || "Question removed")}</p>
+    ${choices ? `<ul class="admin-results-choices">${choices}</ul>` : ""}
+    <footer>
+      <small>${escapeHtml(`${formatAdminCount(wrong)} of ${formatAdminCount(attempts)} answers wrong · ${formatAdminCount(Number(row.students) || 0)} students`)}</small>
+      ${actions ? `<div class="admin-results-missed-actions">${actions}</div>` : ""}
+    </footer>
+  </article>`;
+}
+
+function renderAdminResultsMissed(results) {
+  const subjects = (Array.isArray(getAdminResultsSubjectsSlot(results).data) ? getAdminResultsSubjectsSlot(results).data : [])
+    .filter((row) => Number(row.answered) > 0);
+  const topics = results.missedCourse
+    ? (Array.isArray(getAdminResultsTopicsSlot(results, results.missedCourse).data) ? getAdminResultsTopicsSlot(results, results.missedCourse).data : [])
+      .filter((row) => Number(row.answered) > 0)
+    : [];
+  const filters = `<div class="admin-results-toolbar">
+    ${renderAdminResultsSelect("missedCourse", "Subject", [{ id: "", label: "All subjects" }, ...subjects.map((row) => ({ id: row.course_id, label: row.course_name || "Subject" }))], results.missedCourse)}
+    ${results.missedCourse ? renderAdminResultsSelect("missedTopic", "Topic", [{ id: "", label: "All topics" }, ...topics.map((row) => ({ id: row.topic_id, label: row.topic_name || "Topic" }))], results.missedTopic) : ""}
+    ${renderAdminResultsSelect("missedMin", "Answered at least", ADMIN_RESULTS_MIN_ATTEMPTS.map((count) => ({ id: String(count), label: `${String(count)} times` })), results.missedMin)}
+    ${renderAdminResultsExportButton("missed")}
+  </div>`;
+  const key = `${getAdminResultsFilterKey(results)}|${results.missedCourse}|${results.missedTopic}|${results.missedMin}|${String(results.missedPage)}`;
+  const slot = loadAdminResultsSlot("missed", key, "admin_results_missed_questions", () => getAdminResultsMissedParams(results, {
+    p_limit: ADMIN_RESULTS_PAGE_SIZE,
+    p_offset: (results.missedPage - 1) * ADMIN_RESULTS_PAGE_SIZE,
+  }));
+  const rows = Array.isArray(slot.data) ? slot.data : [];
+  if (!rows.length) {
+    return `${filters}${renderAdminResultsStatus(slot, "No question has been answered that many times in this period.")}`;
+  }
+  const choiceTexts = ensureAdminResultsChoices(rows.map((row) => row.question_id));
+  const total = Number(rows[0].total_count) || rows.length;
+  const offset = (results.missedPage - 1) * ADMIN_RESULTS_PAGE_SIZE;
+  return `${filters}
+    <p class="subtle admin-results-note">${escapeHtml(`${formatAdminCount(total)} questions, most often wrong first.`)}</p>
+    <div class="admin-results-missed">${rows.map((row, index) => renderAdminResultsMissedCard(row, offset + index + 1, choiceTexts?.get(String(row.question_id)) || null)).join("")}</div>
+    ${renderAdminPager("admin-results-missed", { page: results.missedPage, totalPages: Math.max(1, Math.ceil(total / ADMIN_RESULTS_PAGE_SIZE)) }, "Question pages")}`;
+}
+
+function getAdminResultsMissedParams(results, extra = {}) {
+  return {
+    p_course_id: results.missedCourse || null,
+    p_topic_id: results.missedTopic || null,
+    p_min_attempts: Number(results.missedMin) || 10,
+    ...getAdminResultsFilterParams(results),
+    ...extra,
+  };
+}
+
+// CSV export. Lists that come in pages are read in full (up to
+// ADMIN_RESULTS_EXPORT_MAX_ROWS); the rest exports what the page holds.
+function buildAdminResultsCsv(columns, rows) {
+  const lines = [columns.map(([header]) => toCsvCell(header)).join(",")];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    lines.push(columns.map(([, read]) => toCsvCell(read(row))).join(","));
+  });
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+async function fetchAdminResultsAllPages(rpcName, params) {
+  const client = getRelationalClient();
+  if (!client) {
+    throw new Error("Results could not be loaded. Check your connection and try again.");
+  }
+  const all = [];
+  for (let offset = 0; offset < ADMIN_RESULTS_EXPORT_MAX_ROWS; offset += 200) {
+    // Pages must come one after another: each one says whether more follow.
+    const page = await runRelationalQueryWithTimeout(client.rpc(rpcName, { ...params, p_limit: 200, p_offset: offset }), "Export took too long.");
+    const rows = Array.isArray(page) ? page : [];
+    all.push(...rows);
+    if (rows.length < 200) {
+      break;
+    }
+  }
+  return all;
+}
+
+const adminResultsPercentColumn = (row) => {
+  const accuracy = getAdminResultsAccuracy(row.correct ?? row.last_correct, row.answered ?? row.last_answered);
+  return accuracy === null ? "" : accuracy;
+};
+
+async function buildAdminResultsExport(kind, results) {
+  const studentData = getAdminResultsSlot("student").data || {};
+  const studentName = String(studentData.profile?.full_name || studentData.profile?.email || "student").trim();
+  if (kind === "daily") {
+    return {
+      label: "results-daily",
+      columns: [["day", (row) => row.day], ["website_tests", (row) => row.website_tests], ["app_tests", (row) => row.app_tests], ["finished_tests", (row) => row.tests], ["students", (row) => row.students], ["questions_answered", (row) => row.answered], ["right_answers", (row) => row.correct], ["right_pct", adminResultsPercentColumn]],
+      rows: getAdminResultsSlot("overview").data?.daily || [],
+    };
+  }
+  if (kind === "subjects") {
+    return {
+      label: "results-subjects",
+      columns: [["subject", (row) => row.course_name], ["year", (row) => row.academic_year], ["semester", (row) => row.academic_semester], ["students", (row) => row.students], ["tests", (row) => row.tests], ["questions_answered", (row) => row.answered], ["right_answers", (row) => row.correct], ["right_pct", adminResultsPercentColumn], ["different_questions_answered", (row) => row.questions_answered], ["published_questions", (row) => row.published_questions], ["last_answer_at", (row) => row.last_answered_at || ""]],
+      rows: getAdminResultsSlot("subjects").data || [],
+    };
+  }
+  if (kind === "topics") {
+    const subject = (getAdminResultsSlot("subjects").data || []).find((row) => row.course_id === results.subjectId);
+    return {
+      label: `results-topics-${subject?.course_name || "subject"}`,
+      columns: [["subject", () => subject?.course_name || ""], ["topic", (row) => row.topic_name], ["students", (row) => row.students], ["questions_answered", (row) => row.answered], ["right_answers", (row) => row.correct], ["right_pct", adminResultsPercentColumn], ["different_questions_answered", (row) => row.questions_answered], ["published_questions", (row) => row.published_questions]],
+      rows: getAdminResultsSlot("topics").data || [],
+    };
+  }
+  if (kind === "missed") {
+    const rows = await fetchAdminResultsAllPages("admin_results_missed_questions", getAdminResultsMissedParams(results));
+    return {
+      label: "results-most-missed",
+      columns: [["question_id", (row) => row.question_id], ["subject", (row) => row.course_name], ["topic", (row) => row.topic_name], ["status", (row) => row.status], ["question", (row) => getAdminResultsPlainStem(row.stem)], ["answers", (row) => row.attempts], ["wrong", (row) => row.wrong], ["wrong_pct", (row) => (Number(row.attempts) ? Math.round((Number(row.wrong) / Number(row.attempts)) * 100) : "")], ["students", (row) => row.students], ["answer_key", (row) => (row.correct_labels || []).join(" ")], ["picks", (row) => Object.entries(row.choice_counts || {}).sort().map(([label, count]) => `${label}:${String(count)}`).join(" ")], ["check_key", (row) => getAdminResultsKeyWarning(row)], ["open_reports", (row) => row.open_reports]],
+      rows,
+    };
+  }
+  if (kind === "students") {
+    const rows = await fetchAdminResultsAllPages("admin_results_students", {
+      ...getAdminResultsFilterParams(results),
+      p_search: results.search || null,
+      p_sort: results.sort,
+    });
+    return {
+      label: "results-students",
+      columns: [["medbank_id", (row) => row.public_user_id || ""], ["name", (row) => row.full_name], ["email", (row) => row.email], ["year", (row) => row.academic_year], ["semester", (row) => row.academic_semester], ["university", (row) => row.university_name], ["approved", (row) => (row.approved ? "yes" : "no")], ["tests", (row) => row.tests], ["questions_answered", (row) => row.answered], ["right_answers", (row) => row.correct], ["right_pct", adminResultsPercentColumn], ["unfinished_tests", (row) => row.unfinished_tests], ["last_test_at", (row) => row.last_test_at || ""], ["last_active_at", (row) => row.last_seen_at || ""], ["profile_id", (row) => row.user_id]],
+      rows,
+    };
+  }
+  if (kind === "student-tests") {
+    return {
+      label: `results-tests-${studentName}`,
+      columns: [["finished_at", (row) => row.finished_at], ["test", (row) => row.name], ["subject", (row) => row.course_name], ["mode", (row) => row.mode], ["questions", (row) => row.question_count], ["answered", (row) => row.answered], ["right_answers", (row) => row.correct], ["right_pct", adminResultsPercentColumn], ["time_seconds", (row) => row.elapsed_seconds], ["where", (row) => row.client || ""]],
+      rows: studentData.tests || [],
+    };
+  }
+  if (kind === "student-mistakes") {
+    return {
+      label: `results-mistakes-${studentName}`,
+      columns: [["answered_at", (row) => row.completed_at], ["topic", (row) => row.topic_name], ["question", (row) => getAdminResultsPlainStem(row.stem)], ["picked", (row) => (row.selected || []).join(" ")], ["answer", (row) => (row.correct || []).join(" ")], ["question_id", (row) => row.question_id]],
+      rows: studentData.mistakes || [],
+    };
+  }
+  if (kind === "student-topics") {
+    const courseNames = new Map((studentData.courses || []).map((course) => [course.course_id, course.course_name]));
+    return {
+      label: `results-topics-${studentName}`,
+      columns: [["subject", (row) => courseNames.get(row.course_id) || ""], ["topic", (row) => row.topic_name], ["questions_answered", (row) => row.answered], ["right_answers", (row) => row.correct], ["right_pct", adminResultsPercentColumn], ["different_questions_answered", (row) => row.questions_answered]],
+      rows: studentData.topics || [],
+    };
+  }
+  return null;
+}
+
+async function runAdminResultsExport(kind) {
+  const results = getAdminResultsState();
+  if (results.exporting) {
+    return;
+  }
+  results.exporting = kind;
+  refreshAdminResultsView();
+  try {
+    const file = await buildAdminResultsExport(kind, results);
+    if (!file || !file.rows.length) {
+      toast("Nothing to export.");
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    const safeLabel = file.label.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/gi, "-").replace(/^-+|-+$/g, "");
+    // \ufeff so Excel reads the file as UTF-8 and does not mangle names.
+    downloadBlobFile(new Blob([`\ufeff${buildAdminResultsCsv(file.columns, file.rows)}`], { type: "text/csv;charset=utf-8;" }), `medbank-${safeLabel}-${stamp}.csv`);
+  } catch (error) {
+    console.warn("Results export failed.", error?.message || error);
+    toast("The export could not be made. Try again.");
+  } finally {
+    results.exporting = "";
+    refreshAdminResultsView();
+  }
 }
 
 // Users page "Last test" column. One call per page of students; a student's
@@ -66181,14 +66627,19 @@ function wireAdminResults() {
     refreshAdminResultsView();
   });
   section.querySelectorAll("[data-admin-results-tab]").forEach((tab) => tab.addEventListener("click", () => {
-    results.tab = tab.getAttribute("data-admin-results-tab") === "students" ? "students" : "overview";
+    const next = String(tab.getAttribute("data-admin-results-tab") || "");
+    results.tab = ADMIN_RESULTS_TABS.some((entry) => entry.id === next) ? next : "overview";
     refreshAdminResultsView();
   }));
   section.querySelectorAll("[data-admin-results-filter]").forEach((select) => select.addEventListener("change", () => {
     const field = select.getAttribute("data-admin-results-filter");
-    if (["range", "year", "semester", "sort"].includes(field)) {
+    if (["range", "year", "semester", "sort", "topicSort", "missedCourse", "missedTopic", "missedMin"].includes(field)) {
       results[field] = select.value;
+      if (field === "missedCourse") {
+        results.missedTopic = "";
+      }
       results.page = 1;
+      results.missedPage = 1;
       refreshAdminResultsView();
     }
   }));
@@ -66237,6 +66688,44 @@ function wireAdminResults() {
   wireAdminPager("admin-results-students", (page) => {
     results.page = page;
   });
+  wireAdminPager("admin-results-missed", (page) => {
+    results.missedPage = page;
+  });
+  section.querySelectorAll("[data-admin-results-subject]").forEach((button) => button.addEventListener("click", () => {
+    results.subjectId = String(button.getAttribute("data-admin-results-subject") || "");
+    refreshAdminResultsView();
+  }));
+  section.querySelector("[data-admin-results-subjects-back]")?.addEventListener("click", () => {
+    results.subjectId = "";
+    refreshAdminResultsView();
+  });
+  const openMissed = (courseId, topicId) => {
+    results.tab = "missed";
+    results.missedCourse = courseId;
+    results.missedTopic = topicId;
+    results.missedPage = 1;
+    // A single topic rarely has 10 answers per question; start lower.
+    if (topicId && Number(results.missedMin) > 5) {
+      results.missedMin = "5";
+    }
+    refreshAdminResultsView();
+    section.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  section.querySelectorAll("[data-admin-results-missed-course]").forEach((button) => button.addEventListener("click", () => {
+    openMissed(String(button.getAttribute("data-admin-results-missed-course") || ""), "");
+  }));
+  section.querySelectorAll("[data-admin-results-missed-topic]").forEach((button) => button.addEventListener("click", () => {
+    openMissed(results.subjectId, String(button.getAttribute("data-admin-results-missed-topic") || ""));
+  }));
+  section.querySelectorAll("[data-admin-results-edit-question]").forEach((button) => button.addEventListener("click", () => {
+    openAdminQuestionEditorForDbId(String(button.getAttribute("data-admin-results-edit-question") || ""));
+  }));
+  section.querySelectorAll("[data-admin-results-reports]").forEach((button) => button.addEventListener("click", () => {
+    openAdminQuestionReportDetail(String(button.getAttribute("data-admin-results-reports") || ""), null, false, button);
+  }));
+  section.querySelectorAll("[data-admin-results-export]").forEach((button) => button.addEventListener("click", () => {
+    runAdminResultsExport(String(button.getAttribute("data-admin-results-export") || ""));
+  }));
 }
 
 window.__MCQ_ON_GSAP_READY__ = handleGsapReadyForCurrentRoute;

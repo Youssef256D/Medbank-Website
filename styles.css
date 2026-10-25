@@ -25574,3 +25574,66 @@ body.theme-dark .admin-results-student-link:hover { color: var(--ink); }
 }
 .admin-user-last-test-open:hover { text-decoration: underline; }
 body.theme-dark .admin-user-last-test-open { color: var(--ink); }
+
+/* Student results: Subjects and Most missed tabs, export buttons. */
+.admin-results-toolbar.is-end { justify-content: flex-end; }
+.admin-results-chart-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.admin-results-subhead-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.admin-results-subhead-row .admin-results-subhead { margin-bottom: 8px; }
+.admin-results-missed { display: grid; gap: 12px; }
+.admin-results-missed-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+.admin-results-missed-card header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.admin-results-missed-rank { color: var(--muted); font-weight: 800; font-variant-numeric: tabular-nums; }
+.admin-results-missed-where { flex: 1 1 200px; color: var(--muted); font-size: 0.86rem; font-weight: 700; }
+.admin-results-missed-share { color: var(--results-low); font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.admin-results-missed-stem { margin: 0; color: var(--ink); line-height: 1.5; }
+.admin-results-choices { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.admin-results-choices li {
+  display: grid;
+  grid-template-columns: 1.6em minmax(0, 1fr) minmax(70px, 22%) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+}
+.admin-results-choices li > b { color: var(--muted); }
+.admin-results-choice-text { color: var(--ink); overflow-wrap: anywhere; }
+.admin-results-choice-text em { margin-inline-start: 4px; font-size: 0.75rem; font-style: normal; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }
+.admin-results-choice-bar { display: block; height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.admin-results-choice-bar > span { display: block; height: 100%; border-radius: 4px; background: var(--line-strong); }
+.admin-results-choice-count { color: var(--muted); font-size: 0.82rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.admin-results-choices li.is-key { border-color: color-mix(in srgb, var(--results-good) 45%, var(--line)); }
+.admin-results-choices li.is-key > b,
+.admin-results-choices li.is-key em { color: var(--results-good); }
+.admin-results-choices li.is-key .admin-results-choice-bar > span { background: var(--results-good); }
+.admin-results-choices li.is-top-wrong { border-color: color-mix(in srgb, var(--results-low) 45%, var(--line)); }
+.admin-results-choices li.is-top-wrong > b,
+.admin-results-choices li.is-top-wrong em { color: var(--results-low); }
+.admin-results-choices li.is-top-wrong .admin-results-choice-bar > span { background: var(--results-low); }
+.admin-results-missed-card footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.admin-results-missed-card footer small { color: var(--muted); }
+.admin-results-missed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.admin-results-key-warning {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--results-mid) 22%, transparent);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.admin-results-key-warning::before { content: "⚠ "; }
+@media (max-width: 560px) {
+  .admin-results-choices li { grid-template-columns: 1.6em minmax(0, 1fr) auto; }
+  .admin-results-choice-bar { grid-column: 2 / -1; }
+}
+/* Keeps screen-reader-only header labels inside the scroll box. */
+.admin-results-table-wrap { position: relative; }
