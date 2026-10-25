@@ -52674,6 +52674,13 @@ function normalizeSession(session, options = {}) {
         changed = true;
       }
     }
+    // A question can't be submitted with nothing picked (the submit button
+    // refuses). Such rows came from a sync fault and locked the question, so an
+    // unfinished test reopens them for answering.
+    if (session.status === "in_progress" && response.submitted === true && !response.selected.length) {
+      response.submitted = false;
+      changed = true;
+    }
     if (!Array.isArray(response.struck)) {
       response.struck = [];
       changed = true;

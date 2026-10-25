@@ -2,6 +2,17 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-25 — Unlock questions "submitted" with no answer
+- `normalizeSession` now sets `submitted: false` on any response of an
+  in-progress session that is submitted with an empty selection. The website's
+  submit button refuses an empty selection, so such rows only come from sync
+  faults (the first shared-tests version, and older ones back to July); they
+  showed "Answer submitted", marked wrong, and could not be answered.
+- The app locks the same rows (`selectAnswer` returns when `submitted`), so
+  open blocks were repaired once in SQL: `test_responses.submitted = false`
+  where the selection is empty and the block is `in_progress` / `suspended`.
+  Completed blocks were left as they are.
+
 ### 2026-10-25 — Shared tests: answers per question, same order on both devices
 - Fixes three faults in the first version (same day, below):
   - **Answers were overwritten.** The website re-sent every answer on every
