@@ -21,3 +21,9 @@ drop table if exists public.test_history_answers;
 
 delete from supabase_migrations.schema_migrations
 where version in ('20261026120000', '20261026120100');
+
+-- 20261026140000_results_last_tests and 20261026130000_results_time_zero_is_unknown
+-- (the latter only changed rows of the table dropped above).
+drop function if exists public.admin_results_last_tests(uuid[]);
+delete from supabase_migrations.schema_migrations
+where version in ('20261026130000', '20261026140000');

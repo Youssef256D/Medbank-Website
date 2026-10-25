@@ -2,6 +2,33 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-26 — Admin Student results, phase 2 (Results page + Users column)
+- New admin page `results` ("Student results", People group): in
+  `ADMIN_DATA_PAGES`, `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS` (`people`) and
+  `ADMIN_PAGE_PERMISSIONS` (any `users.*` action; the database checks the
+  area). Code is one block in `main.js` starting at
+  `// Admin Student results (People area).`; `tests/admin-results.test.js`
+  slices it by that marker and `window.__MCQ_ON_GSAP_READY__`, so keep both.
+- Tabs: Overview (tiles, website/app split, finished tests per day) and
+  Students (search, sort, pages of 50). A student opens a view with
+  Progress (per subject + topics weakest first), Tests (finished and
+  unfinished), Mistakes (latest 300 wrong answers by topic) and Profile &
+  activity. Filters: finished in last 7/30/90 days or all time, year, semester.
+- Each query lives in a slot (`loadAdminResultsSlot`) keyed by its filters; a
+  reply for an older key is dropped and a failed key waits for Reload, so a
+  render never loops on a failing RPC.
+- Users page: new "Last test" column (`renderAdminUserLastTestCell`, data from
+  `admin_results_last_tests`, migration `20261026140000`) with a "Tests"
+  button, and a "Results" row-menu item; both open the student with
+  `returnTo: "users"`, so the back button returns to Users. The phone card
+  layout gives the cell a full row (`.admin-user-last-test-cell`).
+- Migration `20261026130000_results_time_zero_is_unknown`: the app always
+  sends `timeSpentSec: 0`, so 0 is now stored as null. Time per question is
+  website-only; the tile says so.
+- Website/app colors are `--results-website` / `--results-app` (validated for
+  colour-blind separation in light and dark); the dark theme's `--brand` is a
+  gray and must not carry a series.
+
 ### 2026-10-26 — Admin Student results, phase 1 (database only)
 - New table `test_history_answers`: one row per answered question per
   finished test, copied from `test_history_entries.payload` by the triggers

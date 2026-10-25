@@ -203,7 +203,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "universities", "organizations", "mcq-subjects", "questions", "question-reports", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "results", "universities", "organizations", "mcq-subjects", "questions", "question-reports", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -219,6 +219,7 @@ const ADMIN_NAV_GROUPS = [
     label: "People",
     items: [
       { page: "users", label: "Users" },
+      { page: "results", label: "Student results" },
       { page: "universities", label: "Universities" },
       { page: "organizations", label: "Organizations" },
     ],
@@ -36383,6 +36384,7 @@ const ADMIN_PERMISSION_IDS = ADMIN_PERMISSIONS.map((permission) => permission.id
 const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "admin-access"]);
 const ADMIN_PAGE_AREAS = {
   users: "people",
+  results: "people",
   universities: "people",
   organizations: "people",
   "mcq-subjects": "mcq",
@@ -36398,6 +36400,8 @@ const ADMIN_PAGE_AREAS = {
 // A page shows when the admin holds any one of these actions.
 const ADMIN_PAGE_PERMISSIONS = {
   users: ["users.create", "users.edit", "users.access", "users.password", "users.delete"],
+  // Read-only, so any People action opens it (the database checks the area).
+  results: ["users.create", "users.edit", "users.access", "users.password", "users.delete", "users.organizations"],
   universities: ["users.organizations"],
   organizations: ["users.organizations"],
   "mcq-subjects": ["mcq.subjects"],
@@ -37405,6 +37409,7 @@ function renderAdmin() {
     const usersPageInfo = getAdminListPage(filteredUsers, ADMIN_USER_RENDER_LIMIT, state.adminUsersPage);
     state.adminUsersPage = usersPageInfo.page;
     const renderedUsers = usersPageInfo.items;
+    ensureAdminResultsLastTests(renderedUsers);
     const visibleSelectableUserIds = renderedUsers
       .filter((account) => canBulkSelectAdminUser(account, user))
       .map((account) => String(account.id || "").trim())
@@ -37497,6 +37502,9 @@ function renderAdmin() {
           menuItems.push({ label: "Device", attrs: 'data-action="view-user-device"' });
           menuItems.push({ label: "University", attrs: 'data-action="edit-user-university"' });
         }
+        if (account.role === "student" && canAdminAccessPage(getCurrentAdminAccess(), "results")) {
+          menuItems.push({ label: "Results", attrs: 'data-action="admin-user-results"' });
+        }
         if (account.role === "student" && usersCan.access) {
           menuItems.push({ label: "Module locks", attrs: 'data-action="edit-user-module-locks"' });
         }
@@ -37568,6 +37576,7 @@ function renderAdmin() {
                  <span class="admin-user-access-tag ${coursesAccessEnabled ? "is-on" : "is-off"}" data-user-courses-status-badge title="Video Courses ${coursesAccessEnabled ? "on" : "off"}">Video</span>`
             : `<small class="admin-user-full-access">Full access</small>`}
             </td>
+            <td class="admin-user-last-test-cell">${renderAdminUserLastTestCell(account)}</td>
             <td class="admin-user-actions-cell">
               ${hideAdminRowMenu ? "" : renderAdminRowMenu({ id: `user-${accountId}`, label: `Actions for ${accountLabel}`, items: menuItems })}
             </td>
@@ -37970,6 +37979,7 @@ function renderAdmin() {
               <col class="col-term" />
               <col class="col-status" />
               <col class="col-access" />
+              <col class="col-last-test" />
               <col class="col-actions" />
             </colgroup>
             <thead>
@@ -37990,10 +38000,11 @@ function renderAdmin() {
                 <th>Term</th>
                 <th>Status</th>
                 <th>Access</th>
+                <th>Last test</th>
                 <th><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
-            <tbody>${accountRows || `<tr><td colspan="6" class="subtle">No users match the current search and filters.</td></tr>`}</tbody>
+            <tbody>${accountRows || `<tr><td colspan="7" class="subtle">No users match the current search and filters.</td></tr>`}</tbody>
           </table>
         </div>
         ${renderAdminPager("users", usersPageInfo, "User pages")}
@@ -39029,6 +39040,10 @@ function renderAdmin() {
     pageContent = renderAdminQuestionReportsSection();
   }
 
+  if (activeAdminPage === "results") {
+    pageContent = renderAdminResultsSection();
+  }
+
   if (activeAdminPage === "universities") {
     pageContent = renderAdminUniversitiesSection();
     // Rendered outside the admin shell/card: a hovered card gets a
@@ -39949,6 +39964,7 @@ function wireAdmin() {
   wireAdminPopups();
   wireAdminUniversities();
   wireAdminQuestionReports();
+  wireAdminResults();
   wireAdminSupportNumber();
   wireAdminOrganizations();
   wireAdminAccess();
@@ -43481,6 +43497,25 @@ function wireAdmin() {
         return;
       }
       openAdminUserModuleLocksDialog(target);
+    });
+  });
+
+  appEl.querySelectorAll("[data-action='admin-user-results']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.closest("tr[data-user-id]")?.getAttribute("data-user-id");
+      const target = userId ? getUsers().find((entry) => entry.id === userId) : null;
+      const profileId = getAdminUserProfileId(target);
+      if (!profileId) {
+        toast("This account has no results yet.");
+        return;
+      }
+      openAdminResultsStudent(profileId, { returnTo: "users" });
+    });
+  });
+
+  appEl.querySelectorAll("[data-action='admin-user-tests']").forEach((button) => {
+    button.addEventListener("click", () => {
+      openAdminResultsStudent(button.getAttribute("data-profile-id"), { tab: "tests", returnTo: "users" });
     });
   });
 
@@ -65367,6 +65402,840 @@ function wireAdminSupportNumber() {
       support.saving = false;
       syncAdminSupportNumberField();
     }
+  });
+}
+
+// Admin Student results (People area). Every number comes from the
+// admin_results_* functions (migration 20261026120000_admin_student_results),
+// which add up test_history_answers on the server; nothing is counted here.
+const ADMIN_RESULTS_RANGES = [
+  { id: "7d", label: "Last 7 days", days: 7 },
+  { id: "30d", label: "Last 30 days", days: 30 },
+  { id: "90d", label: "Last 90 days", days: 90 },
+  { id: "all", label: "All time", days: 0 },
+];
+const ADMIN_RESULTS_STUDENT_SORTS = [
+  { id: "last_active", label: "Last active" },
+  { id: "answered", label: "Most questions" },
+  { id: "tests", label: "Most tests" },
+  { id: "accuracy", label: "Best accuracy" },
+  { id: "accuracy_asc", label: "Lowest accuracy" },
+  { id: "name", label: "Name" },
+];
+const ADMIN_RESULTS_STUDENT_TABS = [
+  { id: "progress", label: "Progress" },
+  { id: "tests", label: "Tests" },
+  { id: "mistakes", label: "Mistakes" },
+  { id: "profile", label: "Profile & activity" },
+];
+const ADMIN_RESULTS_PAGE_SIZE = 50;
+let adminResultsSearchTimer = 0;
+
+function getAdminResultsState() {
+  if (!state.adminResults) {
+    state.adminResults = {
+      tab: "overview",
+      range: "30d",
+      year: "",
+      semester: "",
+      search: "",
+      searchDraft: "",
+      sort: "last_active",
+      page: 1,
+      studentId: "",
+      studentTab: "progress",
+      slots: {},
+      courseNames: null,
+      courseNamesLoading: false,
+    };
+  }
+  return state.adminResults;
+}
+
+// One slot per query (overview, students, student). `key` is what was asked
+// for; a reply for an older key is dropped, and a failed key is not retried
+// until Reload.
+function getAdminResultsSlot(kind) {
+  const results = getAdminResultsState();
+  if (!results.slots[kind]) {
+    results.slots[kind] = { key: "", data: null, error: "", loading: false, done: false };
+  }
+  return results.slots[kind];
+}
+
+function loadAdminResultsSlot(kind, key, rpcName, buildParams, { force = false } = {}) {
+  const slot = getAdminResultsSlot(kind);
+  if (!force && slot.key === key && (slot.loading || slot.done)) {
+    return slot;
+  }
+  slot.key = key;
+  slot.data = null;
+  slot.error = "";
+  slot.done = false;
+  const client = getRelationalClient();
+  if (!client) {
+    slot.error = "Results could not be loaded. Check your connection and try again.";
+    slot.done = true;
+    return slot;
+  }
+  slot.loading = true;
+  runRelationalQueryWithTimeout(client.rpc(rpcName, buildParams()), "Results took too long to load.")
+    .then((data) => {
+      if (slot.key === key) {
+        slot.data = data ?? null;
+      }
+    })
+    .catch((error) => {
+      console.warn(`${rpcName} failed.`, error?.message || error);
+      if (slot.key === key) {
+        slot.error = String(error?.message || "Results could not be loaded.");
+      }
+    })
+    .finally(() => {
+      if (slot.key === key) {
+        slot.loading = false;
+        slot.done = true;
+      }
+      refreshAdminResultsView();
+    });
+  return slot;
+}
+
+function refreshAdminResultsView() {
+  if (state.route !== "admin" || state.adminPage !== "results") {
+    return;
+  }
+  // Keep the cursor in the search box when a reply re-renders the page.
+  const focusedId = document.activeElement?.id === "admin-results-search" ? "admin-results-search" : "";
+  state.skipNextRouteAnimation = true;
+  render();
+  if (focusedId) {
+    const input = document.getElementById(focusedId);
+    if (input) {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+}
+
+// `returnTo: "users"` makes the back button go back to the Users page.
+function openAdminResultsStudent(profileId, { tab = "progress", returnTo = "" } = {}) {
+  const results = getAdminResultsState();
+  const previousPage = String(state.adminPage || "").trim() || "dashboard";
+  results.studentId = String(profileId || "").trim();
+  results.studentTab = ADMIN_RESULTS_STUDENT_TABS.some((entry) => entry.id === tab) ? tab : "progress";
+  results.returnTo = returnTo === "users" ? "users" : "";
+  state.adminPage = "results";
+  if (previousPage !== "results") {
+    applyAdminPageTransition(previousPage, "results");
+  }
+  state.skipNextRouteAnimation = true;
+  render();
+  appEl.querySelector("#admin-results-section")?.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+function ensureAdminResultsCourseNames() {
+  const results = getAdminResultsState();
+  if (results.courseNames || results.courseNamesLoading) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return;
+  }
+  results.courseNamesLoading = true;
+  runRelationalQueryWithTimeout(client.from("courses").select("id,course_name"), "Subjects took too long to load.")
+    .then((rows) => {
+      results.courseNames = new Map((rows || []).map((row) => [String(row.id), String(row.course_name || "")]));
+    })
+    .catch((error) => {
+      console.warn("Subject names unavailable.", error?.message || error);
+      results.courseNames = new Map();
+    })
+    .finally(() => {
+      results.courseNamesLoading = false;
+      refreshAdminResultsView();
+    });
+}
+
+function getAdminResultsFilterKey(results) {
+  return `${results.range}|${results.year}|${results.semester}`;
+}
+
+function getAdminResultsFromIso(results) {
+  const range = ADMIN_RESULTS_RANGES.find((entry) => entry.id === results.range) || ADMIN_RESULTS_RANGES[1];
+  return range.days ? new Date(Date.now() - range.days * 86400000).toISOString() : null;
+}
+
+function getAdminResultsFilterParams(results) {
+  const year = Number(results.year);
+  const semester = Number(results.semester);
+  return {
+    p_from: getAdminResultsFromIso(results),
+    p_year: Number.isInteger(year) && year > 0 ? year : null,
+    p_semester: Number.isInteger(semester) && semester > 0 ? semester : null,
+  };
+}
+
+function getAdminResultsAccuracy(correct, answered) {
+  const total = Number(answered) || 0;
+  return total ? Math.round(((Number(correct) || 0) / total) * 100) : null;
+}
+
+function formatAdminResultsPercent(value) {
+  return value === null || value === undefined ? "—" : `${String(value)}%`;
+}
+
+function getAdminResultsTone(accuracy) {
+  if (accuracy === null || accuracy === undefined) {
+    return "is-none";
+  }
+  return accuracy >= 75 ? "is-good" : accuracy >= 50 ? "is-mid" : "is-low";
+}
+
+function formatAdminResultsDate(value, { time = false } = {}) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  const year = date.getFullYear() === new Date().getFullYear() ? undefined : "numeric";
+  return date.toLocaleString(undefined, time
+    ? { day: "numeric", month: "short", year, hour: "2-digit", minute: "2-digit" }
+    : { day: "numeric", month: "short", year: "numeric" });
+}
+
+function formatAdminResultsAgo(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) {
+    return "Never";
+  }
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const days = Math.ceil((startOfToday.getTime() - date.getTime()) / 86400000);
+  if (days <= 0) {
+    return `Today ${date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  if (days === 1) {
+    return "Yesterday";
+  }
+  return days < 30 ? `${String(days)} days ago` : formatAdminResultsDate(value);
+}
+
+function formatAdminResultsDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (!total) {
+    return "—";
+  }
+  if (total < 60) {
+    return `${String(total)} s`;
+  }
+  const minutes = Math.round(total / 60);
+  return minutes < 60 ? `${String(minutes)} min` : `${String(Math.floor(minutes / 60))} h ${String(minutes % 60)} min`;
+}
+
+function getAdminResultsPlainStem(stem) {
+  return String(stem || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function renderAdminResultsMeter(value, label) {
+  const width = Math.max(0, Math.min(100, Number(value) || 0));
+  return `<span class="admin-results-meter ${getAdminResultsTone(value)}" role="img" aria-label="${escapeHtml(label)}"><span style="width: ${String(width)}%"></span></span>`;
+}
+
+function renderAdminResultsTile(label, value, hint = "") {
+  return `<div class="admin-results-tile">
+    <span class="admin-results-tile-label">${escapeHtml(label)}</span>
+    <b>${escapeHtml(value)}</b>
+    ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
+  </div>`;
+}
+
+function renderAdminResultsStatus(slot, emptyText) {
+  if (slot.error) {
+    return `<div class="admin-popup-notice" role="status">${escapeHtml(slot.error)}</div>`;
+  }
+  if (!slot.done) {
+    return `<p class="subtle admin-results-empty">Loading results…</p>`;
+  }
+  return `<p class="subtle admin-results-empty">${escapeHtml(emptyText)}</p>`;
+}
+
+function renderAdminResultsSelect(field, label, options, value) {
+  return `<label class="admin-results-filter">
+    <span>${escapeHtml(label)}</span>
+    <select data-admin-results-filter="${escapeHtml(field)}">
+      ${options.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+    </select>
+  </label>`;
+}
+
+function renderAdminResultsFilters(results, { studentView = false } = {}) {
+  const yearOptions = [{ id: "", label: "All years" }, ...[1, 2, 3, 4, 5, 6].map((year) => ({ id: String(year), label: `Year ${String(year)}` }))];
+  const semesterOptions = [{ id: "", label: "Both semesters" }, { id: "1", label: "Semester 1" }, { id: "2", label: "Semester 2" }];
+  return `<div class="admin-results-filters">
+    ${renderAdminResultsSelect("range", "Finished", ADMIN_RESULTS_RANGES, results.range)}
+    ${studentView ? "" : renderAdminResultsSelect("year", "Year", yearOptions, results.year)}
+    ${studentView ? "" : renderAdminResultsSelect("semester", "Semester", semesterOptions, results.semester)}
+  </div>`;
+}
+
+function renderAdminResultsDailyChart(daily) {
+  const days = Array.isArray(daily) ? daily : [];
+  if (!days.length) {
+    return "";
+  }
+  const totals = days.map((day) => (Number(day.website_tests) || 0) + (Number(day.app_tests) || 0));
+  const max = Math.max(1, ...totals);
+  const formatDay = (value) => new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const columns = days.map((day, index) => {
+    const website = Number(day.website_tests) || 0;
+    const app = Number(day.app_tests) || 0;
+    const accuracy = getAdminResultsAccuracy(day.correct, day.answered);
+    const tip = `${formatDay(day.day)}: ${String(website + app)} tests (${String(website)} website, ${String(app)} app) · ${formatAdminCount(Number(day.answered) || 0)} questions · ${formatAdminResultsPercent(accuracy)} right`;
+    return `<div class="admin-results-bar" tabindex="0" aria-label="${escapeHtml(tip)}">
+      <div class="admin-results-bar-stack" style="height: ${String(Math.round((totals[index] / max) * 100))}%">
+        ${website ? `<span class="is-website" style="flex-grow: ${String(website)}"></span>` : ""}
+        ${app ? `<span class="is-app" style="flex-grow: ${String(app)}"></span>` : ""}
+      </div>
+      <span class="admin-results-bar-tip" aria-hidden="true">${escapeHtml(tip)}</span>
+    </div>`;
+  }).join("");
+  const tableRows = days.map((day) => `<tr>
+    <td>${escapeHtml(formatDay(day.day))}</td>
+    <td>${escapeHtml(formatAdminCount(Number(day.website_tests) || 0))}</td>
+    <td>${escapeHtml(formatAdminCount(Number(day.app_tests) || 0))}</td>
+    <td>${escapeHtml(formatAdminCount(Number(day.answered) || 0))}</td>
+    <td>${escapeHtml(formatAdminResultsPercent(getAdminResultsAccuracy(day.correct, day.answered)))}</td>
+  </tr>`).join("");
+  return `<figure class="admin-results-chart">
+    <figcaption>
+      <b>Finished tests per day</b>
+      <span class="admin-results-legend">
+        <span><i class="is-website" aria-hidden="true"></i>Website</span>
+        <span><i class="is-app" aria-hidden="true"></i>App</span>
+      </span>
+    </figcaption>
+    <div class="admin-results-chart-plot">
+      <span class="admin-results-chart-max">${escapeHtml(formatAdminCount(max))}</span>
+      <div class="admin-results-bars" style="--bar-count: ${String(days.length)}">${columns}</div>
+    </div>
+    <div class="admin-results-chart-axis">
+      <span>${escapeHtml(formatDay(days[0].day))}</span>
+      <span>${escapeHtml(formatDay(days[days.length - 1].day))}</span>
+    </div>
+    <details class="admin-results-chart-table">
+      <summary>Show as a table</summary>
+      <div class="admin-results-table-wrap">
+        <table class="admin-results-table">
+          <thead><tr><th>Day</th><th>Website tests</th><th>App tests</th><th>Questions</th><th>Right</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </details>
+  </figure>`;
+}
+
+function renderAdminResultsOverview(results) {
+  const slot = loadAdminResultsSlot("overview", getAdminResultsFilterKey(results), "admin_results_overview", () => ({
+    ...getAdminResultsFilterParams(results),
+    p_tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Cairo",
+  }));
+  const data = slot.data;
+  if (!data) {
+    return renderAdminResultsStatus(slot, "No results yet.");
+  }
+  const tests = data.tests || {};
+  const answers = data.answers || {};
+  const active = data.active || {};
+  const unfinished = data.unfinished || {};
+  const accuracy = getAdminResultsAccuracy(answers.correct, answers.answered);
+  const websiteTests = Number(answers.website_tests) || 0;
+  const appTests = Number(answers.app_tests) || 0;
+  const splitTotal = websiteTests + appTests;
+  const websiteShare = splitTotal ? Math.round((websiteTests / splitTotal) * 100) : 0;
+  const rangeNote = results.range === "all" ? "The chart shows the last 30 days." : "";
+  return `<div class="admin-results-tiles">
+      ${renderAdminResultsTile("Tests finished", formatAdminCount(Number(tests.tests) || 0), `by ${formatAdminCount(Number(tests.students) || 0)} students`)}
+      ${renderAdminResultsTile("Questions answered", formatAdminCount(Number(answers.answered) || 0), `${formatAdminCount(Number(answers.questions_seen) || 0)} different questions`)}
+      ${renderAdminResultsTile("Answered right", formatAdminResultsPercent(accuracy), `${formatAdminCount(Number(answers.correct) || 0)} right answers`)}
+      ${renderAdminResultsTile("Active students", formatAdminCount(Number(active.week) || 0), `${formatAdminCount(Number(active.today) || 0)} today · ${formatAdminCount(Number(active.month) || 0)} in 30 days`)}
+      ${renderAdminResultsTile("Unfinished tests", formatAdminCount(Number(unfinished.tests) || 0), `by ${formatAdminCount(Number(unfinished.students) || 0)} students, last 30 days`)}
+    </div>
+    ${splitTotal ? `<div class="admin-results-split">
+      <div class="admin-results-split-bar" role="img" aria-label="${escapeHtml(`${String(websiteShare)}% of tests on the website, ${String(100 - websiteShare)}% in the app`)}">
+        <span class="is-website" style="flex-grow: ${String(websiteTests)}"></span>
+        <span class="is-app" style="flex-grow: ${String(appTests)}"></span>
+      </div>
+      <div class="admin-results-split-labels">
+        <span><i class="is-website" aria-hidden="true"></i>Website · ${escapeHtml(formatAdminCount(websiteTests))} tests (${escapeHtml(String(websiteShare))}%)</span>
+        <span><i class="is-app" aria-hidden="true"></i>App · ${escapeHtml(formatAdminCount(appTests))} tests (${escapeHtml(String(100 - websiteShare))}%)</span>
+      </div>
+    </div>` : ""}
+    ${renderAdminResultsDailyChart(data.daily)}
+    ${rangeNote ? `<p class="subtle admin-results-note">${escapeHtml(rangeNote)}</p>` : ""}`;
+}
+
+function renderAdminResultsStudents(results) {
+  const key = `${getAdminResultsFilterKey(results)}|${results.search}|${results.sort}|${String(results.page)}`;
+  const slot = loadAdminResultsSlot("students", key, "admin_results_students", () => ({
+    ...getAdminResultsFilterParams(results),
+    p_search: results.search || null,
+    p_sort: results.sort,
+    p_limit: ADMIN_RESULTS_PAGE_SIZE,
+    p_offset: (results.page - 1) * ADMIN_RESULTS_PAGE_SIZE,
+  }));
+  const toolbar = `<div class="admin-results-toolbar">
+    <form class="admin-results-search" data-admin-results-search-form role="search">
+      <input type="search" id="admin-results-search" placeholder="Search by name, email or ID" value="${escapeHtml(results.searchDraft)}" aria-label="Search students" autocomplete="off" />
+    </form>
+    ${renderAdminResultsSelect("sort", "Sort", ADMIN_RESULTS_STUDENT_SORTS, results.sort)}
+  </div>`;
+  const rows = Array.isArray(slot.data) ? slot.data : [];
+  if (!rows.length) {
+    return `${toolbar}${renderAdminResultsStatus(slot, results.search ? "No student matches this search." : "No students.")}`;
+  }
+  const total = Number(rows[0].total_count) || rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / ADMIN_RESULTS_PAGE_SIZE));
+  const body = rows.map((row) => {
+    const accuracy = getAdminResultsAccuracy(row.correct, row.answered);
+    const term = row.academic_year ? `Y${String(row.academic_year)}${row.academic_semester ? ` · S${String(row.academic_semester)}` : ""}` : "No term";
+    return `<tr>
+      <td>
+        <button type="button" class="admin-results-student-link" data-admin-results-student="${escapeHtml(row.user_id)}">${escapeHtml(row.full_name || row.email || "Unnamed student")}</button>
+        <small>${escapeHtml(row.email || "")}${row.university_name ? ` · ${escapeHtml(row.university_name)}` : ""}</small>
+      </td>
+      <td class="is-nowrap">${escapeHtml(term)}</td>
+      <td class="is-number">${escapeHtml(formatAdminCount(Number(row.tests) || 0))}</td>
+      <td class="is-number">${escapeHtml(formatAdminCount(Number(row.answered) || 0))}</td>
+      <td class="admin-results-accuracy-cell">
+        <span>${escapeHtml(formatAdminResultsPercent(accuracy))}</span>
+        ${accuracy === null ? "" : renderAdminResultsMeter(accuracy, `${String(accuracy)}% right`)}
+      </td>
+      <td class="is-nowrap">${escapeHtml(formatAdminResultsAgo(row.last_seen_at))}</td>
+      <td class="is-number">${row.unfinished_tests ? escapeHtml(formatAdminCount(Number(row.unfinished_tests))) : "—"}</td>
+    </tr>`;
+  }).join("");
+  return `${toolbar}
+    <p class="subtle admin-results-note">${escapeHtml(`${formatAdminCount(total)} students`)}${slot.loading ? " · updating…" : ""}</p>
+    <div class="admin-results-table-wrap">
+      <table class="admin-results-table">
+        <thead><tr><th>Student</th><th>Term</th><th class="is-number">Tests</th><th class="is-number">Questions</th><th>Right</th><th>Last active</th><th class="is-number">Unfinished</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    ${renderAdminPager("admin-results-students", { page: results.page, totalPages }, "Student pages")}`;
+}
+
+function renderAdminResultsStudentProgress(data) {
+  const courses = Array.isArray(data.courses) ? data.courses : [];
+  if (!courses.length) {
+    return `<p class="subtle admin-results-empty">No finished tests in this period.</p>`;
+  }
+  const topics = Array.isArray(data.topics) ? data.topics : [];
+  return `<div class="admin-results-courses">${courses.map((course) => {
+    const accuracy = getAdminResultsAccuracy(course.correct, course.answered);
+    const published = Number(course.published_questions) || 0;
+    const seen = Number(course.questions_answered) || 0;
+    const coverage = published ? Math.min(100, Math.round((seen / published) * 100)) : null;
+    const courseTopics = topics.filter((topic) => topic.course_id === course.course_id);
+    const topicRows = courseTopics.map((topic) => {
+      const topicAccuracy = getAdminResultsAccuracy(topic.correct, topic.answered);
+      return `<tr>
+        <td>${escapeHtml(topic.topic_name || "Topic removed")}</td>
+        <td class="is-number">${escapeHtml(formatAdminCount(Number(topic.answered) || 0))}</td>
+        <td class="admin-results-accuracy-cell">
+          <span>${escapeHtml(formatAdminResultsPercent(topicAccuracy))}</span>
+          ${topicAccuracy === null ? "" : renderAdminResultsMeter(topicAccuracy, `${String(topicAccuracy)}% right`)}
+        </td>
+      </tr>`;
+    }).join("");
+    return `<article class="admin-results-course">
+      <header>
+        <h4>${escapeHtml(course.course_name || "Subject removed")}</h4>
+        <b class="admin-results-score ${getAdminResultsTone(accuracy)}">${escapeHtml(formatAdminResultsPercent(accuracy))}</b>
+      </header>
+      <dl class="admin-results-course-stats">
+        <div><dt>Tests</dt><dd>${escapeHtml(formatAdminCount(Number(course.tests) || 0))}</dd></div>
+        <div><dt>Questions answered</dt><dd>${escapeHtml(formatAdminCount(Number(course.answered) || 0))}</dd></div>
+        <div><dt>Bank covered</dt><dd>${escapeHtml(published ? `${formatAdminCount(seen)} of ${formatAdminCount(published)} (${formatAdminResultsPercent(coverage)})` : formatAdminCount(seen))}</dd></div>
+        <div><dt>Last answer</dt><dd>${escapeHtml(formatAdminResultsAgo(course.last_answered_at))}</dd></div>
+      </dl>
+      ${coverage === null ? "" : `<span class="admin-results-coverage" role="img" aria-label="${escapeHtml(`${String(coverage)}% of the published questions answered`)}"><span style="width: ${String(coverage)}%"></span></span>`}
+      ${topicRows ? `<details class="admin-results-topics">
+        <summary>${escapeHtml(`${String(courseTopics.length)} topics, weakest first`)}</summary>
+        <div class="admin-results-table-wrap">
+          <table class="admin-results-table">
+            <thead><tr><th>Topic</th><th class="is-number">Questions</th><th>Right</th></tr></thead>
+            <tbody>${topicRows}</tbody>
+          </table>
+        </div>
+      </details>` : ""}
+    </article>`;
+  }).join("")}</div>`;
+}
+
+function renderAdminResultsStudentTests(data) {
+  const tests = Array.isArray(data.tests) ? data.tests : [];
+  const unfinished = Array.isArray(data.unfinished) ? data.unfinished : [];
+  const testRows = tests.map((test) => {
+    const accuracy = getAdminResultsAccuracy(test.correct, test.answered);
+    const answered = Number(test.answered) || 0;
+    const questionCount = Number(test.question_count) || answered;
+    const testName = String(test.name || "Test");
+    const subject = test.course_name && !testName.includes(test.course_name) ? test.course_name : "";
+    return `<tr>
+      <td class="is-nowrap">${escapeHtml(formatAdminResultsDate(test.finished_at, { time: true }))}</td>
+      <td>
+        <span class="admin-results-test-name">${escapeHtml(testName)}</span>
+        ${subject ? `<small>${escapeHtml(subject)}</small>` : ""}
+      </td>
+      <td>${escapeHtml(test.mode ? `${String(test.mode).charAt(0).toUpperCase()}${String(test.mode).slice(1)}` : "—")}</td>
+      <td class="admin-results-accuracy-cell">
+        <span><b class="admin-results-score ${getAdminResultsTone(accuracy)}">${escapeHtml(formatAdminResultsPercent(accuracy))}</b> ${escapeHtml(`${formatAdminCount(Number(test.correct) || 0)}/${formatAdminCount(answered)}`)}</span>
+        <small>${escapeHtml(`${formatAdminCount(answered)} of ${formatAdminCount(questionCount)} answered`)}</small>
+      </td>
+      <td class="is-nowrap">${escapeHtml(formatAdminResultsDuration(test.elapsed_seconds))}</td>
+      <td>${escapeHtml(test.client === "website" ? "Website" : test.client === "app" ? "App" : "—")}</td>
+    </tr>`;
+  }).join("");
+  const unfinishedRows = unfinished.map((block) => `<tr>
+    <td class="is-nowrap">${escapeHtml(formatAdminResultsDate(block.updated_at, { time: true }))}</td>
+    <td>${escapeHtml(block.course_name || "Mixed subjects")}</td>
+    <td>${escapeHtml(block.status === "suspended" ? "Paused" : "In progress")}</td>
+    <td class="is-number">${escapeHtml(`${formatAdminCount(Number(block.answered) || 0)} of ${formatAdminCount(Number(block.question_count) || 0)}`)}</td>
+    <td>${escapeHtml(block.mode ? `${String(block.mode).charAt(0).toUpperCase()}${String(block.mode).slice(1)}` : "—")}</td>
+  </tr>`).join("");
+  return `<h4 class="admin-results-subhead">Finished tests${tests.length ? ` · ${escapeHtml(formatAdminCount(tests.length))}` : ""}</h4>
+    ${testRows ? `<div class="admin-results-table-wrap">
+      <table class="admin-results-table">
+        <thead><tr><th>Finished</th><th>Test</th><th>Mode</th><th>Score</th><th>Time</th><th>Where</th></tr></thead>
+        <tbody>${testRows}</tbody>
+      </table>
+    </div>
+    ${tests.length >= 200 ? `<p class="subtle admin-results-note">Showing the latest 200 tests.</p>` : ""}` : `<p class="subtle admin-results-empty">No finished tests in this period.</p>`}
+    <h4 class="admin-results-subhead">Unfinished tests${unfinished.length ? ` · ${escapeHtml(formatAdminCount(unfinished.length))}` : ""}</h4>
+    ${unfinishedRows ? `<div class="admin-results-table-wrap">
+      <table class="admin-results-table">
+        <thead><tr><th>Last change</th><th>Subject</th><th>Status</th><th class="is-number">Answered</th><th>Mode</th></tr></thead>
+        <tbody>${unfinishedRows}</tbody>
+      </table>
+    </div>` : `<p class="subtle admin-results-empty">No unfinished tests.</p>`}`;
+}
+
+function renderAdminResultsStudentMistakes(data) {
+  const mistakes = Array.isArray(data.mistakes) ? data.mistakes : [];
+  if (!mistakes.length) {
+    return `<p class="subtle admin-results-empty">No wrong answers in this period.</p>`;
+  }
+  const courseNames = new Map((Array.isArray(data.courses) ? data.courses : []).map((course) => [course.course_id, course.course_name]));
+  const groups = new Map();
+  mistakes.forEach((mistake) => {
+    const groupKey = `${mistake.course_id || ""}|${mistake.topic_id || mistake.topic_name || ""}`;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        topic: mistake.topic_name || "Topic removed",
+        course: courseNames.get(mistake.course_id) || getAdminResultsState().courseNames?.get(String(mistake.course_id || "")) || "",
+        items: [],
+      });
+    }
+    groups.get(groupKey).items.push(mistake);
+  });
+  const sorted = [...groups.values()].sort((a, b) => b.items.length - a.items.length || a.topic.localeCompare(b.topic));
+  return `<p class="subtle admin-results-note">${escapeHtml(`The latest ${formatAdminCount(mistakes.length)} wrong answers, grouped by topic, most first.`)}</p>
+    <div class="admin-results-mistakes">${sorted.map((group, index) => `<details class="admin-results-mistake-group" ${index < 3 ? "open" : ""}>
+      <summary>
+        <span><b>${escapeHtml(group.topic)}</b>${group.course ? `<small>${escapeHtml(group.course)}</small>` : ""}</span>
+        <span class="admin-results-mistake-count">${escapeHtml(formatAdminCount(group.items.length))}</span>
+      </summary>
+      <ol>${group.items.map((item) => `<li>
+        <p>${escapeHtml(getAdminResultsPlainStem(item.stem) || "Question removed")}</p>
+        <small>
+          <span class="admin-results-pick is-wrong">Picked ${escapeHtml((item.selected || []).join(", ") || "—")}</span>
+          <span class="admin-results-pick is-right">Answer ${escapeHtml((item.correct || []).join(", ") || "—")}</span>
+          <span>${escapeHtml(formatAdminResultsDate(item.completed_at))}</span>
+        </small>
+      </li>`).join("")}</ol>
+    </details>`).join("")}</div>`;
+}
+
+function renderAdminResultsStudentProfile(data) {
+  const profile = data.profile || {};
+  const activity = data.activity || {};
+  ensureAdminResultsCourseNames();
+  const courseNames = getAdminResultsState().courseNames;
+  const enrolled = (Array.isArray(data.enrolled_course_ids) ? data.enrolled_course_ids : [])
+    .map((id) => courseNames?.get(String(id)) || "")
+    .filter(Boolean);
+  const rows = [
+    ["Email", profile.email || "—"],
+    ["Phone", profile.phone || "—"],
+    ["Student ID", profile.public_user_id ? String(profile.public_user_id) : "—"],
+    ["Term", profile.academic_year ? `Year ${String(profile.academic_year)}${profile.academic_semester ? `, semester ${String(profile.academic_semester)}` : ""}` : "Not set"],
+    ["University", profile.university_name || "—"],
+    ["College", profile.college || "—"],
+    ["Joined", formatAdminResultsDate(profile.created_at)],
+    ["Account", profile.approved ? "Approved" : "Pending approval"],
+    ["MCQ Bank", profile.mcq_access_enabled ? "On" : "Off"],
+    ["Video Courses", profile.courses_access_enabled ? "On" : "Off"],
+  ];
+  const activityRows = [
+    ["Last website visit", formatAdminResultsAgo(activity.last_visit_at || activity.last_presence_at)],
+    ["Last page on the website", activity.last_route || "—"],
+    ["Website visits, 30 days", formatAdminCount(Number(activity.visits_30d) || 0)],
+    ["Pages opened, 30 days", formatAdminCount(Number(activity.page_views_30d) || 0)],
+    ["Last test activity (website or app)", formatAdminResultsAgo(activity.last_block_at)],
+  ];
+  const renderList = (list) => `<dl class="admin-results-facts">${list.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
+  return `<div class="admin-results-profile">
+    <section><h4 class="admin-results-subhead">Profile</h4>${renderList(rows)}</section>
+    <section><h4 class="admin-results-subhead">Activity</h4>${renderList(activityRows)}
+      <p class="subtle admin-results-note">The app does not report visits, so website visits are shown; tests count from both.</p>
+    </section>
+    <section><h4 class="admin-results-subhead">Enrolled subjects${enrolled.length ? ` · ${escapeHtml(String(enrolled.length))}` : ""}</h4>
+      ${enrolled.length
+    ? `<ul class="admin-results-chips">${enrolled.map((name) => `<li>${escapeHtml(name)}</li>`).join("")}</ul>`
+    : `<p class="subtle admin-results-empty">${courseNames ? "No subjects." : "Loading…"}</p>`}
+    </section>
+  </div>`;
+}
+
+function renderAdminResultsStudent(results) {
+  const key = `${results.studentId}|${results.range}`;
+  const slot = loadAdminResultsSlot("student", key, "admin_results_student", () => ({
+    p_user_id: results.studentId,
+    p_from: getAdminResultsFromIso(results),
+  }));
+  const data = slot.data;
+  if (!data) {
+    return renderAdminResultsStatus(slot, "This student was not found.");
+  }
+  const profile = data.profile || {};
+  const totals = data.totals || {};
+  const activity = data.activity || {};
+  const accuracy = getAdminResultsAccuracy(totals.correct, totals.answered);
+  const lastTest = Array.isArray(data.tests) && data.tests.length ? data.tests[0].finished_at : null;
+  const lastActive = [activity.last_visit_at, activity.last_presence_at, activity.last_block_at, lastTest]
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
+  const term = profile.academic_year ? `Y${String(profile.academic_year)}${profile.academic_semester ? ` · S${String(profile.academic_semester)}` : ""}` : "";
+  const tabs = `<div class="question-report-tabs admin-results-tabs" role="tablist" aria-label="Student results">${ADMIN_RESULTS_STUDENT_TABS.map((tab) => `
+    <button type="button" role="tab" aria-selected="${results.studentTab === tab.id ? "true" : "false"}" class="${results.studentTab === tab.id ? "is-active" : ""}" data-admin-results-student-tab="${escapeHtml(tab.id)}">${escapeHtml(tab.label)}</button>`).join("")}
+  </div>`;
+  let body = "";
+  if (results.studentTab === "tests") {
+    body = renderAdminResultsStudentTests(data);
+  } else if (results.studentTab === "mistakes") {
+    body = renderAdminResultsStudentMistakes(data);
+  } else if (results.studentTab === "profile") {
+    body = renderAdminResultsStudentProfile(data);
+  } else {
+    body = renderAdminResultsStudentProgress(data);
+  }
+  return `<header class="admin-results-student-head">
+      <div>
+        <h4>${escapeHtml(profile.full_name || profile.email || "Unnamed student")}</h4>
+        <p class="subtle">${escapeHtml([profile.email, profile.university_name, term].filter(Boolean).join(" · "))}</p>
+      </div>
+      <div class="admin-results-pills">
+        <span class="admin-user-status ${profile.approved ? "is-approved" : "is-pending"}">${profile.approved ? "Approved" : "Pending"}</span>
+        <span class="admin-user-access-tag ${profile.mcq_access_enabled ? "is-on" : "is-off"}">MCQ</span>
+      </div>
+    </header>
+    <div class="admin-results-tiles">
+      ${renderAdminResultsTile("Tests finished", formatAdminCount(Number(totals.tests) || 0))}
+      ${renderAdminResultsTile("Questions answered", formatAdminCount(Number(totals.answered) || 0), `${formatAdminCount(Number(totals.questions_seen) || 0)} different questions`)}
+      ${renderAdminResultsTile("Answered right", formatAdminResultsPercent(accuracy), `${formatAdminCount(Number(totals.correct) || 0)} right answers`)}
+      ${renderAdminResultsTile("Time per question", totals.avg_time_sec ? formatAdminResultsDuration(totals.avg_time_sec) : "Not recorded", "website tests only")}
+      ${renderAdminResultsTile("Last active", formatAdminResultsAgo(lastActive))}
+    </div>
+    ${tabs}
+    ${body}`;
+}
+
+function renderAdminResultsSection() {
+  const results = getAdminResultsState();
+  const studentView = Boolean(results.studentId);
+  const tabs = studentView ? "" : `<div class="question-report-tabs admin-results-tabs" role="tablist" aria-label="Results view">
+    <button type="button" role="tab" aria-selected="${results.tab === "students" ? "false" : "true"}" class="${results.tab === "students" ? "" : "is-active"}" data-admin-results-tab="overview">Overview</button>
+    <button type="button" role="tab" aria-selected="${results.tab === "students" ? "true" : "false"}" class="${results.tab === "students" ? "is-active" : ""}" data-admin-results-tab="students">Students</button>
+  </div>`;
+  const body = studentView
+    ? renderAdminResultsStudent(results)
+    : results.tab === "students"
+      ? renderAdminResultsStudents(results)
+      : renderAdminResultsOverview(results);
+  const busy = Object.values(results.slots).some((slot) => slot.loading);
+  const pageHeader = renderAdminPageHeader({
+    id: "results",
+    title: "Student results",
+    actions: renderAdminIconButton({
+      icon: "refresh",
+      label: "Reload results",
+      attrs: "data-admin-results-refresh",
+      busy,
+    }),
+    notes: [
+      "Results come from finished tests on the website and in the app. Only student accounts count.",
+      "<b>Answered right</b> is right answers out of answered questions; skipped questions are not counted.",
+      "A test counts on the day it was finished. Unfinished tests are listed but not scored.",
+      "Open a student for their progress per subject and topic, every test, their mistakes and their profile.",
+    ],
+  });
+  const back = studentView
+    ? `<button type="button" class="btn ghost admin-btn-sm admin-results-back" data-admin-results-back>${results.returnTo === "users" ? "‹ Back to Users" : "‹ All students"}</button>`
+    : "";
+  return `<section class="card admin-section admin-results" id="admin-results-section">
+    ${pageHeader}
+    ${back}
+    ${tabs}
+    ${renderAdminResultsFilters(results, { studentView })}
+    ${body}
+  </section>`;
+}
+
+// Users page "Last test" column. One call per page of students; a student's
+// row is asked again after five minutes.
+const ADMIN_RESULTS_LAST_TEST_TTL_MS = 5 * 60 * 1000;
+
+function getAdminUserProfileId(account) {
+  return [account?.supabaseAuthId, account?.id].find((value) => isUuidValue(value)) || "";
+}
+
+function getAdminResultsLastTests() {
+  const results = getAdminResultsState();
+  if (!results.lastTests) {
+    results.lastTests = { byId: new Map(), fetchedAt: new Map(), pending: new Set() };
+  }
+  return results.lastTests;
+}
+
+function ensureAdminResultsLastTests(accounts) {
+  if (!canAdminAccessPage(getCurrentAdminAccess(), "results")) {
+    return;
+  }
+  const store = getAdminResultsLastTests();
+  const now = Date.now();
+  const ids = [...new Set((Array.isArray(accounts) ? accounts : [])
+    .filter((account) => account?.role === "student")
+    .map((account) => getAdminUserProfileId(account))
+    .filter((id) => id && !store.pending.has(id) && now - (store.fetchedAt.get(id) || 0) >= ADMIN_RESULTS_LAST_TEST_TTL_MS))];
+  const client = ids.length ? getRelationalClient() : null;
+  if (!client) {
+    return;
+  }
+  ids.forEach((id) => store.pending.add(id));
+  runRelationalQueryWithTimeout(client.rpc("admin_results_last_tests", { p_user_ids: ids }), "Last tests took too long to load.")
+    .then((rows) => {
+      const byUser = new Map((rows || []).map((row) => [String(row.user_id), row]));
+      ids.forEach((id) => store.byId.set(id, byUser.get(id) || null));
+    })
+    .catch((error) => {
+      console.warn("Last tests unavailable.", error?.message || error);
+    })
+    .finally(() => {
+      ids.forEach((id) => {
+        store.pending.delete(id);
+        store.fetchedAt.set(id, Date.now());
+      });
+      if (state.route === "admin" && state.adminPage === "users") {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+    });
+}
+
+function renderAdminUserLastTestCell(account) {
+  const id = account?.role === "student" ? getAdminUserProfileId(account) : "";
+  if (!id || !canAdminAccessPage(getCurrentAdminAccess(), "results")) {
+    return `<small class="subtle">—</small>`;
+  }
+  const store = getAdminResultsLastTests();
+  if (!store.byId.has(id)) {
+    return `<small class="subtle">${store.pending.has(id) ? "…" : "—"}</small>`;
+  }
+  const row = store.byId.get(id);
+  if (!row) {
+    return `<small class="subtle">No tests yet</small>`;
+  }
+  const answered = Number(row.last_answered) || 0;
+  const accuracy = getAdminResultsAccuracy(row.last_correct, answered);
+  const tests = Number(row.tests) || 0;
+  return `<div class="admin-user-last-test">
+    <span><b class="admin-results-score ${getAdminResultsTone(accuracy)}">${escapeHtml(formatAdminResultsPercent(accuracy))}</b> ${escapeHtml(`${formatAdminCount(Number(row.last_correct) || 0)}/${formatAdminCount(answered)}`)}</span>
+    <small>${escapeHtml(`${formatAdminResultsAgo(row.last_test_at)} · ${formatAdminCount(tests)} test${tests === 1 ? "" : "s"}`)}</small>
+    <button type="button" class="admin-user-last-test-open" data-action="admin-user-tests" data-profile-id="${escapeHtml(id)}" aria-label="${escapeHtml(`Tests of ${account.name || account.email || "this student"}`)}">Tests ›</button>
+  </div>`;
+}
+
+function wireAdminResults() {
+  const section = appEl.querySelector("#admin-results-section");
+  if (!section) {
+    return;
+  }
+  const results = getAdminResultsState();
+  section.querySelector("[data-admin-results-refresh]")?.addEventListener("click", () => {
+    Object.values(results.slots).forEach((slot) => {
+      slot.key = "";
+    });
+    refreshAdminResultsView();
+  });
+  section.querySelectorAll("[data-admin-results-tab]").forEach((tab) => tab.addEventListener("click", () => {
+    results.tab = tab.getAttribute("data-admin-results-tab") === "students" ? "students" : "overview";
+    refreshAdminResultsView();
+  }));
+  section.querySelectorAll("[data-admin-results-filter]").forEach((select) => select.addEventListener("change", () => {
+    const field = select.getAttribute("data-admin-results-filter");
+    if (["range", "year", "semester", "sort"].includes(field)) {
+      results[field] = select.value;
+      results.page = 1;
+      refreshAdminResultsView();
+    }
+  }));
+  const searchInput = section.querySelector("#admin-results-search");
+  const applySearch = () => {
+    window.clearTimeout(adminResultsSearchTimer);
+    const next = String(searchInput?.value || "").trim();
+    if (next === results.search) {
+      return;
+    }
+    results.search = next;
+    results.page = 1;
+    refreshAdminResultsView();
+  };
+  searchInput?.addEventListener("input", () => {
+    results.searchDraft = searchInput.value;
+    window.clearTimeout(adminResultsSearchTimer);
+    adminResultsSearchTimer = window.setTimeout(applySearch, 400);
+  });
+  section.querySelector("[data-admin-results-search-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applySearch();
+  });
+  section.querySelectorAll("[data-admin-results-student]").forEach((button) => button.addEventListener("click", () => {
+    openAdminResultsStudent(button.getAttribute("data-admin-results-student"));
+  }));
+  section.querySelector("[data-admin-results-back]")?.addEventListener("click", () => {
+    const backToUsers = results.returnTo === "users";
+    results.studentId = "";
+    results.returnTo = "";
+    if (backToUsers) {
+      state.adminPage = "users";
+      applyAdminPageTransition("results", "users");
+      state.skipNextRouteAnimation = true;
+      render();
+      return;
+    }
+    results.tab = "students";
+    refreshAdminResultsView();
+  });
+  section.querySelectorAll("[data-admin-results-student-tab]").forEach((tab) => tab.addEventListener("click", () => {
+    const next = String(tab.getAttribute("data-admin-results-student-tab") || "");
+    results.studentTab = ADMIN_RESULTS_STUDENT_TABS.some((entry) => entry.id === next) ? next : "progress";
+    refreshAdminResultsView();
+  }));
+  wireAdminPager("admin-results-students", (page) => {
+    results.page = page;
   });
 }
 
