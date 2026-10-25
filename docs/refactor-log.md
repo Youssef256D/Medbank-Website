@@ -2,6 +2,30 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-25 — Shared tests: answers per question, same order on both devices
+- Fixes three faults in the first version (same day, below):
+  - **Answers were overwritten.** The website re-sent every answer on every
+    save, so an answer given in the app after the website's last copy was
+    replaced, and a website copy holding `submitted: true` with no selection
+    blanked the app's answer. Now `liveBlockAnswerSigs` (keyed by DB question
+    id) records what was last pushed or pulled per question: only answers
+    changed on this device are sent, only untouched ones take the app's
+    value, and an empty selection is never sent (flag/note go in a separate
+    upsert without `selected_choice_labels` / `submitted`). Tests shared by
+    the first version wait for one pull before pushing answers.
+  - **Different question order.** The app hides questions it can't show
+    (many app tests hold questions unpublished since), so its
+    `current_index` counts only visible ones. The website now translates the
+    index through the question id (`toAppLiveTestBlockIndex` /
+    `fromAppLiveTestBlockIndex`, "visible" = in this browser's question bank),
+    and app tests brought in drop those questions too.
+  - **Finished tests could reopen.** In-progress pushes now carry
+    `.neq("status", "completed")`.
+- Pulls read one block at a time (row cap) and always merge the app's answers;
+  progress moves only when this device hasn't moved since its last push.
+- Answers already blanked on 2026-10-25 between the two deploys are not
+  recoverable (both copies hold the empty value).
+
 ### 2026-10-25 — Unfinished tests shared between the website and the app
 - Before this, the app kept unfinished tests in `test_blocks` /
   `test_block_items` / `test_responses`, while the website kept them only in
