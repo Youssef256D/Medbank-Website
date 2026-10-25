@@ -8295,7 +8295,18 @@ function openSessionVaultDb() {
   return sessionVaultDbPromise;
 }
 
+// The browser copy of the sessions trails the in-memory store by up to
+// SESSION_BROWSER_PERSIST_THROTTLE_MS. Every caller here saves the list back,
+// which replaces the in-memory store, so reading the stale copy would undo
+// answers given in the last few seconds of a test. Write it first.
+function flushPendingSessionStorePersist() {
+  if (sessionStoreRuntime.initialized && sessionStoreRuntime.persistTimer) {
+    persistSessionStoreSnapshot();
+  }
+}
+
 function getRawStoredSessions() {
+  flushPendingSessionStorePersist();
   const raw = readStorageKey(STORAGE_KEYS.sessions);
   if (!raw) {
     return [];

@@ -2,6 +2,22 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-25 — Answers no longer undone a few seconds after they are given
+- Website: `getRawStoredSessions()` read the browser copy of the sessions,
+  which trails the in-memory store by up to `SESSION_BROWSER_PERSIST_THROTTLE_MS`
+  (10 s). Its callers (`hydrateLiveTestBlocks`, `hydrateRelationalSessions`,
+  vault restore, sync-key merge) save the list back, which replaces the
+  in-memory store, so answers from the last few seconds of a test vanished.
+  The shared-tests pull (every hydrate while on `session`) made it frequent,
+  and admins were never covered by the student-only
+  `persistInProgressSessionSnapshot` flush. Now `flushPendingSessionStorePersist()`
+  writes a pending persist before every read. Keep it there.
+- App (Medbank-App, branch `claude/keep-answers-in-test`): the test runner
+  read the catalog with `ref.watch`, so any catalog/profile/sign-in refresh
+  rebuilt the runner from the server and blanked answers still being saved;
+  and pick + submit were two parallel upserts that could land out of order.
+  Now `ref.read` and one write queue.
+
 ### 2026-10-25 — Shared answers can't be overwritten or cleared
 - Students' iPhone answers kept disappearing after the first two fixes. Edge
   logs show website pushes from many browsers; tabs loaded between the first
