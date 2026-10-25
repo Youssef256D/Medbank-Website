@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-26 — Groundwork for student results in the admin
+- Every answer in every finished test (website and app) is now also saved in
+  a form the admin can add up quickly, ready for the upcoming Results page:
+  activity, scores per subject and topic, most-missed questions and each
+  student's mistakes. Only admins with the People area can read it. Nothing
+  changes for students yet.
+
 ### 2026-10-25 — Answers stay answered during a test
 - Fixed answers on the website turning blank a few seconds after being given
   while a background sync ran (it reloaded an older saved copy of the test).

@@ -2,6 +2,36 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-26 — Admin Student results, phase 1 (database only)
+- New table `test_history_answers`: one row per answered question per
+  finished test, copied from `test_history_entries.payload` by the triggers
+  `trg_test_history_answers_insert` / `_update` (→
+  `private.refresh_test_history_answers`). Backfilled 141,918 rows from 4,258
+  tests (migrations `20261026120000_admin_student_results`,
+  `20261026120100_backfill_test_history_answers`; rollback in
+  `supabase/rollbacks/`). Both the website and the app write these tests.
+- `is_correct` uses the answer key saved in the test (`questionSnapshots.correct`),
+  falling back to the current `question_choices` only when the test has no
+  copy. `client` = `website` when the payload has `originSessionId` (only the
+  website writes it), else `app`. `time_spent_sec` over 3,600 is stored as
+  null (payloads hold junk values in the millions).
+- **No foreign key to `test_history_entries` on purpose**: deleting old tests
+  (there was a 20-day prune job once) must not wipe the results. Deleting the
+  profile does delete the rows.
+- The trigger swallows its own errors (`raise warning`), so a bug here can
+  never stop a student's finished test from saving. Keep it that way.
+- Read access: RLS policy and every function require
+  `private.admin_has_area('people')`; no client can write the table. Admin
+  RPCs: `admin_results_overview`, `_subjects`, `_topics`,
+  `_missed_questions`, `_students`, `_student`. Students only (role
+  `student`). No existing policy or access flag changed.
+- Applied with `supabase db query --linked -f` plus a ledger insert in the
+  same transaction, because `db push` refuses (remote has Flutter-repo
+  migrations that are not in this repo).
+- Phase 2 (the admin Results page in `main.js`) is not built yet; it must go
+  in `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS` (`people`) and
+  `ADMIN_PAGE_PERMISSIONS`.
+
 ### 2026-10-25 — Answers no longer undone a few seconds after they are given
 - Website: `getRawStoredSessions()` read the browser copy of the sessions,
   which trails the in-memory store by up to `SESSION_BROWSER_PERSIST_THROTTLE_MS`
