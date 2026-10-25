@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-25 — Shared tests: fixed missing answers and question order
+- Answers given on one device no longer disappear on the other.
+- A shared test now shows the same questions in the same order in the app and
+  on the website, even when some of its questions were removed from the bank.
+
 ### 2026-10-25 — Resume a test on the other device
 - A test you leave unfinished in the app now shows "Resume" on the website,
   and a test left unfinished on the website now shows in the app's unfinished

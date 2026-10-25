@@ -12911,6 +12911,17 @@ async function hydrateRelationalSessions(currentUser) {
 // session whose id is the block id, so either side can finish it and the
 // history entry lands under one id. Completed tests still go through
 // test_history_entries as before.
+//
+// Answers sync one question at a time: `liveBlockAnswerSigs` holds what was
+// last pushed or pulled per question (keyed by DB question id), so only
+// answers changed on this device are sent and only untouched ones are
+// replaced by the app's. An empty selection is never sent, so it can't wipe
+// an answer given in the app.
+//
+// The app hides questions it can't show (unpublished since the test was
+// made), so its current_index counts only visible questions. Indexes are
+// translated through the question id, and app tests brought in here drop
+// those questions too, so both devices show the same order.
 const LIVE_TEST_BLOCK_SYNC_DELAY_MS = 4000;
 const LIVE_TEST_BLOCK_PULL_LIMIT = 20;
 // The website keeps one active test and ends it when a new one starts, so
@@ -12936,52 +12947,65 @@ function getLiveTestBlockQuestionDbId(session, questionId, questionStore) {
   return isUuidValue(snapshotDbId) ? snapshotDbId : "";
 }
 
-function getLiveTestBlockResponseRow(blockId, questionDbId, response) {
-  const selected = (Array.isArray(response?.selected) ? response.selected : [])
+function getLiveTestBlockSelectedLabels(response) {
+  return [...new Set((Array.isArray(response?.selected) ? response.selected : [])
     .map((label) => normalizeQuestionChoiceLabel(label))
-    .filter(Boolean);
-  const flagged = response?.flagged === true;
-  const notes = String(response?.notes || "");
-  const submitted = response?.submitted === true;
-  if (!selected.length && !flagged && !notes && !submitted) {
-    return null;
-  }
-  return {
-    block_id: blockId,
-    question_id: questionDbId,
-    selected_choice_labels: selected,
-    flagged,
-    submitted,
-    notes,
-    answered_at: selected.length ? (response?.answeredAt || nowISO()) : null,
-  };
+    .filter(Boolean))];
+}
+
+function buildLiveTestBlockAnswerSig(response) {
+  const selected = getLiveTestBlockSelectedLabels(response);
+  return [
+    selected.join(""),
+    response?.flagged === true ? 1 : 0,
+    selected.length && response?.submitted === true ? 1 : 0,
+    String(response?.notes || ""),
+  ].join("|");
 }
 
 function buildLiveTestBlockSignature(session) {
-  const responses = isRecordObject(session?.responses) ? session.responses : {};
-  const answers = Object.keys(responses).sort().map((questionId) => {
-    const response = responses[questionId] || {};
-    return [
-      questionId,
-      (Array.isArray(response.selected) ? response.selected : []).join(""),
-      response.flagged === true ? 1 : 0,
-      response.submitted === true ? 1 : 0,
-      String(response.notes || "").length,
-    ].join(":");
-  });
   return JSON.stringify([
     String(session?.status || ""),
     Math.floor(Number(session?.currentIndex || 0) || 0),
     Math.floor((Number(session?.elapsedSec || 0) || 0) / 30),
     session?.timeRemainingSec == null ? null : Math.floor((Number(session.timeRemainingSec) || 0) / 30),
-    answers,
   ]);
 }
 
-function getLiveTestBlockProgressPatch(session) {
+function getLiveTestBlockResponse(session, questionId, questionStore) {
+  const responses = isRecordObject(session?.responses) ? session.responses : {};
+  const resolvedQuestionId = resolveSessionQuestionId(questionId, questionStore);
+  return responses[questionId] || responses[resolvedQuestionId] || null;
+}
+
+// Questions the app can show: the ones this browser's question bank still has.
+function getLiveTestBlockVisibleDbIds(questionDbIds, questionStore) {
+  if (!questionStore.byDbId.size) {
+    return questionDbIds.slice();
+  }
+  const visible = questionDbIds.filter((dbId) => questionStore.byDbId.has(dbId));
+  return visible.length ? visible : questionDbIds.slice();
+}
+
+function toAppLiveTestBlockIndex(questionDbIds, visibleDbIds, localIndex) {
+  const clamped = Math.max(0, Math.min(questionDbIds.length - 1, Math.floor(Number(localIndex || 0) || 0)));
+  const visibleSet = new Set(visibleDbIds);
+  const before = questionDbIds.slice(0, clamped + 1).filter((dbId) => visibleSet.has(dbId)).length;
+  return Math.max(0, Math.min(visibleDbIds.length - 1, before - 1));
+}
+
+function fromAppLiveTestBlockIndex(questionDbIds, visibleDbIds, appIndex) {
+  if (!visibleDbIds.length) {
+    return 0;
+  }
+  const clamped = Math.max(0, Math.min(visibleDbIds.length - 1, Math.floor(Number(appIndex || 0) || 0)));
+  return Math.max(0, questionDbIds.indexOf(visibleDbIds[clamped]));
+}
+
+function getLiveTestBlockProgressPatch(session, questionDbIds, visibleDbIds) {
   const isTimed = session?.mode === "timed";
   return {
-    current_index: Math.max(0, Math.floor(Number(session?.currentIndex || 0) || 0)),
+    current_index: toAppLiveTestBlockIndex(questionDbIds, visibleDbIds, session?.currentIndex),
     elapsed_seconds: Math.max(0, Math.round(Number(session?.elapsedSec || 0) || 0)),
     time_remaining_sec: isTimed && session?.timeRemainingSec != null
       ? Math.max(0, Math.round(Number(session.timeRemainingSec) || 0))
@@ -13043,20 +13067,59 @@ async function syncLiveTestBlocks() {
     for (const candidate of candidates) {
       const sessionId = String(candidate?.id || "").trim();
       const session = getSessionById(sessionId) || candidate;
-      const signature = buildLiveTestBlockSignature(session);
-      if (session.liveBlockSig === signature && isUuidValue(String(session.liveBlockId || ""))) {
-        continue;
-      }
-      const questionDbIds = (Array.isArray(session.questionIds) ? session.questionIds : [])
-        .map((questionId) => getLiveTestBlockQuestionDbId(session, questionId, questionStore));
+      const questionIds = Array.isArray(session.questionIds) ? session.questionIds : [];
+      const questionDbIds = questionIds.map((questionId) => getLiveTestBlockQuestionDbId(session, questionId, questionStore));
       if (!questionDbIds.length || questionDbIds.some((dbId) => !dbId)) {
         continue;
       }
       const isCompleted = session.status === "completed";
-      const progress = getLiveTestBlockProgressPatch(session);
+      const signature = buildLiveTestBlockSignature(session);
+      // A test shared before answers were tracked waits for one pull first,
+      // so its older answers can't overwrite the app's.
+      const awaitingFirstPull = isUuidValue(String(session.liveBlockId || "")) && !isRecordObject(session.liveBlockAnswerSigs);
+      const storedAnswerSigs = isRecordObject(session.liveBlockAnswerSigs) ? session.liveBlockAnswerSigs : {};
+      const answerRows = [];
+      const markRows = [];
+      const nextAnswerSigs = {};
+      questionIds.forEach((questionId, index) => {
+        const dbId = questionDbIds[index];
+        const response = getLiveTestBlockResponse(session, questionId, questionStore);
+        const answerSig = buildLiveTestBlockAnswerSig(response);
+        if (awaitingFirstPull || storedAnswerSigs[dbId] === answerSig) {
+          return;
+        }
+        const selected = getLiveTestBlockSelectedLabels(response);
+        const flagged = response?.flagged === true;
+        const notes = String(response?.notes || "");
+        if (selected.length) {
+          answerRows.push({
+            question_id: dbId,
+            selected_choice_labels: selected,
+            flagged,
+            submitted: response?.submitted === true,
+            notes,
+            answered_at: response?.answeredAt || nowISO(),
+          });
+        } else if (flagged || notes || storedAnswerSigs[dbId] !== undefined) {
+          // Flag and note only: never send an empty selection.
+          markRows.push({ question_id: dbId, flagged, notes });
+        } else {
+          return;
+        }
+        nextAnswerSigs[dbId] = answerSig;
+      });
+      const hasBlock = isUuidValue(String(session.liveBlockId || ""));
+      if (hasBlock && session.liveBlockSig === signature && !answerRows.length && !markRows.length) {
+        continue;
+      }
+      const visibleDbIds = getLiveTestBlockVisibleDbIds(questionDbIds, questionStore);
+      const progress = getLiveTestBlockProgressPatch(session, questionDbIds, visibleDbIds);
       let blockId = String(session.liveBlockId || "").trim();
       let remoteUpdatedAt = "";
-      if (!isUuidValue(blockId)) {
+      if (!hasBlock) {
+        if (isCompleted) {
+          continue;
+        }
         const row = await runRelationalQueryWithTimeout(
           client.rpc("create_test_block_with_items", {
             p_mode: session.mode === "timed" ? "timed" : "tutor",
@@ -13080,29 +13143,30 @@ async function syncLiveTestBlocks() {
         }
         remoteUpdatedAt = String(block?.updated_at || "");
       }
-      const responseRows = (Array.isArray(session.questionIds) ? session.questionIds : [])
-        .map((questionId, index) => {
-          const resolvedQuestionId = resolveSessionQuestionId(questionId, questionStore);
-          const response = session.responses?.[questionId] || session.responses?.[resolvedQuestionId];
-          return getLiveTestBlockResponseRow(blockId, questionDbIds[index], response);
+      for (const rows of [answerRows, markRows]) {
+        for (const rowBatch of splitIntoBatches(rows, 200)) {
+          await runRelationalQueryWithTimeout(
+            client
+              .from("test_responses")
+              .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id" }),
+            "Shared test answers timed out.",
+          );
+        }
+      }
+      let updateQuery = client
+        .from("test_blocks")
+        .update({
+          ...progress,
+          status: isCompleted ? "completed" : "in_progress",
+          ...(isCompleted ? { completed_at: session.completedAt || nowISO() } : {}),
         })
-        .filter(Boolean);
-      for (const rowBatch of splitIntoBatches(responseRows, 200)) {
-        await runRelationalQueryWithTimeout(
-          client.from("test_responses").upsert(rowBatch, { onConflict: "block_id,question_id" }),
-          "Shared test answers timed out.",
-        );
+        .eq("id", blockId);
+      if (!isCompleted) {
+        // Never reopen a test the app already finished.
+        updateQuery = updateQuery.neq("status", "completed");
       }
       const updated = await runRelationalQueryWithTimeout(
-        client
-          .from("test_blocks")
-          .update({
-            ...progress,
-            status: isCompleted ? "completed" : "in_progress",
-            ...(isCompleted ? { completed_at: session.completedAt || nowISO() } : {}),
-          })
-          .eq("id", blockId)
-          .select("updated_at"),
+        updateQuery.select("updated_at"),
         "Shared test progress timed out.",
       );
       remoteUpdatedAt = String((Array.isArray(updated) ? updated[0] : updated)?.updated_at || remoteUpdatedAt);
@@ -13110,7 +13174,13 @@ async function syncLiveTestBlocks() {
       if (target) {
         target.liveBlockId = blockId;
         target.liveBlockSig = signature;
-        target.liveBlockRemoteAt = remoteUpdatedAt;
+        target.liveBlockAnswerSigs = {
+          ...(isRecordObject(target.liveBlockAnswerSigs) ? target.liveBlockAnswerSigs : {}),
+          ...nextAnswerSigs,
+        };
+        if (remoteUpdatedAt) {
+          target.liveBlockRemoteAt = remoteUpdatedAt;
+        }
         if (isCompleted) {
           target.liveBlockClosed = true;
         }
@@ -13126,23 +13196,27 @@ async function syncLiveTestBlocks() {
   }
 }
 
-function mapLiveTestBlockToLocalSession(block, questionIds, responseRows, currentUser, profileId, questionStore) {
+function buildEmptyLiveTestBlockResponse() {
+  return {
+    selected: [],
+    flagged: false,
+    struck: [],
+    notes: "",
+    timeSpentSec: 0,
+    highlightedLines: [],
+    highlightedLineColors: {},
+    highlightedChoices: {},
+    textHighlights: buildEmptyTextHighlightStore(),
+    submitted: false,
+  };
+}
+
+function mapLiveTestBlockToLocalSession(block, questionIds, currentUser, profileId, questionStore) {
   const responses = {};
   const questionSnapshots = {};
   const sessionCourses = [];
   questionIds.forEach((questionId) => {
-    responses[questionId] = {
-      selected: [],
-      flagged: false,
-      struck: [],
-      notes: "",
-      timeSpentSec: 0,
-      highlightedLines: [],
-      highlightedLineColors: {},
-      highlightedChoices: {},
-      textHighlights: buildEmptyTextHighlightStore(),
-      submitted: false,
-    };
+    responses[questionId] = buildEmptyLiveTestBlockResponse();
     const question = questionStore.byDbId.get(questionId) || null;
     const snapshot = question ? normalizeQuestionForSessionSnapshot(question) : null;
     if (snapshot) {
@@ -13153,7 +13227,6 @@ function mapLiveTestBlockToLocalSession(block, questionIds, responseRows, curren
       }
     }
   });
-  applyLiveTestBlockResponses(responses, responseRows);
   const mode = block.mode === "timed" ? "timed" : "tutor";
   const createdAt = block.created_at || nowISO();
   return {
@@ -13175,46 +13248,70 @@ function mapLiveTestBlockToLocalSession(block, questionIds, responseRows, curren
     questionIds,
     responses,
     questionSnapshots,
-    currentIndex: Math.max(0, Math.min(questionIds.length - 1, Math.floor(Number(block.current_index || 0) || 0))),
+    currentIndex: 0,
     status: "in_progress",
     lastQuestionAt: Date.now(),
     lastTimerSyncAt: Date.now(),
-    elapsedSec: Math.max(0, Number(block.elapsed_seconds || 0) || 0),
+    elapsedSec: 0,
     createdAt,
     updatedAt: block.updated_at || createdAt,
     completedAt: null,
     originSessionId: null,
     liveBlockId: block.id,
-    liveBlockRemoteAt: String(block.updated_at || ""),
+    liveBlockAnswerSigs: {},
   };
 }
 
-function applyLiveTestBlockResponses(responses, responseRows) {
+// Takes the app's answer for every question this device hasn't changed since
+// the last sync. Returns true when anything changed.
+function applyLiveTestBlockResponses(session, questionDbIds, responseRows, questionStore) {
+  const responses = isRecordObject(session.responses) ? session.responses : {};
+  session.responses = responses;
+  const answerSigs = isRecordObject(session.liveBlockAnswerSigs) ? { ...session.liveBlockAnswerSigs } : {};
+  const keyByDbId = new Map();
+  (Array.isArray(session.questionIds) ? session.questionIds : []).forEach((questionId, index) => {
+    if (questionDbIds[index]) {
+      keyByDbId.set(questionDbIds[index], questionId);
+    }
+  });
+  let changed = false;
   responseRows.forEach((row) => {
-    const questionId = String(row?.question_id || "").trim();
-    if (!questionId) {
+    const dbId = String(row?.question_id || "").trim();
+    const key = keyByDbId.get(dbId);
+    if (!key) {
       return;
     }
-    const key = Object.prototype.hasOwnProperty.call(responses, questionId)
-      ? questionId
-      : (Object.keys(responses).find((entry) => resolveSessionQuestionId(entry) === resolveSessionQuestionId(questionId)) || questionId);
-    const previous = isRecordObject(responses[key]) ? responses[key] : {};
-    responses[key] = {
-      struck: [],
-      timeSpentSec: 0,
-      highlightedLines: [],
-      highlightedLineColors: {},
-      highlightedChoices: {},
-      textHighlights: buildEmptyTextHighlightStore(),
-      ...previous,
-      selected: (Array.isArray(row.selected_choice_labels) ? row.selected_choice_labels : [])
-        .map((label) => normalizeQuestionChoiceLabel(label))
-        .filter(Boolean),
+    const local = getLiveTestBlockResponse(session, key, questionStore);
+    const localSig = buildLiveTestBlockAnswerSig(local);
+    const remote = {
+      selected: getLiveTestBlockSelectedLabels({ selected: row.selected_choice_labels }),
       flagged: row.flagged === true,
       notes: String(row.notes || ""),
       submitted: row.submitted === true,
     };
+    const remoteSig = buildLiveTestBlockAnswerSig(remote);
+    // No record yet means this device never synced that answer: the app's wins.
+    const localUntouched = answerSigs[dbId] === undefined || answerSigs[dbId] === localSig;
+    if (remoteSig === localSig) {
+      answerSigs[dbId] = remoteSig;
+      return;
+    }
+    if (!localUntouched || (!remote.selected.length && getLiveTestBlockSelectedLabels(local).length)) {
+      return;
+    }
+    responses[key] = {
+      ...buildEmptyLiveTestBlockResponse(),
+      ...(isRecordObject(local) ? local : {}),
+      selected: remote.selected,
+      flagged: remote.flagged,
+      notes: remote.notes,
+      submitted: remote.selected.length ? remote.submitted : false,
+    };
+    answerSigs[dbId] = buildLiveTestBlockAnswerSig(responses[key]);
+    changed = true;
   });
+  session.liveBlockAnswerSigs = answerSigs;
+  return changed;
 }
 
 // Pulls unfinished tests started (or moved on) in the app, and drops local
@@ -13242,8 +13339,7 @@ async function hydrateLiveTestBlocks(currentUser) {
   ));
   const openBlockIds = new Set(openBlocks.map((block) => block.id));
 
-  const localSessions = getRawStoredSessions();
-  const ownSessions = localSessions.filter((session) => doesSessionBelongToUser(session, currentUser));
+  const ownSessions = getRawStoredSessions().filter((session) => doesSessionBelongToUser(session, currentUser));
   const sessionByBlockId = new Map();
   const sessionById = new Map();
   ownSessions.forEach((session) => {
@@ -13255,6 +13351,13 @@ async function hydrateLiveTestBlocks(currentUser) {
     if (isUuidValue(blockId)) {
       sessionByBlockId.set(blockId, session);
     }
+  });
+  const findLocalForBlock = (block, sessions) => sessions.findIndex((session) => {
+    const sessionId = String(session?.id || "").trim();
+    const externalId = String(block.external_id || "").trim();
+    return String(session?.liveBlockId || "").trim() === block.id
+      || sessionId === block.id
+      || (externalId && sessionId === externalId);
   });
 
   // Linked tests the app has since finished: the app's history entry replaces them.
@@ -13284,45 +13387,33 @@ async function hydrateLiveTestBlocks(currentUser) {
       newBlockCount += 1;
       return newBlockCount <= LIVE_TEST_BLOCK_NEW_PER_HYDRATE;
     }
-    if (local.status !== "in_progress") {
-      return false;
-    }
-    if (String(local.liveBlockRemoteAt || "") === String(block.updated_at || "")) {
-      return false;
-    }
-    const localChangedSincePush = local.liveBlockSig !== buildLiveTestBlockSignature(local);
-    return !localChangedSincePush
-      || parseSyncTimestampMs(block.updated_at) > parseSyncTimestampMs(local.updatedAt);
+    return local.status === "in_progress"
+      && (
+        String(local.liveBlockRemoteAt || "") !== String(block.updated_at || "")
+        || !isRecordObject(local.liveBlockAnswerSigs)
+      );
   });
 
   if (!blocksToLoad.length && !finishedBlockIds.size) {
     return;
   }
 
-  const blockIds = blocksToLoad.map((block) => block.id);
+  // One block at a time keeps every read under the API's row cap.
   const itemsByBlockId = new Map();
   const responsesByBlockId = new Map();
-  for (const idBatch of splitIntoBatches(blockIds, RELATIONAL_UUID_IN_BATCH_SIZE)) {
+  for (const block of blocksToLoad) {
     const [items, responses] = await Promise.all([
       runRelationalQueryWithTimeout(
-        client.from("test_block_items").select("block_id,position,question_id").in("block_id", idBatch).order("position"),
+        client.from("test_block_items").select("position,question_id").eq("block_id", block.id).order("position").limit(1000),
         "Shared test questions query timed out.",
       ),
       runRelationalQueryWithTimeout(
-        client.from("test_responses").select("block_id,question_id,selected_choice_labels,flagged,submitted,notes").in("block_id", idBatch),
+        client.from("test_responses").select("question_id,selected_choice_labels,flagged,submitted,notes").eq("block_id", block.id).limit(1000),
         "Shared test answers query timed out.",
       ),
     ]);
-    (Array.isArray(items) ? items : []).forEach((row) => {
-      const list = itemsByBlockId.get(row.block_id) || [];
-      list.push(String(row.question_id || "").trim());
-      itemsByBlockId.set(row.block_id, list);
-    });
-    (Array.isArray(responses) ? responses : []).forEach((row) => {
-      const list = responsesByBlockId.get(row.block_id) || [];
-      list.push(row);
-      responsesByBlockId.set(row.block_id, list);
-    });
+    itemsByBlockId.set(block.id, (Array.isArray(items) ? items : []).map((row) => String(row?.question_id || "").trim()));
+    responsesByBlockId.set(block.id, Array.isArray(responses) ? responses : []);
   }
 
   // Re-read in case the session store changed while the queries ran.
@@ -13339,43 +13430,46 @@ async function hydrateLiveTestBlocks(currentUser) {
     }
   });
   blocksToLoad.forEach((block) => {
-    const questionIds = (itemsByBlockId.get(block.id) || []).filter((questionId) => isUuidValue(questionId));
-    if (!questionIds.length) {
+    const blockDbIds = (itemsByBlockId.get(block.id) || []).filter((questionId) => isUuidValue(questionId));
+    if (!blockDbIds.length) {
       return;
     }
     const responseRows = responsesByBlockId.get(block.id) || [];
-    const externalId = String(block.external_id || "").trim();
-    const index = nextSessions.findIndex((session) => {
-      const sessionId = String(session?.id || "").trim();
-      return String(session?.liveBlockId || "").trim() === block.id
-        || sessionId === block.id
-        || (externalId && sessionId === externalId);
-    });
+    const index = findLocalForBlock(block, nextSessions);
     if (index < 0) {
-      const created = mapLiveTestBlockToLocalSession(block, questionIds, responseRows, currentUser, profileId, questionStore);
+      // Same questions, same order as the app shows.
+      const visibleDbIds = getLiveTestBlockVisibleDbIds(blockDbIds, questionStore);
+      const created = mapLiveTestBlockToLocalSession(block, visibleDbIds, currentUser, profileId, questionStore);
+      applyLiveTestBlockResponses(created, visibleDbIds, responseRows, questionStore);
+      created.currentIndex = Math.max(0, Math.min(visibleDbIds.length - 1, Math.floor(Number(block.current_index || 0) || 0)));
+      created.elapsedSec = Math.max(0, Number(block.elapsed_seconds || 0) || 0);
+      created.liveBlockRemoteAt = String(block.updated_at || "");
       normalizeSession(created, { questionStore });
       created.liveBlockSig = buildLiveTestBlockSignature(created);
       nextSessions.push(created);
       return;
     }
-    const local = nextSessions[index];
-    const merged = { ...local };
-    merged.responses = isRecordObject(local.responses) ? deepClone(local.responses) : {};
-    applyLiveTestBlockResponses(merged.responses, responseRows);
-    const progressMax = Math.max(0, (Array.isArray(merged.questionIds) ? merged.questionIds.length : questionIds.length) - 1);
-    merged.currentIndex = Math.max(0, Math.min(progressMax, Math.floor(Number(block.current_index || 0) || 0)));
-    merged.elapsedSec = Math.max(0, Number(block.elapsed_seconds || 0) || 0);
-    if (merged.mode === "timed" && block.time_remaining_sec != null) {
-      merged.timeRemainingSec = Math.max(0, Number(block.time_remaining_sec) || 0);
+    const merged = { ...nextSessions[index] };
+    merged.responses = isRecordObject(merged.responses) ? deepClone(merged.responses) : {};
+    const mergedQuestionIds = Array.isArray(merged.questionIds) ? merged.questionIds : [];
+    const mergedDbIds = mergedQuestionIds.map((questionId) => getLiveTestBlockQuestionDbId(merged, questionId, questionStore));
+    applyLiveTestBlockResponses(merged, mergedDbIds, responseRows, questionStore);
+    // Progress moves only if this device hasn't moved since its last push.
+    if (merged.liveBlockSig === buildLiveTestBlockSignature(merged)) {
+      const visibleDbIds = getLiveTestBlockVisibleDbIds(mergedDbIds, questionStore);
+      merged.currentIndex = fromAppLiveTestBlockIndex(mergedDbIds, visibleDbIds, block.current_index);
+      merged.elapsedSec = Math.max(0, Number(block.elapsed_seconds || 0) || 0);
+      if (merged.mode === "timed" && block.time_remaining_sec != null) {
+        merged.timeRemainingSec = Math.max(0, Number(block.time_remaining_sec) || 0);
+      }
+      merged.lastQuestionAt = Date.now();
+      merged.lastTimerSyncAt = Date.now();
+      merged.liveBlockSig = buildLiveTestBlockSignature(merged);
     }
     merged.status = "in_progress";
     merged.paused = false;
-    merged.updatedAt = block.updated_at || merged.updatedAt;
-    merged.lastQuestionAt = Date.now();
-    merged.lastTimerSyncAt = Date.now();
     merged.liveBlockId = block.id;
     merged.liveBlockRemoteAt = String(block.updated_at || "");
-    merged.liveBlockSig = buildLiveTestBlockSignature(merged);
     nextSessions[index] = merged;
   });
   saveLocalOnly(STORAGE_KEYS.sessions, nextSessions);
