@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-25 — Questions stuck as "Answer submitted" can be answered again
+- Some questions in unfinished tests showed "Answer submitted" and were marked
+  wrong although no answer was picked, and could not be changed. They now open
+  for answering again, on the website and in the app.
+
 ### 2026-10-25 — Shared tests: fixed missing answers and question order
 - Answers given on one device no longer disappear on the other.
 - A shared test now shows the same questions in the same order in the app and
