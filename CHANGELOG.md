@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-25 — Answers from the app can no longer be wiped
+- The website can no longer replace or clear an answer given in the app, and
+  the database now refuses any write that would clear a picked answer.
+
 ### 2026-10-25 — Questions stuck as "Answer submitted" can be answered again
 - Some questions in unfinished tests showed "Answer submitted" and were marked
   wrong although no answer was picked, and could not be changed. They now open

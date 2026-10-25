@@ -13093,12 +13093,15 @@ async function syncLiveTestBlocks() {
         const notes = String(response?.notes || "");
         if (selected.length) {
           answerRows.push({
-            question_id: dbId,
-            selected_choice_labels: selected,
-            flagged,
-            submitted: response?.submitted === true,
-            notes,
-            answered_at: response?.answeredAt || nowISO(),
+            previousSig: storedAnswerSigs[dbId],
+            row: {
+              question_id: dbId,
+              selected_choice_labels: selected,
+              flagged,
+              submitted: response?.submitted === true,
+              notes,
+              answered_at: response?.answeredAt || nowISO(),
+            },
           });
         } else if (flagged || notes || storedAnswerSigs[dbId] !== undefined) {
           // Flag and note only: never send an empty selection.
@@ -13143,15 +13146,49 @@ async function syncLiveTestBlocks() {
         }
         remoteUpdatedAt = String(block?.updated_at || "");
       }
-      for (const rows of [answerRows, markRows]) {
-        for (const rowBatch of splitIntoBatches(rows, 200)) {
-          await runRelationalQueryWithTimeout(
-            client
-              .from("test_responses")
-              .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id" }),
-            "Shared test answers timed out.",
-          );
+      // An answer is written only over the value this device last saw. A
+      // question it never synced is insert-only, so an answer the app already
+      // holds is never replaced; a changed one is a compare-and-set on the old
+      // selection, and a mismatch (the app changed it meanwhile) is left for
+      // the next pull to bring in.
+      const insertOnlyRows = [];
+      for (const entry of answerRows) {
+        if (entry.previousSig === undefined) {
+          insertOnlyRows.push(entry.row);
+          continue;
         }
+        const previousLabels = String(entry.previousSig).split("|")[0].split("").filter(Boolean);
+        let compareQuery = client
+          .from("test_responses")
+          .update(entry.row)
+          .eq("block_id", blockId)
+          .eq("question_id", entry.row.question_id);
+        compareQuery = previousLabels.length
+          ? compareQuery.eq("selected_choice_labels", `{${previousLabels.join(",")}}`)
+          : compareQuery.or("selected_choice_labels.is.null,selected_choice_labels.eq.{}");
+        const matched = await runRelationalQueryWithTimeout(
+          compareQuery.select("question_id"),
+          "Shared test answers timed out.",
+        );
+        if (!Array.isArray(matched) || !matched.length) {
+          insertOnlyRows.push(entry.row);
+        }
+      }
+      for (const rowBatch of splitIntoBatches(insertOnlyRows, 200)) {
+        await runRelationalQueryWithTimeout(
+          client
+            .from("test_responses")
+            .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id", ignoreDuplicates: true }),
+          "Shared test answers timed out.",
+        );
+      }
+      for (const rowBatch of splitIntoBatches(markRows, 200)) {
+        await runRelationalQueryWithTimeout(
+          client
+            .from("test_responses")
+            .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id" }),
+          "Shared test answers timed out.",
+        );
       }
       let updateQuery = client
         .from("test_blocks")
