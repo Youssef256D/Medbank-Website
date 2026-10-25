@@ -9,6 +9,32 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-26 — Subjects, most-missed questions and CSV in Student results
+- **Subjects** tab: how students do in each subject and, inside it, in each
+  topic (weakest first), with how much of the bank they have covered.
+- **Most missed** tab: the questions students get wrong most often, with how
+  many picked each choice. When most students agree on one wrong answer, the
+  card suggests checking the answer key. Open the question to fix it, or its
+  reports.
+- Every Results table can be exported to CSV (opens in Excel).
+
+### 2026-10-26 — Student results in the admin
+- New **Student results** page under People: an overview of all students
+  (tests finished, questions answered, how many are right, active students,
+  website vs app, tests per day) and a searchable student list.
+- Open a student to see their progress in each subject and topic, every
+  finished and unfinished test, their mistakes grouped by topic, and their
+  profile and activity.
+- The Users page now shows each student's last test and score, with a
+  **Tests** button that opens their tests.
+
+### 2026-10-26 — Groundwork for student results in the admin
+- Every answer in every finished test (website and app) is now also saved in
+  a form the admin can add up quickly, ready for the upcoming Results page:
+  activity, scores per subject and topic, most-missed questions and each
+  student's mistakes. Only admins with the People area can read it. Nothing
+  changes for students yet.
+
 ### 2026-10-25 — Answers stay answered during a test
 - Fixed answers on the website turning blank a few seconds after being given
   while a background sync ran (it reloaded an older saved copy of the test).

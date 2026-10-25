@@ -2,6 +2,86 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-26 — Admin Student results, phase 3 (Subjects, Most missed, CSV)
+- Subjects tab: every subject with students, tests, answers, % right and
+  bank covered; a subject opens its topics (weakest first, or by name / most
+  answered). Most missed tab: questions most often answered wrong, filtered by
+  subject, topic and a minimum number of answers (5/10/20/50); each card shows
+  how many students picked each choice (choice texts read from
+  `question_choices`), opens the question editor (`mcq.questions_edit`) or its
+  open reports (`question-reports` page access).
+- `getAdminResultsKeyWarning`: "Check the answer key" shows when a question has
+  at least 10 answers, one wrong choice got at least half of them and more
+  than twice the picks of the key. It is a hint, not a verdict.
+- `openAdminQuestionEditorForDbId(questionId)` was pulled out of
+  `wireAdminQuestionReportDecision` so Results can open the editor too.
+- CSV export on every Results table (`runAdminResultsExport`): columns use
+  `toCsvCell` (formula guard), the file starts with `\ufeff` for Excel.
+  Paged lists (students, most missed) are read in pages of 200, up to
+  `ADMIN_RESULTS_EXPORT_MAX_ROWS` (5,000).
+- Migration `20261026150000_results_coverage_published_only`: "bank covered"
+  counts only answered questions that are still published in that subject or
+  topic (before, deleted or moved questions made it read e.g. 743 of 571).
+- `.admin-results-table-wrap` is `position: relative` so the screen-reader-only
+  header labels stay inside the scroll box (they widened the page).
+
+### 2026-10-26 — Admin Student results, phase 2 (Results page + Users column)
+- New admin page `results` ("Student results", People group): in
+  `ADMIN_DATA_PAGES`, `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS` (`people`) and
+  `ADMIN_PAGE_PERMISSIONS` (any `users.*` action; the database checks the
+  area). Code is one block in `main.js` starting at
+  `// Admin Student results (People area).`; `tests/admin-results.test.js`
+  slices it by that marker and `window.__MCQ_ON_GSAP_READY__`, so keep both.
+- Tabs: Overview (tiles, website/app split, finished tests per day) and
+  Students (search, sort, pages of 50). A student opens a view with
+  Progress (per subject + topics weakest first), Tests (finished and
+  unfinished), Mistakes (latest 300 wrong answers by topic) and Profile &
+  activity. Filters: finished in last 7/30/90 days or all time, year, semester.
+- Each query lives in a slot (`loadAdminResultsSlot`) keyed by its filters; a
+  reply for an older key is dropped and a failed key waits for Reload, so a
+  render never loops on a failing RPC.
+- Users page: new "Last test" column (`renderAdminUserLastTestCell`, data from
+  `admin_results_last_tests`, migration `20261026140000`) with a "Tests"
+  button, and a "Results" row-menu item; both open the student with
+  `returnTo: "users"`, so the back button returns to Users. The phone card
+  layout gives the cell a full row (`.admin-user-last-test-cell`).
+- Migration `20261026130000_results_time_zero_is_unknown`: the app always
+  sends `timeSpentSec: 0`, so 0 is now stored as null. Time per question is
+  website-only; the tile says so.
+- Website/app colors are `--results-website` / `--results-app` (validated for
+  colour-blind separation in light and dark); the dark theme's `--brand` is a
+  gray and must not carry a series.
+
+### 2026-10-26 — Admin Student results, phase 1 (database only)
+- New table `test_history_answers`: one row per answered question per
+  finished test, copied from `test_history_entries.payload` by the triggers
+  `trg_test_history_answers_insert` / `_update` (→
+  `private.refresh_test_history_answers`). Backfilled 141,918 rows from 4,258
+  tests (migrations `20261026120000_admin_student_results`,
+  `20261026120100_backfill_test_history_answers`; rollback in
+  `supabase/rollbacks/`). Both the website and the app write these tests.
+- `is_correct` uses the answer key saved in the test (`questionSnapshots.correct`),
+  falling back to the current `question_choices` only when the test has no
+  copy. `client` = `website` when the payload has `originSessionId` (only the
+  website writes it), else `app`. `time_spent_sec` over 3,600 is stored as
+  null (payloads hold junk values in the millions).
+- **No foreign key to `test_history_entries` on purpose**: deleting old tests
+  (there was a 20-day prune job once) must not wipe the results. Deleting the
+  profile does delete the rows.
+- The trigger swallows its own errors (`raise warning`), so a bug here can
+  never stop a student's finished test from saving. Keep it that way.
+- Read access: RLS policy and every function require
+  `private.admin_has_area('people')`; no client can write the table. Admin
+  RPCs: `admin_results_overview`, `_subjects`, `_topics`,
+  `_missed_questions`, `_students`, `_student`. Students only (role
+  `student`). No existing policy or access flag changed.
+- Applied with `supabase db query --linked -f` plus a ledger insert in the
+  same transaction, because `db push` refuses (remote has Flutter-repo
+  migrations that are not in this repo).
+- Phase 2 (the admin Results page in `main.js`) is not built yet; it must go
+  in `ADMIN_NAV_GROUPS`, `ADMIN_PAGE_AREAS` (`people`) and
+  `ADMIN_PAGE_PERMISSIONS`.
+
 ### 2026-10-25 — Answers no longer undone a few seconds after they are given
 - Website: `getRawStoredSessions()` read the browser copy of the sessions,
   which trails the in-memory store by up to `SESSION_BROWSER_PERSIST_THROTTLE_MS`
