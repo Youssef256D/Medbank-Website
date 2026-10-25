@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-25 — Answers stay answered during a test
+- Fixed answers on the website turning blank a few seconds after being given
+  while a background sync ran (it reloaded an older saved copy of the test).
+
 ### 2026-10-25 — Answers from the app can no longer be wiped
 - The website can no longer replace or clear an answer given in the app, and
   the database now refuses any write that would clear a picked answer.
