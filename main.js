@@ -13247,13 +13247,37 @@ async function syncLiveTestBlocks() {
           insertOnlyRows.push(entry.row);
         }
       }
+      const skippedRows = [];
       for (const rowBatch of splitIntoBatches(insertOnlyRows, 200)) {
-        await runRelationalQueryWithTimeout(
+        const inserted = await runRelationalQueryWithTimeout(
           client
             .from("test_responses")
-            .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id", ignoreDuplicates: true }),
+            .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id", ignoreDuplicates: true })
+            .select("question_id"),
           "Shared test answers timed out.",
         );
+        const insertedIds = new Set((Array.isArray(inserted) ? inserted : []).map((row) => String(row?.question_id || "")));
+        skippedRows.push(...rowBatch.filter((row) => !insertedIds.has(row.question_id)));
+      }
+      // A skipped row already holds an answer this device's record doesn't
+      // match (often a stale record, not a change in the app). A submitted
+      // answer here is never left behind an unsubmitted one there: the next
+      // pull would take that copy and the question would open unsolved again.
+      const submittedSkipped = skippedRows.filter((row) => row.submitted === true);
+      for (const idBatch of splitIntoBatches(submittedSkipped.map((row) => row.question_id), RELATIONAL_UUID_IN_BATCH_SIZE)) {
+        const existing = await runRelationalQueryWithTimeout(
+          client.from("test_responses").select("question_id,selected_choice_labels,submitted").eq("block_id", blockId).in("question_id", idBatch),
+          "Shared test answers timed out.",
+        );
+        const remoteSubmittedIds = new Set((Array.isArray(existing) ? existing : [])
+          .filter((row) => row?.submitted === true && getLiveTestBlockSelectedLabels({ selected: row.selected_choice_labels }).length)
+          .map((row) => String(row.question_id || "")));
+        for (const row of submittedSkipped.filter((entry) => idBatch.includes(entry.question_id) && !remoteSubmittedIds.has(entry.question_id))) {
+          await runRelationalQueryWithTimeout(
+            client.from("test_responses").update(row).eq("block_id", blockId).eq("question_id", row.question_id),
+            "Shared test answers timed out.",
+          );
+        }
       }
       for (const rowBatch of splitIntoBatches(markRows, 200)) {
         await runRelationalQueryWithTimeout(
@@ -13406,7 +13430,17 @@ function applyLiveTestBlockResponses(session, questionDbIds, responseRows, quest
       answerSigs[dbId] = remoteSig;
       return;
     }
-    if (!localUntouched || (!remote.selected.length && getLiveTestBlockSelectedLabels(local).length)) {
+    const localSelected = getLiveTestBlockSelectedLabels(local);
+    // A solved question is never unsolved by a pull: an unsubmitted copy
+    // there is an older one, not a change made in the app.
+    const localSolved = localSelected.length > 0 && local?.submitted === true;
+    if (localUntouched && localSolved && !remote.submitted) {
+      // The record says it was sent, but the row there never took it: forget
+      // the record so the next push sends it again.
+      delete answerSigs[dbId];
+      return;
+    }
+    if (!localUntouched || (!remote.selected.length && localSelected.length)) {
       return;
     }
     responses[key] = {

@@ -2,6 +2,24 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-26 — Solved questions no longer come back unsolved (shared tests)
+- Cause: in `syncLiveTestBlocks` a changed answer whose compare-and-set
+  missed fell back to an insert with `ignoreDuplicates`. When the row already
+  held the unsubmitted pick (the device's `liveBlockAnswerSigs` entry was
+  stale or missing, e.g. after a merge with an older session copy), the
+  insert was silently skipped, but the sig was still recorded as sent. The
+  next pull (`applyLiveTestBlockResponses`) then saw the local answer as
+  "untouched" and replaced it with the row's unsubmitted copy.
+- Push: the fallback upsert now returns the inserted ids; a skipped row
+  carrying a submitted answer is read back and, unless the row already holds
+  a submitted answer (a real answer from the app, left for the pull), updated
+  straight over it.
+- Pull: a solved local answer (selection + `submitted`) is never replaced by
+  an unsubmitted remote copy; if the sig said it was sent, the sig is dropped
+  so the next push resends it. Side effect: un-submitting a question in the
+  app does not reach the website while it is solved there.
+- Tests: `tests/live-block-solved-answers.test.js` (fake `test_responses`).
+
 ### 2026-10-26 — app_state mcq_sessions backup throttled (DB froze 2026-10-25)
 - Incident: Postgres hung at 23:03 UTC on 2026-10-25 and was killed and
   restarted at 23:13 (Micro, 1 GB RAM). After the restart, one statement — the
