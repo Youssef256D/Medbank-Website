@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-26 — Lighter cloud backup of tests in progress
+- The full backup of a student's tests is now uploaded at most once a minute
+  instead of after every answer. On 2026-10-25 these uploads were 93% of all
+  database writes and froze the database for about 12 minutes. Answers still
+  save straight away, and the backup is still sent at once when the tab is
+  hidden or closed, on save and exit, and on logout.
+
 ### 2026-10-26 — Subjects, most-missed questions and CSV in Student results
 - **Subjects** tab: how students do in each subject and, inside it, in each
   topic (weakest first), with how much of the bank they have covered.
