@@ -19,6 +19,11 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   so the next push resends it. Side effect: un-submitting a question in the
   app does not reach the website while it is solved there.
 - Tests: `tests/live-block-solved-answers.test.js` (fake `test_responses`).
+- Related, app side (Medbank-App `claude/test-question-order`): the app showed
+  every shared test last-question-first because postgrest-dart's `order()`
+  defaults to descending (`.order('position')` in `fetchBlockQuestionIds`).
+  The website and `test_block_items` were always in the right order; do not
+  "fix" the order on the website.
 
 ### 2026-10-26 — app_state mcq_sessions backup throttled (DB froze 2026-10-25)
 - Incident: Postgres hung at 23:03 UTC on 2026-10-25 and was killed and
