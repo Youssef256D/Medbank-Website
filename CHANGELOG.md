@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-26 — Solved questions no longer turn unsolved
+- In a test shared with the app, a question the student had solved on the
+  website could open again as unsolved. The website now makes sure the solved
+  answer reaches the shared test, and a refresh never unsolves a question.
+
 ### 2026-10-26 — Lighter cloud backup of tests in progress
 - The full backup of a student's tests is now uploaded at most once a minute
   instead of after every answer. On 2026-10-25 these uploads were 93% of all
