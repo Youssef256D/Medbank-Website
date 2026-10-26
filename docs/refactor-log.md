@@ -2,6 +2,29 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-26 — app_state mcq_sessions backup throttled (DB froze 2026-10-25)
+- Incident: Postgres hung at 23:03 UTC on 2026-10-25 and was killed and
+  restarted at 23:13 (Micro, 1 GB RAM). After the restart, one statement — the
+  PostgREST upsert into `app_state` — was 93% of all WAL (439 of ~470 MB in an
+  hour, ~99 kB per call, 4.5k calls/h). The `u:<uid>:mcq_sessions` rows are up
+  to 1.3 MB, and the busiest client re-sent its row every ~7 s.
+- Cause in code: `renderSession()`/`wireSession()` call `syncSessionSnapshot`
+  with `persistOptions: { immediate: true }`, so every question render (not
+  only the clock) ran `queueSessionStateForCloud` → `scheduleSupabaseWrite`.
+- Fix: the app_state part now goes through `queueSessionStateBackup`, at most
+  once per `SESSION_STATE_BACKUP_SYNC_MS` (60 s); a held backup sets
+  `sessionSyncRuntime.backupDirty` and `backupTimer` sends it.
+  `flushPendingSyncNow` calls `queueSessionStateForCloud({ forceBackup: true })`
+  (hide, pagehide, beforeunload, save and exit, logout, pre-cloud-read).
+  The relational completed-history write and `scheduleLiveTestBlockSync`
+  (test_responses / test_blocks) are unchanged and still immediate.
+- **`backupDirty` is part of `hasPendingSessionSyncForId` and the
+  `hydrateRelationalState` session guard**, so a cloud pull cannot replace
+  answers whose backup is still held. It must never stay set when
+  `scheduleSupabaseWrite` returns false (signed out / backup off), or session
+  hydration would be blocked for good — `queueSessionStateBackup` clears it
+  before trying. Tests: `tests/session-backup-throttle.test.js`.
+
 ### 2026-10-26 — Admin Student results, phase 3 (Subjects, Most missed, CSV)
 - Subjects tab: every subject with students, tests, answers, % right and
   bank covered; a subject opens its topics (weakest first, or by name / most

@@ -300,6 +300,12 @@ const SESSION_SUBMIT_SYNC_WAIT_MS = 5000;
 // cloud at most this often; answers, flags, pause, submit, hiding the tab and
 // closing it still sync immediately. The browser copy still updates per tick.
 const SESSION_CLOCK_CLOUD_SYNC_MS = 15000;
+// The app_state mcq_sessions backup re-sends every session (up to 1 MB+) on
+// each upload; it was 93% of all DB writes on 2026-10-25 and froze the
+// instance. Answers already reach test_responses on their own path, so the
+// backup goes up at most this often. flushPendingSyncNow (hiding or closing
+// the tab, save and exit, logout) still sends it straight away.
+const SESSION_STATE_BACKUP_SYNC_MS = 60000;
 const SESSION_BROWSER_PERSIST_THROTTLE_MS = 10000;
 const ADMIN_DATA_REFRESH_MS = 30000;
 const ADMIN_DASHBOARD_COUNTS_TTL_MS = 60000;
@@ -1507,6 +1513,11 @@ const sessionSyncRuntime = {
   // and logout flushing behave exactly as before.
   clockDirty: false,
   lastQueuedAt: 0,
+  // The app_state backup is being held back (SESSION_STATE_BACKUP_SYNC_MS);
+  // backupTimer sends it when the window ends.
+  backupDirty: false,
+  backupTimer: null,
+  lastBackupQueuedAt: 0,
   flushing: false,
 };
 const adminActionRuntime = {
@@ -8643,10 +8654,20 @@ function clearSessionSyncTimer() {
   }
 }
 
+function clearSessionBackupTimer() {
+  if (sessionSyncRuntime.backupTimer) {
+    window.clearTimeout(sessionSyncRuntime.backupTimer);
+    sessionSyncRuntime.backupTimer = null;
+  }
+}
+
 function resetSessionSyncRuntime() {
   clearSessionSyncTimer();
+  clearSessionBackupTimer();
   sessionSyncRuntime.dirty = false;
   sessionSyncRuntime.clockDirty = false;
+  sessionSyncRuntime.backupDirty = false;
+  sessionSyncRuntime.lastBackupQueuedAt = 0;
   sessionSyncRuntime.flushing = false;
 }
 
@@ -8722,17 +8743,56 @@ function getSessionsForSupabaseStateBackup(sessionsPayload = null) {
   });
 }
 
-function queueSessionStateForCloud() {
-  if (!sessionSyncRuntime.dirty) {
+function scheduleSessionBackupTimer(delayMs) {
+  if (sessionSyncRuntime.backupTimer) {
+    return;
+  }
+  sessionSyncRuntime.backupTimer = window.setTimeout(() => {
+    sessionSyncRuntime.backupTimer = null;
+    if (!sessionSyncRuntime.backupDirty) {
+      return;
+    }
+    if (sessionSyncRuntime.flushing) {
+      scheduleSessionBackupTimer(SESSION_SYNC_FLUSH_MS);
+      return;
+    }
+    flushSessionStateSync({ forceBackup: true }).catch((error) => {
+      console.warn("Deferred session backup failed.", error?.message || error);
+    });
+  }, Math.max(0, delayMs));
+}
+
+// Returns true when the backup was queued or is held for backupTimer.
+function queueSessionStateBackup(sessions, options = {}) {
+  const nowMs = Date.now();
+  const waitMs = SESSION_STATE_BACKUP_SYNC_MS - (nowMs - sessionSyncRuntime.lastBackupQueuedAt);
+  if (options?.force !== true && waitMs > 0) {
+    sessionSyncRuntime.backupDirty = true;
+    scheduleSessionBackupTimer(waitMs);
+    return true;
+  }
+  clearSessionBackupTimer();
+  // false means backup sync is off for this user (signed out, disabled,
+  // denied); keeping backupDirty set would block cloud reads for good.
+  sessionSyncRuntime.backupDirty = false;
+  const queued = scheduleSupabaseWrite(STORAGE_KEYS.sessions, getSessionsForSupabaseStateBackup(sessions));
+  if (queued) {
+    sessionSyncRuntime.lastBackupQueuedAt = nowMs;
+  }
+  return queued;
+}
+
+function queueSessionStateForCloud(options = {}) {
+  const forceBackup = options?.forceBackup === true;
+  if (!sessionSyncRuntime.dirty && !(forceBackup && sessionSyncRuntime.backupDirty)) {
     return false;
   }
 
   const sessions = getSessions();
   const completedHistorySessions = getCompletedSessionsForRelationalHistorySync(sessions);
-  const backupSessions = getSessionsForSupabaseStateBackup(sessions);
   const queuedRelational = !completedHistorySessions.length
     || scheduleRelationalWrite(STORAGE_KEYS.sessions, completedHistorySessions);
-  const queuedBackup = scheduleSupabaseWrite(STORAGE_KEYS.sessions, backupSessions);
+  const queuedBackup = queueSessionStateBackup(sessions, { force: forceBackup });
   if (!queuedRelational && !queuedBackup) {
     return false;
   }
@@ -8744,9 +8804,9 @@ function queueSessionStateForCloud() {
   return true;
 }
 
-async function flushSessionStateSync() {
+async function flushSessionStateSync(options = {}) {
   clearSessionSyncTimer();
-  if (sessionSyncRuntime.flushing || !queueSessionStateForCloud()) {
+  if (sessionSyncRuntime.flushing || !queueSessionStateForCloud(options)) {
     // If dirty but could not queue (e.g. relational sync not ready), schedule a retry
     // so the session state eventually syncs once the connection is restored.
     if (sessionSyncRuntime.dirty && !sessionSyncRuntime.flushing && !sessionSyncRuntime.timer) {
@@ -10886,6 +10946,7 @@ async function hydrateRelationalState(user) {
   const hasPendingSessionWrites = isRelationalStorageKeyBusy(STORAGE_KEYS.sessions)
     || sessionSyncRuntime.dirty
     || sessionSyncRuntime.clockDirty
+    || sessionSyncRuntime.backupDirty
     || sessionSyncRuntime.flushing;
 
   // Avoid overwriting unsynced local edits per storage key while still allowing safe keys to hydrate.
@@ -14050,14 +14111,19 @@ function cloneTextHighlightStore(value) {
 function hasPendingSessionSyncForId(sessionId = "") {
   const targetId = String(sessionId || "").trim();
   const activeSessionId = String(state.sessionId || "").trim();
-  if (!targetId && (sessionSyncRuntime.dirty || sessionSyncRuntime.clockDirty || sessionSyncRuntime.flushing || isRelationalStorageKeyBusy(STORAGE_KEYS.sessions))) {
+  const sessionSyncPending = sessionSyncRuntime.dirty
+    || sessionSyncRuntime.clockDirty
+    || sessionSyncRuntime.backupDirty
+    || sessionSyncRuntime.flushing
+    || isRelationalStorageKeyBusy(STORAGE_KEYS.sessions);
+  if (!targetId && sessionSyncPending) {
     return true;
   }
   if (
     targetId
     && activeSessionId === targetId
     && state.route === "session"
-    && (sessionSyncRuntime.dirty || sessionSyncRuntime.clockDirty || sessionSyncRuntime.flushing || isRelationalStorageKeyBusy(STORAGE_KEYS.sessions))
+    && sessionSyncPending
   ) {
     return true;
   }
@@ -15611,7 +15677,7 @@ async function flushPendingSyncNow(options = {}) {
   const flushSupabaseBackups = options?.flushSupabaseBackups !== false;
   const flushNotificationOutbox = options?.flushNotificationOutbox === true;
   clearSessionSyncTimer();
-  queueSessionStateForCloud();
+  queueSessionStateForCloud({ forceBackup: true });
   // If session is still dirty (relational sync not ready), schedule a retry so it eventually syncs.
   if (sessionSyncRuntime.dirty && !sessionSyncRuntime.flushing && !sessionSyncRuntime.timer) {
     sessionSyncRuntime.timer = window.setTimeout(() => {
@@ -53844,6 +53910,7 @@ async function logout(options = {}) {
   );
   const shouldFlushBeforeLogout = Boolean(
     sessionSyncRuntime.dirty
+    || sessionSyncRuntime.backupDirty
     || sessionSyncRuntime.flushing
     || relationalSync.pendingWrites.size
     || relationalSync.flushing
