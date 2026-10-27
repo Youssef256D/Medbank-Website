@@ -1,6 +1,9 @@
--- Rollback for 20261027120000_shared_test_write_rpcs.sql: drops the two
+-- Rollback for 20261027130000_shared_test_write_rpcs.sql: drops the two
 -- shared-test RPCs and the completed-block guard, and puts the answer guard
 -- back to its 2026-10-25 body (20261025200000_protect_test_response_answers).
+-- If 20261027120000_server_side_grading is applied, it needs the
+-- "solved stays solved" trigger rule: skip the protect_test_response_answer
+-- part below (keep the function as it is) in that case.
 -- Clients on the RPCs fall back to direct table writes when the functions
 -- are missing (PGRST202), so this is safe to run while they are live.
 

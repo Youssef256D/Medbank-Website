@@ -42,31 +42,30 @@
 
 -- 1. Triggers --------------------------------------------------------------
 
+-- Same body as 20261027120000_server_side_grading (server-side grading
+-- session): keep the two identical so either order of applying agrees.
 create or replace function private.protect_test_response_answer()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
-  if tg_op = 'UPDATE' then
-    -- An empty selection never clears a picked answer.
-    if coalesce(cardinality(new.selected_choice_labels), 0) = 0
-       and coalesce(cardinality(old.selected_choice_labels), 0) > 0 then
-      new.selected_choice_labels := old.selected_choice_labels;
-      new.submitted := old.submitted;
-      new.answered_at := old.answered_at;
-    end if;
+  -- once stored solved (selection + submitted), an update keeps the old
+  -- selection, submitted and answered_at (flag and notes still update)
+  if tg_op = 'UPDATE'
+     and old.submitted
+     and coalesce(cardinality(old.selected_choice_labels), 0) > 0 then
+    new.selected_choice_labels := old.selected_choice_labels;
+    new.submitted := true;
+    new.answered_at := old.answered_at;
+  end if;
 
-    -- A solved answer stays solved. (A data repair that must change one has
-    -- to disable this trigger for the statement.)
-    if old.submitted
-       and coalesce(cardinality(old.selected_choice_labels), 0) > 0
-       and (not new.submitted
-            or new.selected_choice_labels is distinct from old.selected_choice_labels) then
-      new.selected_choice_labels := old.selected_choice_labels;
-      new.submitted := true;
-      new.answered_at := old.answered_at;
-    end if;
+  if tg_op = 'UPDATE'
+     and coalesce(cardinality(new.selected_choice_labels), 0) = 0
+     and coalesce(cardinality(old.selected_choice_labels), 0) > 0 then
+    new.selected_choice_labels := old.selected_choice_labels;
+    new.submitted := old.submitted;
+    new.answered_at := old.answered_at;
   end if;
 
   if coalesce(cardinality(new.selected_choice_labels), 0) = 0 then

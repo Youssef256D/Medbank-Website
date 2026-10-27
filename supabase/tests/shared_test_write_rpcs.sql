@@ -40,7 +40,7 @@ create policy r_all on test_responses for all to authenticated using (exists (se
 grant select, insert, update on test_blocks, test_block_items, test_responses to authenticated;
 
 \ir ../migrations/20261025200000_protect_test_response_answers.sql
-\ir ../migrations/20261027120000_shared_test_write_rpcs.sql
+\ir ../migrations/20261027130000_shared_test_write_rpcs.sql
 
 \pset format unaligned
 \pset tuples_only on

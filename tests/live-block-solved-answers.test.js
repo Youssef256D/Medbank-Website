@@ -26,7 +26,7 @@ const Q1 = '22222222-2222-4222-8222-222222222222';
 
 // Stand-in for the two RPCs over one in-memory test_responses table and one
 // block. It follows the rules in
-// supabase/migrations/20261027120000_shared_test_write_rpcs.sql (the SQL
+// supabase/migrations/20261027130000_shared_test_write_rpcs.sql (the SQL
 // itself is checked by supabase/tests/shared_test_write_rpcs.sql).
 function fakeClient(rows, block = { id: BLOCK_ID, status: 'in_progress' }, calls = []) {
   const labels = (value) => [...new Set((Array.isArray(value) ? value : []).map((l) => String(l).trim().toUpperCase()).filter((l) => /^[A-E]$/.test(l)))];

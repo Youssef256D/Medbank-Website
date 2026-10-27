@@ -15,7 +15,7 @@ hosted Supabase is the source of truth.
   the app can no longer disagree about whose answer wins. A solved question
   stays solved, a finished test stays finished, and the timer of a test
   opened on two devices never runs back.
-- Needs migration `20261027120000_shared_test_write_rpcs` applied before the
+- Needs migration `20261027130000_shared_test_write_rpcs` applied before the
   website change ships.
 
 ### 2026-10-26 — Solved questions no longer turn unsolved

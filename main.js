@@ -12989,7 +12989,7 @@ async function hydrateRelationalSessions(currentUser) {
 // last pushed or pulled per question (keyed by DB question id), so only
 // answers changed on this device are sent and only untouched ones are
 // replaced by the app's. Writes go through the RPCs save_test_responses /
-// save_test_block_progress (migration 20261027120000), which hold the merge
+// save_test_block_progress (migration 20261027130000), which hold the merge
 // rules for both clients; don't re-add them here.
 //
 // The app hides questions it can't show (unpublished since the test was
