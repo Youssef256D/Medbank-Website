@@ -39392,7 +39392,7 @@ function renderAdmin() {
         : ""
       }
         <div class="table-wrap" style="margin-top: 0.9rem;">
-          <table class="admin-users-table">
+          <table class="admin-users-table admin-activity-table">
             <thead>
               <tr>
                 <th>User</th>

@@ -5692,6 +5692,23 @@ body.theme-comfort .maintenance-badge {
   border-bottom: 1px solid var(--line);
 }
 
+/* Live activity: the table is fixed-layout, so without widths every column
+   got the same share and a long email ran under the Role badge. The user
+   column gets the room, and an email or page path too long for its cell
+   wraps inside it. */
+.admin-activity-table th:nth-child(1) { width: 28%; }
+.admin-activity-table th:nth-child(2),
+.admin-activity-table th:nth-child(3) { width: 11%; }
+.admin-activity-table th:nth-child(4) { width: 18%; }
+.admin-activity-table th:nth-child(5),
+.admin-activity-table th:nth-child(6) { width: 10%; }
+.admin-activity-table th:nth-child(7) { width: 12%; }
+
+.admin-activity-table td:nth-child(1),
+.admin-activity-table td:nth-child(4) {
+  overflow-wrap: anywhere;
+}
+
 .admin-users-filter-form {
   display: grid;
   gap: 0.72rem;
