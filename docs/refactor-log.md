@@ -21,7 +21,7 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
     when nothing changes, so `updated_at` (the website's pull trigger) only
     moves on a real change.
   - Triggers (for old app builds / stale tabs that still write the tables):
-    `protect_test_response_answer` now also keeps a solved answer solved (body shared word for word with `20261027120000_server_side_grading`);
+    `protect_test_response_answer` now also keeps a solved answer solved (body shared word for word with `20261027140000_server_side_grading`);
     new `trg_protect_completed_test_block` keeps a completed block completed.
     A data repair that must change a solved answer has to disable the trigger.
   - Both RPCs are `security invoker`: RLS is unchanged.

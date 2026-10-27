@@ -42,7 +42,7 @@
 
 -- 1. Triggers --------------------------------------------------------------
 
--- Same body as 20261027120000_server_side_grading (server-side grading
+-- Same body as 20261027140000_server_side_grading (server-side grading
 -- session): keep the two identical so either order of applying agrees.
 create or replace function private.protect_test_response_answer()
 returns trigger
