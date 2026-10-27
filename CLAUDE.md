@@ -96,10 +96,9 @@ rest of this section dates from 2026-06-30.
   `20260930030100` are in the repo but **not applied**, and five Edge
   Function changes are not deployed. Steps: `docs/admin-layers-runbook.md`.
   Once applied, every new admin table/page needs an area (AGENTS.md entry).
-- **Shared-test RPCs (2026-10-27): pending.** Migration
-  `20261027130000_shared_test_write_rpcs` is in the repo but **not applied**;
-  the website's `syncLiveTestBlocks` needs it (no fallback). Apply it before
-  that change reaches `main`. See the 2026-10-27 refactor-log entry.
+- **Shared-test RPCs (2026-10-27): applied** to the hosted project
+  (`20261027130000_shared_test_write_rpcs`, ledger row recorded). The
+  website's `syncLiveTestBlocks` depends on it (no fallback).
 - **Edge Functions:** 12 are deployed (checked 2026-09-30), 9 have source in
   `supabase/functions/`. No source here: `dispatch-notification-pushes`,
   `delete-my-account`, `verify-play-integrity`; and the deployed

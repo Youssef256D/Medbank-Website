@@ -6,8 +6,8 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
 - **Why:** the rules for merging a test shared between the website and the
   app were written twice (`main.js` `syncLiveTestBlocks` and the app's
   `lib/features/tests`) and drifted; PRs #45–#52 were all that drift.
-- **Migration `20261027130000_shared_test_write_rpcs`** (rollback in
-  `supabase/rollbacks/`, SQL check in `supabase/tests/shared_test_write_rpcs.sql`,
+- **Migration `20261027130000_shared_test_write_rpcs`** applied to the hosted
+  project 2026-10-27 (rollback in `supabase/rollbacks/`, SQL check in `supabase/tests/shared_test_write_rpcs.sql`,
   run on a throwaway local Postgres):
   - `save_test_responses(p_block_id, p_rows jsonb)`: a key left out of a row
     keeps what is stored. Per row: not a block item → skipped; completed
