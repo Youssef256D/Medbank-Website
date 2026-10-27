@@ -1,4 +1,4 @@
--- Rollback for 20261027125000_server_side_grading.sql.
+-- Rollback for 20261027140000_server_side_grading.sql.
 -- Restores the two student SELECT policies and the four catalog functions to
 -- their 2026-10-27 definitions, and
 -- drops the grading RPCs, the reveal log and the switch.

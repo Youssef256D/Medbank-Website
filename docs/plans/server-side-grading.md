@@ -47,8 +47,8 @@ visible:
 
 ## Database (one migration + rollback)
 
-`supabase/migrations/20261027125000_server_side_grading.sql`,
-`supabase/rollbacks/20261027125000_server_side_grading.down.sql`.
+`supabase/migrations/20261027140000_server_side_grading.sql`,
+`supabase/rollbacks/20261027140000_server_side_grading.down.sql`.
 
 1. **Switch** `private.answer_keys_hidden()` reading one row in a new
    `private.grading_settings` table (`hide_answer_keys boolean`, default

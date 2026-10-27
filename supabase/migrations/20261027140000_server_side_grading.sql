@@ -1,7 +1,7 @@
 -- Server-side grading: students get answer keys only after answering.
 --
 -- Plan: docs/plans/server-side-grading.md (approved by the owner 2026-10-27).
--- Rollback: supabase/rollbacks/20261027125000_server_side_grading.down.sql
+-- Rollback: supabase/rollbacks/20261027140000_server_side_grading.down.sql
 --
 -- Phase 1 (this migration): the switch private.grading_settings.hide_answer_keys
 -- starts FALSE, so nothing changes for any client. The new RPCs
@@ -169,8 +169,8 @@ revoke all on function private.answer_key_rows(uuid[]) from public, anon, authen
 -- 3. Answers are final -------------------------------------------------------
 
 -- Keys are handed out for solved rows, so a solved answer must never change
--- afterwards. 20261027130000_shared_test_write_rpcs (applied after this one)
--- replaces it with the same body word for word; keep the two in step.
+-- afterwards. 20261027130000_shared_test_write_rpcs (applied before this one)
+-- sets the same body word for word; keep the two in step.
 create or replace function private.protect_test_response_answer()
 returns trigger
 language plpgsql
