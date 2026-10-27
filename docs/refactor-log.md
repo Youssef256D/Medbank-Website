@@ -6,8 +6,9 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
 - Plan (owner-approved, including the RLS change, "answers are final" and a
   2,500/day cap): `docs/plans/server-side-grading.md`.
 - Migration `20261027140000_server_side_grading` + rollback
-  `supabase/rollbacks/20261027140000_server_side_grading.down.sql`. **Not
-  applied yet.** Adds the switch `private.grading_settings.hide_answer_keys`
+  `supabase/rollbacks/20261027140000_server_side_grading.down.sql`. Applied
+  to the hosted project 2026-10-27 (switch off; definitions checked against
+  the file). Adds the switch `private.grading_settings.hide_answer_keys`
   (default **false** = phase 1, nothing hidden), `submit_test_answer`,
   `get_test_answer_key`, the reveal log `private.answer_key_reveals` with a
   rolling 24 h cap (`daily_reveal_cap`), and makes the catalog RPCs and the

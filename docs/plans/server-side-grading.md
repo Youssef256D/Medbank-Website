@@ -1,6 +1,6 @@
 # Plan: server-side grading (hide answer keys until a question is answered)
 
-Status: **approved 2026-10-27** (RLS change, answers-final rule, 2,500/day cap); phase 1 built on branches. Nothing applied, nothing pushed.
+Status: **approved 2026-10-27** (RLS change, answers-final rule, 2,500/day cap); phase 1 built on branches; migration `20261027140000` applied 2026-10-27 with the switch off. Nothing pushed.
 
 ## The problem today
 
