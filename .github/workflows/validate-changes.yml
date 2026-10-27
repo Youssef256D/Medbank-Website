@@ -59,5 +59,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Unit tests
+        run: npm test
+
+      - name: Signed-out access check (hosted project, read-only)
+        run: npm run check:anon
+
       - name: Build optional assets
         run: npm run build

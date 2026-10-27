@@ -2,6 +2,63 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-27 — Audit follow-ups (everything except billing)
+- `20261027120100_delete_legacy_app_state_user_blobs`: deletes `mcq_users` /
+  `g:mcq_users` (legacy user lists, two plain-text passwords). No rollback on
+  purpose. `g:mcq_questions`, `g:mcq_curriculum`, `g:mcq_course_topics` and
+  `g:mcq_system_logs` are kept (admin-only after the lockdown) because
+  `restoreAdminContentFromSupabaseBackupIfNeeded` still reads the first three.
+- `20261027120200_db_hygiene` (+ rollback): index on
+  `question_reports.resolved_by`; drops unused `idx_profiles_role_approved`
+  and `idx_profiles_role_approved_mcq`; PK `(version, question_id)` on
+  `private.question_change_log`; coupon `created_by`/`disabled_by` FKs now
+  `ON DELETE SET NULL` (deleting an admin who made coupons used to fail;
+  `created_by` is nullable now); `popup-images` limited to 5 MB images; crons
+  `prune-cron-run-details` (14 days) and `purge-deleted-accounts-archive`
+  (90 days, as `docs/legal/deletion.md` promises).
+- Checked, no change needed: every SECURITY DEFINER RPC the advisor lists
+  checks its caller (directly or through a guarded `private.*` helper).
+- Not done, needs a decision: 2 published questions with ≠1 correct choice
+  (`9a122e93-…`, `294c974f-…`, Elective 3; 58 drafts too), so no
+  one-correct-choice constraint yet; 108 phone numbers shared by >1 profile,
+  so no UNIQUE on phone; `test_history_entries.payload.questionSnapshots`
+  (~85 kB/test, 322 MB total) kept — the owner asked to approve any
+  compaction first.
+- The 20-day history docs were stale (history is permanent since
+  `20260716151050`): fixed `docs/legal/privacy.md`, `docs/legal/deletion.md`,
+  `docs/ARCHITECTURE.md`, and the app's English strings (Medbank-App branch
+  `claude/history-is-permanent-copy`; Arabic was already right).
+- `dispatch-notification-pushes` source is in the Flutter repo (checked
+  byte-identical to the deployed one); CLAUDE.md/AGENTS.md said it was lost.
+- CI now runs `npm test` and `npm run check:anon`
+  (`build/check-anon-access.mjs`: signed-out GETs against the hosted project;
+  fails if `app_state` returns any key besides the two public ones, or if any
+  of 9 protected tables returns rows). **It fails until
+  20261027120000 is applied.**
+- Removed unused `framer-motion`; new `docs/backup-restore-runbook.md`.
+
+### 2026-10-27 — app_state locked down (migration 20261027120000)
+- Before: `app_state_*_anon` and `app_state_*_authenticated` let anyone (anon
+  key, no session) read and write every `g:%` key and the legacy raw keys,
+  including the frozen `g:mcq_questions` backup, `g:mcq_users`/`mcq_users`
+  and `g:mcq_system_logs`.
+- Now: anon reads only `g:mcq_site_maintenance` and `g:support_whatsapp`;
+  signed-in users read those plus `g:mcq_course_topic_groups`,
+  `g:mcq_course_notebook_links`, `g:mcq_topic_new_catalog`,
+  `g:mcq_auto_approve_student_access`, `g:mcq_student_refresh_trigger` and
+  their own `u:<uid>:*` rows; only admins (`private.is_admin_user()`) read the
+  rest or write any `g:%`/legacy key. The three restrictive key guards stay.
+- The read list is the website's signed-in hydrate list (search
+  `STORAGE_KEYS.studentRefreshTrigger,` near `loadCoursesComingSoonFlag`) plus
+  the support number; the Flutter app reads only maintenance, support number
+  and notebook links. **A new global key a student must read needs adding to
+  `app_state_select_authenticated`**, or it silently comes back empty.
+- Students already never wrote global keys (`scheduleSupabaseWrite` returns
+  early for students on non-user-scoped keys). The student fallback
+  `hydrateQuestionsFromSupabaseBackup` now gets nothing, by design (stale
+  2026-06-13 data). Edge Functions use the service role and are unaffected.
+- Rollback: `supabase/rollbacks/20261027120000_lock_down_app_state.down.sql`.
+
 ### 2026-10-27 — Design tokens: one tokens.json for the website and the app; Figtree everywhere
 - `design-tokens/tokens.json` now owns the colours of all three themes, radii,
   spacing, the type scale and the font. `design-tokens/generate.mjs` (no

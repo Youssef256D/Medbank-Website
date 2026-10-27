@@ -9,6 +9,21 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-27 — Audit clean-up
+- Old copies of the user list (with two plain-text passwords) are deleted.
+- Small database fixes: a missing index, two unused indexes removed, coupons
+  no longer block deleting an admin, popup images are size-limited, and two
+  clean-up jobs keep logs and deleted-account archives from growing forever.
+- The privacy and deletion pages now say previous tests are kept for good
+  (they still said 20 days).
+- Every change now runs the tests and a check that signed-out visitors
+  cannot read questions or user data.
+
+### 2026-10-27 — Shared settings storage locked down
+- The `app_state` table now only lets visitors read the maintenance notice
+  and support number, lets students read the few shared settings they use
+  plus their own backups, and lets only admins change shared settings.
+
 ### 2026-10-27 — One set of design tokens; Figtree on the website
 - The website and the app now take their colours, corner radii, spacing and
   type scale from one file, so they can no longer drift apart. A check in CI

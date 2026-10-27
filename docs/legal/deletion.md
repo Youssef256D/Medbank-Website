@@ -60,12 +60,10 @@ anonymized. A record may be retained longer only when required by law.
 
 ## Previous-test retention
 
-Previous-test history is automatically retained for 20 days. Older previous-test
-entries are deleted from hosted history and matching session backup payloads.
-Support cannot restore previous-test history after it has been pruned by this
-retention process. A verified account-deletion request removes active account
-data sooner; residual backups may remain for no more than 90 days unless a
-longer period is legally required.
+Previous-test history is kept for as long as the account exists. A verified
+account-deletion request removes it with the rest of the active account data;
+residual backups may remain for no more than 90 days unless a longer period is
+legally required.
 
 ## Remove local browser data
 
