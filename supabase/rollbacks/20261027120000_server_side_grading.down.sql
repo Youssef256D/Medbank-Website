@@ -1,6 +1,6 @@
 -- Rollback for 20261027120000_server_side_grading.sql.
--- Restores the two student SELECT policies, the four catalog functions and
--- the test_responses trigger function to their 2026-10-27 definitions, and
+-- Restores the two student SELECT policies and the four catalog functions to
+-- their 2026-10-27 definitions, and
 -- drops the grading RPCs, the reveal log and the switch.
 -- Faster undo without a rollback: update private.grading_settings set hide_answer_keys = false;
 
@@ -223,29 +223,10 @@ as $function$
   order by choice.question_id asc, choice.choice_label asc;
 $function$;
 
--- 2026-10-25 body. If the shared-test RPC migration (which adds the same
--- "solved stays solved" rule) is applied, restore that body instead.
-create or replace function private.protect_test_response_answer()
-returns trigger
-language plpgsql
-set search_path = public, pg_temp
-as $$
-begin
-  if tg_op = 'UPDATE'
-     and coalesce(cardinality(new.selected_choice_labels), 0) = 0
-     and coalesce(cardinality(old.selected_choice_labels), 0) > 0 then
-    new.selected_choice_labels := old.selected_choice_labels;
-    new.submitted := old.submitted;
-    new.answered_at := old.answered_at;
-  end if;
-
-  if coalesce(cardinality(new.selected_choice_labels), 0) = 0 then
-    new.submitted := false;
-  end if;
-
-  return new;
-end;
-$$;
+-- private.protect_test_response_answer is left as it is: its "solved stays
+-- solved" rule is shared with 20261027130000_shared_test_write_rpcs, which
+-- needs it too. If that migration is not applied and the 2026-10-25 body is
+-- wanted back, take it from 20261025200000_protect_test_response_answers.sql.
 
 drop function if exists public.get_test_answer_key(uuid, uuid[]);
 drop function if exists public.submit_test_answer(uuid, uuid, text[], boolean, text);

@@ -16,7 +16,8 @@
 -- Setting it back to false is the emergency undo.
 --
 -- Always on (both phases):
---   * a solved test_responses row (selection + submitted) keeps its answer;
+--   * a solved test_responses row (selection + submitted) keeps its answer
+--     (same trigger body as 20261027130000_shared_test_write_rpcs);
 --   * every key handed to a student is logged in private.answer_key_reveals,
 --     capped at daily_reveal_cap distinct questions per rolling 24 h.
 
@@ -167,17 +168,17 @@ revoke all on function private.answer_key_rows(uuid[]) from public, anon, authen
 
 -- 3. Answers are final -------------------------------------------------------
 
--- 2026-10-25 body, plus: once a row is solved (selection + submitted), an
--- update keeps the stored selection, submitted and answered_at (flag and notes
--- still update). Keys are handed out for solved rows, so changing the answer
--- afterwards would let a student grade themselves after seeing the key.
--- The shared-test RPC work (2026-10-27) needs the same rule; keep one body.
+-- Keys are handed out for solved rows, so a solved answer must never change
+-- afterwards. 20261027130000_shared_test_write_rpcs (applied after this one)
+-- replaces it with the same body word for word; keep the two in step.
 create or replace function private.protect_test_response_answer()
 returns trigger
 language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
+  -- once stored solved (selection + submitted), an update keeps the old
+  -- selection, submitted and answered_at (flag and notes still update)
   if tg_op = 'UPDATE'
      and old.submitted
      and coalesce(cardinality(old.selected_choice_labels), 0) > 0 then
