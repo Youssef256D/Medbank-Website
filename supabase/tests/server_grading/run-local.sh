@@ -8,8 +8,8 @@ export LC_ALL=C LANG=C
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
-migration="$repo/supabase/migrations/20261027120000_server_side_grading.sql"
-rollback="$repo/supabase/rollbacks/20261027120000_server_side_grading.down.sql"
+migration="$repo/supabase/migrations/20261027125000_server_side_grading.sql"
+rollback="$repo/supabase/rollbacks/20261027125000_server_side_grading.down.sql"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/medbank-grading.XXXXXX")"
 port=55439
 

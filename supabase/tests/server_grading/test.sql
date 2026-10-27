@@ -1,4 +1,4 @@
--- Assertions for 20261027120000_server_side_grading.sql, run by run-local.sh
+-- Assertions for 20261027125000_server_side_grading.sql, run by run-local.sh
 -- after stubs.sql and the migration. Any failure raises and stops psql.
 
 \set ON_ERROR_STOP on

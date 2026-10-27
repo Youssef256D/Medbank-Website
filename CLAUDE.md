@@ -96,7 +96,7 @@ rest of this section dates from 2026-06-30.
   `20260930030100` are in the repo but **not applied**, and five Edge
   Function changes are not deployed. Steps: `docs/admin-layers-runbook.md`.
   Once applied, every new admin table/page needs an area (AGENTS.md entry).
-- **Server-side grading (2026-10-27): pending.** Migration `20261027120000`
+- **Server-side grading (2026-10-27): pending.** Migration `20261027125000`
   is in the repo but **not applied**; apply it (then the shared-test
   `20261027130000`) before this website ships, or tutor answers stay on
   "Checking…". Phase 2 is one switch; see the 2026-10-27 refactor-log entry.

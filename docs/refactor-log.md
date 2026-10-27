@@ -5,8 +5,8 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
 ### 2026-10-27 — Server-side grading, phase 1 (answer keys from the server)
 - Plan (owner-approved, including the RLS change, "answers are final" and a
   2,500/day cap): `docs/plans/server-side-grading.md`.
-- Migration `20261027120000_server_side_grading` + rollback
-  `supabase/rollbacks/20261027120000_server_side_grading.down.sql`. **Not
+- Migration `20261027125000_server_side_grading` + rollback
+  `supabase/rollbacks/20261027125000_server_side_grading.down.sql`. **Not
   applied yet.** Adds the switch `private.grading_settings.hide_answer_keys`
   (default **false** = phase 1, nothing hidden), `submit_test_answer`,
   `get_test_answer_key`, the reveal log `private.answer_key_reveals` with a
@@ -14,7 +14,8 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   `questions_select` / `choices_select` policies hide the key from
   non-admins **only when the switch is on**. SQL checks:
   `supabase/tests/server_grading/run-local.sh` (throwaway local PG 17).
-- **Deploy order:** apply 120000, then the shared-test migration 130000, then
+- **Deploy order:** apply 125000 (renamed from 120000 on 2026-10-27: the hosted
+  ledger already used 120000–120200 for app_state migrations not in this repo), then the shared-test migration 130000, then
   merge the website. A website deployed before the migration leaves tutor
   answers on "Checking…" forever (the RPCs don't exist). The app can ship any
   time after the migration.

@@ -1,7 +1,7 @@
 -- Server-side grading: students get answer keys only after answering.
 --
 -- Plan: docs/plans/server-side-grading.md (approved by the owner 2026-10-27).
--- Rollback: supabase/rollbacks/20261027120000_server_side_grading.down.sql
+-- Rollback: supabase/rollbacks/20261027125000_server_side_grading.down.sql
 --
 -- Phase 1 (this migration): the switch private.grading_settings.hide_answer_keys
 -- starts FALSE, so nothing changes for any client. The new RPCs
