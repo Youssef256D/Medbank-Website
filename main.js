@@ -30801,7 +30801,7 @@ function renderSession() {
       .join("")}
                 </div>
 
-                <div class="exam-answers">
+                <div class="exam-answers" data-session-id="${escapeHtml(session.id)}" data-question-id="${escapeHtml(currentQid)}">
                   ${choicesHtml}
                 </div>
 
@@ -30914,7 +30914,31 @@ function getCurrentSessionResponseContext(session) {
   return { qid: resolvedQuestionId || qid, response };
 }
 
+// The question the page is showing, as an index into the session. A cloud
+// merge or a shared-test pull can move a session's currentIndex without
+// redrawing; the screen's choices then belonged to another question, and
+// reading them into the new current one wiped its answer. -1 when the page
+// shows no question of this session.
+function getRenderedSessionQuestionIndex(activeSession) {
+  const answers = appEl.querySelector(".exam-answers[data-question-id]");
+  if (!answers || String(answers.getAttribute("data-session-id") || "") !== String(activeSession?.id || "")) {
+    return -1;
+  }
+  const renderedQid = String(answers.getAttribute("data-question-id") || "");
+  return Array.isArray(activeSession?.questionIds)
+    ? activeSession.questionIds.findIndex((qid) => String(qid || "").trim() === renderedQid.trim())
+    : -1;
+}
+
+// Reads the choices on screen into the question on screen. The session's
+// currentIndex follows the screen first, so the student's next step starts
+// from the question they can see.
 function syncActiveResponseSelectionFromDom(activeSession) {
+  const renderedIndex = getRenderedSessionQuestionIndex(activeSession);
+  if (renderedIndex < 0) {
+    return [];
+  }
+  activeSession.currentIndex = renderedIndex;
   const currentContext = getCurrentSessionResponseContext(activeSession);
   if (!currentContext) {
     return [];
@@ -30980,13 +31004,13 @@ function wireSession() {
       }
 
       normalizeSession(latest, { questionStore: getQuestionStore() });
+      syncActiveResponseSelectionFromDom(latest);
       const currentContext = getCurrentSessionResponseContext(latest);
       if (!currentContext) {
         state.skipNextRouteAnimation = true;
         render();
         return;
       }
-      syncActiveResponseSelectionFromDom(latest);
       currentContext.response.submitted = false;
       latest.updatedAt = nowISO();
       upsertSession(latest);
