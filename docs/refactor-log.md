@@ -40,6 +40,33 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   kept another answer; finishing scores and archives the stored rows.
 - Do not re-add merge rules to either client: change the RPC.
 
+### 2026-10-27 — Design tokens: one tokens.json for the website and the app; Figtree everywhere
+- `design-tokens/tokens.json` now owns the colours of all three themes, radii,
+  spacing, the type scale and the font. `design-tokens/generate.mjs` (no
+  dependencies) rewrites the marked `design-tokens:light|dark|comfort` regions
+  inside the `:root`, `body.theme-dark` and `body.theme-comfort` blocks of
+  `styles.css`, and the Flutter app's `lib/core/theme/app_tokens.g.dart`.
+- **Do not edit a variable between the `design-tokens:*` markers in
+  `styles.css`**: change `tokens.json` and run `npm run tokens`. CI
+  (`npm run tokens:check`) fails when the regions are stale. The regions stay
+  where the old declarations were, so the cascade is unchanged; values are
+  identical except the font (checked by diffing every variable of the three
+  blocks before and after).
+- New, unused-for-now variables: `--radius-xl`, `--space-*`, `--type-*`.
+- Font: both products use **Figtree** (owner decision 2026-10-27). The Google
+  Fonts link in `index.html` and `privacy.html` loads Figtree 400–700 instead
+  of Source Sans 3 + Inter, and `--font-heading`/`--font-body` are Figtree
+  only. (CLAUDE.md's "Geist/Inter" line was already stale; now updated.)
+- The app repo keeps byte-identical copies of `tokens.json` and
+  `generate.mjs` and its CI compares them with this repo's `main`, so merge a
+  token change here first. See `design-tokens/README.md`.
+- Audit findings not fixed here (they would change the look): brand teal
+  `#177e89` on mint `#f2f7f5` is 4.43:1, just under WCAG AA 4.5:1 for small
+  text (4.79:1 on white; 3.79:1 on a `--brand-soft` chip); `#177b86` would
+  reach 4.6:1. On the 375px landing page 21 controls are under 44px tall
+  (nav pills 32px, Login/Sign up 34px, hero "explore" pills 26px, footer
+  links 22px, language toggle 29px, theme toggle 36px).
+
 ### 2026-10-26 — Solved questions no longer come back unsolved (shared tests)
 - Cause: in `syncLiveTestBlocks` a changed answer whose compare-and-set
   missed fell back to an insert with `ignoreDuplicates`. When the row already

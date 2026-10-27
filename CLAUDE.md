@@ -48,8 +48,12 @@ browser uses only the anon key; privileged work happens in Edge Functions.
 - **Escaping:** wrap every user-controlled string going into `innerHTML` with
   `escapeHtml()` (search `function escapeHtml`). Choice labels are whitelisted to `A`–`E` via
   `normalizeQuestionChoiceLabel`.
-- **Fonts:** headings = Geist (`--font-heading`); body/MCQ reading = Inter
-  (`--font-body`). Both loaded from Google Fonts in `index.html` head.
+- **Design tokens:** colours, radii, spacing, type scale and font live in
+  `design-tokens/tokens.json`; `npm run tokens` writes the marked regions of
+  `styles.css` (and the app's Dart file — see `design-tokens/README.md`).
+  Never hand-edit between the `design-tokens:*` markers; CI checks them.
+- **Fonts:** Figtree for headings and body (`--font-heading`/`--font-body`),
+  same as the Flutter app, loaded from Google Fonts in `index.html` head.
 - **Sync keys:** relational tables are primary; `app_state` is legacy/offline only,
   namespaced `g:<key>` (global) / `u:<uid>:<key>` (user-scoped).
 - **Log a refactor entry** at the top of `docs/refactor-log.md` + `CHANGELOG.md` for changes other tools

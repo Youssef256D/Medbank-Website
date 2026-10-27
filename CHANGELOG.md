@@ -18,6 +18,13 @@ hosted Supabase is the source of truth.
 - Migration `20261027130000_shared_test_write_rpcs` is applied to the hosted
   database (2026-10-27).
 
+### 2026-10-27 — One set of design tokens; Figtree on the website
+- The website and the app now take their colours, corner radii, spacing and
+  type scale from one file, so they can no longer drift apart. A check in CI
+  fails if either side is out of date.
+- The website's text font changes from Source Sans 3 to Figtree, the font the
+  app already uses. Nothing else looks different.
+
 ### 2026-10-26 — Solved questions no longer turn unsolved
 - In a test shared with the app, a question the student had solved on the
   website could open again as unsolved. The website now makes sure the solved
