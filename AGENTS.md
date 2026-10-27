@@ -232,5 +232,9 @@ route, or file you are touching; add your own entry at the top when you finish.
 - **`index.html` first-paint fallback mirrors SPA markup** (landing, store cards,
   dark-mode guard) — edit both; recompute CSP hashes after inline-script edits,
   masking HTML comments first (2026-09-10).
+- **`styles.css` variables between `design-tokens:*` markers are generated**
+  from `design-tokens/tokens.json` (`npm run tokens`); CI fails if they are
+  hand-edited. The app repo copies the file, so merge token changes here first
+  (2026-10-27).
 - **`logout()` does not clear `STORAGE_KEYS.users`**; signup and
   `upsertLocalUserFromAuth` are guarded against stale rows instead (2026-09-10).
