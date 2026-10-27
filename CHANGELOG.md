@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-27 — One set of rules for tests shared with the app
+- Saving answers and progress of a test shared between the website and the
+  app now goes through two database functions both use, so the website and
+  the app can no longer disagree about whose answer wins. A solved question
+  stays solved, a finished test stays finished, and the timer of a test
+  opened on two devices never runs back.
+- Needs migration `20261027120000_shared_test_write_rpcs` applied before the
+  website change ships.
+
 ### 2026-10-26 — Solved questions no longer turn unsolved
 - In a test shared with the app, a question the student had solved on the
   website could open again as unsolved. The website now makes sure the solved

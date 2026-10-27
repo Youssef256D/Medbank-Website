@@ -24,72 +24,53 @@ const topLevelFunction = (name) => {
 const BLOCK_ID = '11111111-1111-4111-8111-111111111111';
 const Q1 = '22222222-2222-4222-8222-222222222222';
 
-// Minimal PostgREST stand-in over one in-memory test_responses table.
-function fakeClient(rows) {
-  const run = (op) => {
-    const matches = (row) => op.filters.every(([kind, col, value]) => {
-      if (kind === 'eq') {
-        if (col === 'selected_choice_labels') return `{${(row.selected_choice_labels || []).join(',')}}` === value;
-        return row[col] === value;
-      }
-      if (kind === 'in') return value.includes(row[col]);
-      if (kind === 'or') return !(row.selected_choice_labels || []).length;
-      return true;
-    });
-    if (op.kind === 'update') {
-      const hit = rows.filter(matches);
-      hit.forEach((row) => {
-        Object.assign(row, op.payload);
-      });
-      return hit.map((row) => ({ question_id: row.question_id }));
+// Stand-in for the two RPCs over one in-memory test_responses table and one
+// block. It follows the rules in
+// supabase/migrations/20261027120000_shared_test_write_rpcs.sql (the SQL
+// itself is checked by supabase/tests/shared_test_write_rpcs.sql).
+function fakeClient(rows, block = { id: BLOCK_ID, status: 'in_progress' }, calls = []) {
+  const labels = (value) => [...new Set((Array.isArray(value) ? value : []).map((l) => String(l).trim().toUpperCase()).filter((l) => /^[A-E]$/.test(l)))];
+  const saveResponses = ({ p_rows: input }) => input.map((entry) => {
+    let row = rows.find((r) => r.block_id === BLOCK_ID && r.question_id === entry.question_id);
+    if (!row) {
+      row = { block_id: BLOCK_ID, question_id: entry.question_id, selected_choice_labels: [], submitted: false, flagged: false, notes: null };
+      rows.push(row);
     }
-    if (op.kind === 'upsert') {
-      const inserted = [];
-      op.payload.forEach((row) => {
-        const existing = rows.find((r) => r.block_id === row.block_id && r.question_id === row.question_id);
-        if (!existing) {
-          rows.push({ ...row });
-          inserted.push({ question_id: row.question_id });
-        } else if (!op.options?.ignoreDuplicates) {
-          Object.assign(existing, row);
-        }
-      });
-      return inserted;
+    const selected = labels(entry.selected);
+    const solved = row.submitted && row.selected_choice_labels.length > 0;
+    let write = block.status !== 'completed' && selected.length > 0 && !solved;
+    if (write && 'expected' in entry && !entry.submitted && row.selected_choice_labels.length) {
+      write = labels(entry.expected).join() === row.selected_choice_labels.join();
     }
-    if (op.kind === 'select') {
-      return rows.filter(matches).map((row) => ({ ...row }));
+    if (write) {
+      row.selected_choice_labels = selected;
+      row.submitted = entry.submitted === true;
     }
-    return [];
-  };
-  const builder = (kind, payload, options) => {
-    const op = { kind, payload, options, filters: [] };
-    const chain = {
-      eq: (col, value) => { op.filters.push(['eq', col, value]); return chain; },
-      in: (col, value) => { op.filters.push(['in', col, value]); return chain; },
-      or: (expr) => { op.filters.push(['or', expr]); return chain; },
-      neq: () => chain,
-      select: () => chain,
-      then: (resolve, reject) => Promise.resolve(run(op)).then(resolve, reject),
-    };
-    return chain;
+    if ('flagged' in entry) row.flagged = entry.flagged === true;
+    if ('notes' in entry) row.notes = entry.notes;
+    return { ...row };
+  });
+  const saveProgress = (params) => {
+    if (block.status !== 'completed' && params.p_status) block.status = params.p_status;
+    return { ...block, updated_at: 'remote-1' };
   };
   return {
-    from: (table) => ({
-      update: (payload) => (table === 'test_responses' ? builder('update', payload) : builder('noop')),
-      upsert: (payload, options) => builder('upsert', payload, options),
-      select: () => builder('select'),
-    }),
+    rpc: (name, params) => {
+      calls.push({ name, params });
+      if (name === 'save_test_responses') return Promise.resolve(saveResponses(params));
+      if (name === 'save_test_block_progress') return Promise.resolve(saveProgress(params));
+      return Promise.reject(new Error(`unexpected rpc ${name}`));
+    },
   };
 }
 
-function harness(session, rows) {
-  const client = fakeClient(rows);
+function harness(session, rows, block, calls) {
+  const client = fakeClient(rows, block, calls);
   const store = { byId: new Map(), byDbId: new Map([[Q1, {}]]) };
   const context = vm.createContext({
     console,
     Date,
     LIVE_TEST_BLOCK_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000,
-    RELATIONAL_UUID_IN_BATCH_SIZE: 100,
     liveTestBlockRuntime: { timer: null, inFlight: false, queued: false },
     getLiveTestBlockContext: () => ({ currentUser: { id: 'u1' }, client, profileId: 'p1' }),
     getQuestionStore: () => store,
@@ -181,4 +162,49 @@ test('a skipped push does not replace an answer the app already submitted', asyn
   const context = harness(session, rows);
   await context.syncLiveTestBlocks();
   assert.deepStrictEqual(rows[0].selected_choice_labels, ['C']);
+  // The block is pulled on the next hydrate, which brings the app's answer in.
+  assert.strictEqual(session.liveBlockRemoteAt, '');
+  context.applyLiveTestBlockResponses(session, [Q1], pullRows(rows), { byId: new Map() });
+  assert.deepStrictEqual([...session.responses[Q1].selected], ['C']);
+});
+
+test('an unsubmitted pick changed in the app is not overwritten', async () => {
+  const rows = [{ block_id: BLOCK_ID, question_id: Q1, selected_choice_labels: ['B'], submitted: false, flagged: false, notes: '' }];
+  const session = solvedSession({ [Q1]: 'A|0|0|' });
+  session.responses[Q1] = { selected: ['C'], submitted: false, flagged: false, notes: '' };
+  const calls = [];
+  const context = harness(session, rows, undefined, calls);
+  await context.syncLiveTestBlocks();
+  assert.deepStrictEqual([...calls[0].params.p_rows[0].expected], ['A']);
+  assert.deepStrictEqual(rows[0].selected_choice_labels, ['B']);
+  context.applyLiveTestBlockResponses(session, [Q1], pullRows(rows), { byId: new Map() });
+  assert.deepStrictEqual([...session.responses[Q1].selected], ['B']);
+});
+
+test('a flag on an unanswered question sends no selection', async () => {
+  const rows = [{ block_id: BLOCK_ID, question_id: Q1, selected_choice_labels: ['D'], submitted: false, flagged: false, notes: '' }];
+  const session = solvedSession({ [Q1]: '|0|0|' });
+  session.responses[Q1] = { selected: [], submitted: false, flagged: true, notes: '' };
+  const calls = [];
+  const context = harness(session, rows, undefined, calls);
+  await context.syncLiveTestBlocks();
+  assert.strictEqual('selected' in calls[0].params.p_rows[0], false);
+  assert.deepStrictEqual(rows[0].selected_choice_labels, ['D']);
+  assert.strictEqual(rows[0].flagged, true);
+});
+
+test('finishing on the website completes the block through the progress RPC', async () => {
+  const rows = [];
+  const session = solvedSession({ [Q1]: 'A|0|1|' });
+  session.status = 'completed';
+  session.completedAt = '2026-10-27T10:00:00.000Z';
+  const block = { id: BLOCK_ID, status: 'in_progress' };
+  const calls = [];
+  const context = harness(session, rows, block, calls);
+  await context.syncLiveTestBlocks();
+  const progress = calls.find((call) => call.name === 'save_test_block_progress');
+  assert.strictEqual(progress.params.p_status, 'completed');
+  assert.strictEqual(progress.params.p_completed_at, '2026-10-27T10:00:00.000Z');
+  assert.strictEqual(block.status, 'completed');
+  assert.strictEqual(session.liveBlockClosed, true);
 });
