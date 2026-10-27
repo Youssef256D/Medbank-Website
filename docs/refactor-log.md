@@ -2,6 +2,19 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-27 — Signed-in RLS check
+- `supabase/tests/rls_signed_in.sql` (`npm run check:rls`, in CI via
+  `build/check-rls.mjs` and the Management API): inside a transaction that
+  always rolls back, sets `request.jwt.claims` to a real approved student, an
+  unapproved student and an admin, and checks app_state allow-list and writes,
+  other users' profiles/history/blocks/enrollments, unpublished questions,
+  self-promotion to admin and self-approval. Passes on 2026-10-27; a
+  mutated copy fails as expected.
+- When adding a `g:` key students read, add it to `student_readable_globals`
+  in that file too.
+- Note: 2 unapproved students have `mcq_access_enabled = true`; they still
+  read no questions (approval gates it).
+
 ### 2026-10-27 — Migration drift check
 - `build/check-migration-drift.mjs` (`npm run check:migrations`, in CI):
   compares `supabase/migrations/` with the hosted ledger (Management API,

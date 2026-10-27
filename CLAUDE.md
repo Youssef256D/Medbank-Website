@@ -119,6 +119,8 @@ rest of this section dates from 2026-06-30.
 - **Backups / restore:** `docs/backup-restore-runbook.md`.
 - **CI** runs `npm test`, `npm run check:anon` (signed-out callers must not
   read paid content or user data on the hosted project) and
-  `npm run check:migrations` (repo vs. hosted ledger; needs the
-  `SUPABASE_ACCESS_TOKEN` repo secret, skipped without it). A migration
+  `npm run check:migrations` (repo vs. hosted ledger) and `npm run check:rls`
+  (`supabase/tests/rls_signed_in.sql`: acts as a real student, an unapproved
+  student and an admin, always rolls back). The last two need the
+  `SUPABASE_ACCESS_TOKEN` repo secret and are skipped without it. A migration
   applied from the Flutter repo goes in `supabase/migration-drift-allowlist.json`.

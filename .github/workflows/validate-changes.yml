@@ -70,5 +70,10 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: npm run check:migrations
 
+      - name: Signed-in access check (skipped without SUPABASE_ACCESS_TOKEN)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: npm run check:rls
+
       - name: Build optional assets
         run: npm run build

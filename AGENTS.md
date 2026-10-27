@@ -200,7 +200,8 @@ route, or file you are touching; add your own entry at the top when you finish.
   they are stale since 2026-06-13 and resurrect deleted content (2026-10-13).
 - **`app_state` reads are an allow-list.** A new `g:` key that students or
   signed-out visitors must read has to be added to
-  `app_state_select_authenticated` / `_anon`; only admins write `g:` keys
+  `app_state_select_authenticated` / `_anon` (and to
+  `supabase/tests/rls_signed_in.sql`); only admins write `g:` keys
   (2026-10-27).
 - **Topic renames must not set `deleteQuestions`** on the pending topic-deletion
   queue; only real deletes do. The flag makes the sync hard-delete every DB
