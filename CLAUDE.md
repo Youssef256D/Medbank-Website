@@ -96,6 +96,10 @@ rest of this section dates from 2026-06-30.
   `20260930030100` are in the repo but **not applied**, and five Edge
   Function changes are not deployed. Steps: `docs/admin-layers-runbook.md`.
   Once applied, every new admin table/page needs an area (AGENTS.md entry).
+- **Server-side grading (2026-10-27): pending.** Migration `20261027120000`
+  is in the repo but **not applied**; apply it (then the shared-test
+  `20261027130000`) before this website ships, or tutor answers stay on
+  "Checking…". Phase 2 is one switch; see the 2026-10-27 refactor-log entry.
 - **Edge Functions:** 12 are deployed (checked 2026-09-30), 9 have source in
   `supabase/functions/`. No source here: `dispatch-notification-pushes`,
   `delete-my-account`, `verify-play-integrity`; and the deployed

@@ -1,6 +1,6 @@
 # Plan: server-side grading (hide answer keys until a question is answered)
 
-Status: **draft, waiting for owner approval** (2026-10-27). Nothing applied, nothing pushed.
+Status: **approved 2026-10-27** (RLS change, answers-final rule, 2,500/day cap); phase 1 built on branches. Nothing applied, nothing pushed.
 
 ## The problem today
 

@@ -2,6 +2,49 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-27 — Server-side grading, phase 1 (answer keys from the server)
+- Plan (owner-approved, including the RLS change, "answers are final" and a
+  2,500/day cap): `docs/plans/server-side-grading.md`.
+- Migration `20261027120000_server_side_grading` + rollback
+  `supabase/rollbacks/20261027120000_server_side_grading.down.sql`. **Not
+  applied yet.** Adds the switch `private.grading_settings.hide_answer_keys`
+  (default **false** = phase 1, nothing hidden), `submit_test_answer`,
+  `get_test_answer_key`, the reveal log `private.answer_key_reveals` with a
+  rolling 24 h cap (`daily_reveal_cap`), and makes the catalog RPCs and the
+  `questions_select` / `choices_select` policies hide the key from
+  non-admins **only when the switch is on**. SQL checks:
+  `supabase/tests/server_grading/run-local.sh` (throwaway local PG 17).
+- **Deploy order:** apply 120000, then the shared-test migration 130000, then
+  merge the website. A website deployed before the migration leaves tutor
+  answers on "Checking…" forever (the RPCs don't exist). The app can ship any
+  time after the migration.
+- **Phase 2** = `update private.grading_settings set hide_answer_keys = true`;
+  undo by setting it back. Only after most students run the new app: older
+  app builds grade from the catalog key and would show answers as unknown.
+- **Trigger shared with the shared-test migration:** both migrations replace
+  `private.protect_test_response_answer` with a byte-identical body (rule
+  "solved stays solved"). Change it in one, change it in both. The grading
+  rollback deliberately leaves the trigger alone.
+- Website (`main.js`): for students the bank never supplies the key
+  (`hydrateRelationalQuestions` sets `answerKeyHidden`); keys land in
+  `session.questionSnapshots` via `submitSessionAnswerToServer` (tutor
+  Submit) and `requestSessionAnswerKeys` (finish, review, resume, shared-test
+  pulls, a sweep after `hydrateLiveTestBlocks`). Ungraded answers show
+  "Checking…", never wrong; the incorrect queue skips them. A finished test
+  without a server block gets one via `createCompletedAnswerKeyBlock`.
+  `reset-answer` is refused on a live block (answers are final). Switch:
+  `supabase.config.js → serverGrading` (false = old on-device grading).
+  Tests: `tests/server-grading.test.js`.
+- App (Medbank-App `claude/server-side-grading`): `TestRunnerController`
+  strips the key for non-admins, grades tutor answers with
+  `submit_test_answer`, fetches keys on open and on finish, retries offline
+  (5 s / 15 s / 1 min / 5 min). `TestScore.ungraded` counts answered
+  questions without a key. Tests: `test/features/tests/server_grading_test.dart`.
+- **Open for phase 2:** the app's Answered review mode (shows answers without
+  answering) and the notebook question screen get no key once the switch is
+  on; they show the question neutral, not wrong. Decide: a capped reveal RPC,
+  or retire Answered review.
+
 ### 2026-10-26 — Solved questions no longer come back unsolved (shared tests)
 - Cause: in `syncLiveTestBlocks` a changed answer whose compare-and-set
   missed fell back to an insert with `ignoreDuplicates`. When the row already
