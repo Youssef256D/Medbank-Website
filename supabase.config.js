@@ -37,4 +37,9 @@ window.__SUPABASE_CONFIG = {
   cloudflareStreamEnabled: false,
   // Website visibility. false hides Video Courses everywhere for students and the public (admins still manage them). Set true to bring them back.
   videoCoursesVisible: false,
+  // Students' question bank drops the answer key and each answer is checked by
+  // the server (submit_test_answer / get_test_answer_key). false = grade from
+  // the bank again; only works while the server still sends the key
+  // (private.grading_settings.hide_answer_keys = false).
+  serverGrading: true,
 };

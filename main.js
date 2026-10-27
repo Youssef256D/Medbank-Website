@@ -1123,6 +1123,9 @@ const SUPABASE_CONFIG = {
   courseCoverBucket: window.__SUPABASE_CONFIG?.courseCoverBucket || "course-covers",
   courseMaterialBucket: window.__SUPABASE_CONFIG?.courseMaterialBucket || "course-materials",
   cloudflareStreamEnabled: window.__SUPABASE_CONFIG?.cloudflareStreamEnabled === true,
+  // Students' bank drops the answer key; it comes from the server once a
+  // question is answered (see the "Server-side grading" block).
+  serverGrading: window.__SUPABASE_CONFIG?.serverGrading !== false,
 };
 
 function isVideoCoursesHidden(user = getCurrentUser()) {
@@ -12200,11 +12203,18 @@ async function hydrateRelationalQuestions(options = {}) {
       choices = buildMissingQuestionChoicePlaceholders();
       hasUnresolvedChoicePlaceholders = true;
     }
-    const correct = resolveQuestionCorrectAnswers(
-      remoteCorrect,
-      existingQuestion?.correct,
-      choices,
-    );
+    // No key for students: the server hides it (is_correct null on every
+    // choice) or, with server grading on, this browser drops it. Never fall
+    // back to a cached key or to resolveQuestionCorrectAnswers' "A".
+    const answerKeyHidden = isServerGradingActiveForUser(currentUser)
+      || (rawChoices.length > 0 && rawChoices.every((choice) => choice?.is_correct === null || choice?.is_correct === undefined));
+    const correct = answerKeyHidden
+      ? []
+      : resolveQuestionCorrectAnswers(
+        remoteCorrect,
+        existingQuestion?.correct,
+        choices,
+      );
     const questionImageFromDb = questionColumnSupport.questionImageUrl
       ? String(question.question_image_url || "").trim()
       : "";
@@ -12230,13 +12240,16 @@ async function hydrateRelationalQuestions(options = {}) {
       stem: String(question.stem || "").trim(),
       choices,
       correct,
-      explanation: String(question.explanation || "").trim(),
+      explanation: answerKeyHidden ? "" : String(question.explanation || "").trim(),
       objective: String(question.objective || "").trim(),
       references: "",
       sortOrder: sortOrderFromDb ?? normalizeQuestionSortOrder(existingQuestion?.sortOrder) ?? null,
       questionImage: questionImageFromDb || String(existingQuestion?.questionImage || "").trim(),
-      explanationImage: explanationImageFromDb || String(existingQuestion?.explanationImage || "").trim(),
+      explanationImage: answerKeyHidden
+        ? ""
+        : (explanationImageFromDb || String(existingQuestion?.explanationImage || "").trim()),
       status: toRelationalQuestionStatus(question.status),
+      ...(answerKeyHidden ? { answerKeyHidden: true } : {}),
     };
   });
 
@@ -12976,6 +12989,7 @@ async function hydrateRelationalSessions(currentUser) {
     console.warn("[live-blocks] Could not load unfinished tests from the app.", error?.message || error);
   });
   scheduleLiveTestBlockSync();
+  requestAnswerKeysForUserSessions().catch(() => { });
 }
 
 // Unfinished tests are shared with the MedBank app through test_blocks,
@@ -14460,7 +14474,9 @@ function mergeSessionQuestionSnapshots(localSession, remoteSession, preferLocalS
         return;
       }
       getQuestionIdentityCandidates(normalized, store).forEach((id) => {
-        if (id && !mergedSnapshots[id]) {
+        // A snapshot holding the answer key beats one without it (server-side
+        // grading writes the key into one copy of the session first).
+        if (id && (!mergedSnapshots[id] || (!hasQuestionAnswerKey(mergedSnapshots[id]) && hasQuestionAnswerKey(normalized)))) {
           mergedSnapshots[id] = deepClone(normalized);
         }
       });
@@ -16957,6 +16973,10 @@ function isQuestionUsableForTesting(question) {
     return false;
   }
 
+  // A student's bank has no key (server-side grading); the server checks it.
+  if (question?.answerKeyHidden === true) {
+    return true;
+  }
   const choiceIds = new Set(choices.map((choice) => choice.id));
   const correctIds = [...new Set(
     (Array.isArray(question?.correct) ? question.correct : [])
@@ -30640,7 +30660,7 @@ function renderSession() {
       const navQuestion = getQuestionForSession(session, qid, questionStore);
       const isSubmittedEntry = Boolean(entry?.submitted);
       const isCorrectEntry = isSubmittedEntry && isSubmittedResponseCorrect(navQuestion, entry);
-      const isWrongEntry = isSubmittedEntry && !isCorrectEntry;
+      const isWrongEntry = isSubmittedEntry && !isCorrectEntry && hasQuestionAnswerKey(navQuestion);
       const currentClass = index === session.currentIndex ? "is-current" : "";
       const flaggedClass = entry.flagged ? "is-flagged" : "";
       const answeredClass = entry.selected.length > 0 ? "is-answered" : "";
@@ -30953,6 +30973,7 @@ function wireSession() {
     flushPendingSyncInBackground();
     return;
   }
+  ensureSessionAnswerKeysSoon(session.id);
 
   if (!session.lastQuestionAt) {
     session.lastQuestionAt = Date.now();
@@ -31424,17 +31445,27 @@ async function handleSessionClick(event) {
     }
     response.submitted = true;
     const question = getQuestionForSession(session, qid, questionStore);
-    const correct = isSubmittedResponseCorrect(question, response);
-    if (!correct) {
-      addQuestionToIncorrectQueue(session.userId, qid);
+    if (!hasQuestionAnswerKey(question)) {
+      // Server-side grading: the feedback pane says "Checking…" until the
+      // key comes back, then re-renders.
+      submitSessionAnswerToServer(session.id, qid).catch(() => { });
+    } else {
+      const correct = isSubmittedResponseCorrect(question, response);
+      if (!correct) {
+        addQuestionToIncorrectQueue(session.userId, qid);
+      }
+      toast(correct ? "Correct." : "Incorrect.");
     }
-    toast(correct ? "Correct." : "Incorrect.");
   }
 
   if (action === "reset-answer") {
     if (!currentContext) {
       state.skipNextRouteAnimation = true;
       render();
+      return;
+    }
+    // A shared test's checked answer is final: the server keeps it.
+    if (session.liveBlockId) {
       return;
     }
     currentContext.response.submitted = false;
@@ -31522,6 +31553,17 @@ async function handleSessionClick(event) {
     }
     if (!syncWarning && hasUnresolvedSessionCloudSync(session.id)) {
       syncWarning = "Block submitted locally, but cloud sync is still pending. Keep this tab open until sync completes.";
+    }
+    if (getSessionQuestionsNeedingAnswerKey(getSessionById(session.id) || session, questionStore).length) {
+      // Server-side grading: wait briefly for the key so review opens graded;
+      // whatever is still missing fills in when it arrives.
+      let keyWaitTimer = null;
+      await Promise.race([
+        requestSessionAnswerKeys(session.id),
+        new Promise((resolve) => {
+          keyWaitTimer = window.setTimeout(resolve, SESSION_SUBMIT_SYNC_WAIT_MS);
+        }),
+      ]).finally(() => window.clearTimeout(keyWaitTimer));
     }
     appEl.removeEventListener("click", handleSessionClick);
     document.removeEventListener("keydown", handleSessionKeydown);
@@ -31847,6 +31889,10 @@ function finalizeSession(sessionId, options = {}) {
     const resolvedQuestionId = resolveSessionQuestionId(qid, questionStore);
     const question = getQuestionForSession(session, qid, questionStore);
     const response = session.responses[qid] || session.responses[resolvedQuestionId];
+    if (question && !hasQuestionAnswerKey(question)) {
+      // Not graded yet: requestSessionAnswerKeys adds it once the key is in.
+      continue;
+    }
     const correct = isSubmittedResponseCorrect(question, response);
     if (!correct) {
       userQueue.add(resolvedQuestionId || qid);
@@ -31937,7 +31983,7 @@ function renderReview() {
     };
     const hasAnswer = response.selected.length > 0;
     const isCorrect = isSubmittedResponseCorrect(question, response);
-    const isWrong = Boolean(question && !isCorrect);
+    const isWrong = Boolean(question && !isCorrect && hasQuestionAnswerKey(question));
     return { qid, question, response, hasAnswer, isCorrect, isWrong };
   });
 
@@ -31963,8 +32009,9 @@ function renderReview() {
   const question = current.question;
   const response = current.response;
   const isCorrect = current.isCorrect;
+  const isAwaitingKey = Boolean(question) && !hasQuestionAnswerKey(question);
   const markText = isCorrect ? "1.00" : "0.00";
-  const statusText = isCorrect ? "Correct" : "Incorrect";
+  const statusText = isAwaitingKey ? "Checking…" : (isCorrect ? "Correct" : "Incorrect");
   const stemLines = splitStemLines(question?.stem || "Question content is not available.");
   const correctChoiceIds = Array.isArray(question?.correct) ? question.correct : [];
   const questionChoices = Array.isArray(question?.choices) ? question.choices : [];
@@ -32150,6 +32197,7 @@ function wireReview() {
   appEl.addEventListener("click", handleReviewClick);
   document.removeEventListener("keydown", handleReviewKeydown);
   document.addEventListener("keydown", handleReviewKeydown);
+  ensureSessionAnswerKeysSoon(state.reviewSessionId);
 }
 
 async function handleReviewClick(event) {
@@ -32289,7 +32337,7 @@ function renderReviewFeedbackPane(question, response, isCorrect) {
     `;
   }
 
-  if (response.selected.length) {
+  if (response.selected.length || !hasQuestionAnswerKey(question)) {
     return renderInlineExplanationPane(question, isCorrect);
   }
 
@@ -53186,6 +53234,9 @@ function renderQuestionStemVisual(question, options = {}) {
 }
 
 function renderInlineExplanationPane(question, isCorrect) {
+  if (question && !hasQuestionAnswerKey(question)) {
+    return renderAwaitingAnswerKeyPane(question);
+  }
   const choices = Array.isArray(question?.choices) ? question.choices : [];
   const correctIds = Array.isArray(question?.correct) ? question.correct : [];
   const correctAnswerText = choices
@@ -54299,6 +54350,434 @@ function isSubmittedResponseCorrect(question, response) {
     return false;
   }
   return isResponseSelectionCorrect(question, response);
+}
+
+// Server-side grading (2026-10-27, docs/plans/server-side-grading.md).
+// A student's question bank carries no answer key (`correct`, `explanation`,
+// `explanationImage` are empty and `answerKeyHidden` is set). The key for a
+// question is written into the session's `questionSnapshots` once the server
+// hands it out: `submit_test_answer` when a question is checked, or
+// `get_test_answer_key` for solved questions (answers pulled from the app,
+// a resumed test) and for every question of a finished test. Review,
+// history and analytics already read the snapshot first, so they work
+// unchanged once it holds the key. Admins keep the full bank.
+// Until the key arrives a submitted question is "being checked", never wrong.
+const ANSWER_KEY_RETRY_DELAYS_MS = [3000, 10000, 30000, 120000];
+const ANSWER_KEY_CAPPED_RETRY_MS = 60 * 60 * 1000;
+const ANSWER_KEY_SWEEP_SESSION_LIMIT = 10;
+const answerKeyRuntime = {
+  inFlight: new Map(),
+  retryTimers: new Map(),
+  attempts: new Map(),
+  onlineListener: false,
+};
+
+function isServerGradingActiveForUser(user = getCurrentUser()) {
+  return SUPABASE_CONFIG.serverGrading === true
+    && Boolean(user)
+    && String(user?.role || "").trim() !== "admin";
+}
+
+function hasQuestionAnswerKey(question) {
+  return getNormalizedQuestionCorrectChoiceIds(question).length > 0;
+}
+
+// A submitted answer whose key this browser doesn't have yet.
+function isSubmittedResponseAwaitingKey(question, response) {
+  return Boolean(question)
+    && response?.submitted === true
+    && getLiveTestBlockSelectedLabels(response).length > 0
+    && !hasQuestionAnswerKey(question);
+}
+
+function isAnswerKeyCappedRecently(question) {
+  const cappedAtMs = parseSyncTimestampMs(question?.answerKeyCappedAt);
+  return cappedAtMs > 0 && Date.now() - cappedAtMs < ANSWER_KEY_CAPPED_RETRY_MS;
+}
+
+// Questions of a session that should have a key now: every question of a
+// finished test, the submitted ones of an unfinished test.
+function getSessionQuestionsNeedingAnswerKey(session, questionStore = null) {
+  if (!session || !Array.isArray(session.questionIds)) {
+    return [];
+  }
+  const store = questionStore || getQuestionStore();
+  const isCompleted = String(session.status || "").trim() === "completed";
+  const needed = [];
+  session.questionIds.forEach((questionId) => {
+    const question = getQuestionForSession(session, questionId, store);
+    if (!question || hasQuestionAnswerKey(question) || isAnswerKeyCappedRecently(question)) {
+      return;
+    }
+    const response = getLiveTestBlockResponse(session, questionId, store);
+    if (!isCompleted && !isSubmittedResponseAwaitingKey(question, response)) {
+      return;
+    }
+    const dbId = getLiveTestBlockQuestionDbId(session, questionId, store);
+    if (dbId) {
+      needed.push({ questionId, dbId });
+    }
+  });
+  return needed;
+}
+
+function writeSessionQuestionSnapshot(session, questionId, nextSnapshot, questionStore) {
+  const snapshots = getSessionQuestionSnapshotMap(session);
+  const ids = new Set([
+    String(questionId || "").trim(),
+    ...getQuestionIdentityCandidates(nextSnapshot, questionStore),
+  ]);
+  let changed = false;
+  ids.forEach((id) => {
+    if (id && JSON.stringify(snapshots[id] || null) !== JSON.stringify(nextSnapshot)) {
+      snapshots[id] = deepClone(nextSnapshot);
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+// key: { correct_labels, explanation, explanation_image_url } from the server.
+function applyAnswerKeyToSession(session, questionId, key, questionStore = null) {
+  const store = questionStore || getQuestionStore();
+  const snapshot = normalizeQuestionForSessionSnapshot(getQuestionForSession(session, questionId, store));
+  if (!snapshot) {
+    return false;
+  }
+  const choiceIds = new Set(normalizeQuestionChoiceEntries(snapshot.choices).map((choice) => choice.id));
+  const correct = [...new Set(
+    (Array.isArray(key?.correct_labels) ? key.correct_labels : [])
+      .map((label) => normalizeQuestionChoiceLabel(label))
+      .filter((label) => choiceIds.has(label)),
+  )].sort();
+  if (!correct.length) {
+    return false;
+  }
+  const next = {
+    ...snapshot,
+    correct,
+    explanation: String(key?.explanation || "").trim(),
+    explanationImage: String(key?.explanation_image_url || "").trim(),
+  };
+  delete next.answerKeyHidden;
+  delete next.answerKeyCappedAt;
+  return writeSessionQuestionSnapshot(session, questionId, next, store);
+}
+
+function markSessionAnswerKeyCapped(session, questionId, questionStore = null) {
+  const store = questionStore || getQuestionStore();
+  const snapshot = normalizeQuestionForSessionSnapshot(getQuestionForSession(session, questionId, store));
+  if (!snapshot) {
+    return false;
+  }
+  return writeSessionQuestionSnapshot(session, questionId, { ...snapshot, answerKeyCappedAt: nowISO() }, store);
+}
+
+function addGradedMistakesToIncorrectQueue(session, questionIds, questionStore = null) {
+  const store = questionStore || getQuestionStore();
+  questionIds.forEach((questionId) => {
+    const question = getQuestionForSession(session, questionId, store);
+    const response = getLiveTestBlockResponse(session, questionId, store);
+    if (hasQuestionAnswerKey(question) && !isSubmittedResponseCorrect(question, response)) {
+      addQuestionToIncorrectQueue(session.userId, resolveSessionQuestionId(questionId, store) || questionId);
+    }
+  });
+}
+
+function rerenderIfShowingSession(sessionId) {
+  const normalizedId = String(sessionId || "").trim();
+  if (
+    (state.route === "session" && String(state.sessionId || "").trim() === normalizedId)
+    || (state.route === "review" && String(state.reviewSessionId || "").trim() === normalizedId)
+  ) {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+function scheduleAnswerKeyRetry(sessionId) {
+  const normalizedId = String(sessionId || "").trim();
+  if (!normalizedId || answerKeyRuntime.retryTimers.has(normalizedId)) {
+    return;
+  }
+  ensureAnswerKeyOnlineListener();
+  const attempt = answerKeyRuntime.attempts.get(normalizedId) || 0;
+  if (attempt >= ANSWER_KEY_RETRY_DELAYS_MS.length) {
+    return;
+  }
+  answerKeyRuntime.attempts.set(normalizedId, attempt + 1);
+  answerKeyRuntime.retryTimers.set(normalizedId, window.setTimeout(() => {
+    answerKeyRuntime.retryTimers.delete(normalizedId);
+    requestSessionAnswerKeys(normalizedId).catch(() => { });
+  }, ANSWER_KEY_RETRY_DELAYS_MS[attempt]));
+}
+
+function ensureAnswerKeyOnlineListener() {
+  if (answerKeyRuntime.onlineListener || typeof window === "undefined") {
+    return;
+  }
+  answerKeyRuntime.onlineListener = true;
+  window.addEventListener("online", () => {
+    answerKeyRuntime.attempts.clear();
+    requestAnswerKeysForUserSessions().catch(() => { });
+  });
+}
+
+// A finished test that never got a block (finished offline, or older than
+// the live-block window) gets one now, already completed, so the server will
+// hand out its key.
+async function createCompletedAnswerKeyBlock(client, session, questionStore) {
+  const questionDbIds = session.questionIds.map((questionId) => getLiveTestBlockQuestionDbId(session, questionId, questionStore));
+  if (!questionDbIds.length || questionDbIds.some((dbId) => !dbId)) {
+    return "";
+  }
+  const row = await runRelationalQueryWithTimeout(
+    client.rpc("create_test_block_with_items", {
+      p_mode: session.mode === "timed" ? "timed" : "tutor",
+      p_source: ["all", "unused", "incorrect", "flagged"].includes(session.source) ? session.source : "all",
+      p_question_ids: questionDbIds,
+      p_course_id: null,
+      p_question_count: questionDbIds.length,
+      p_duration_minutes: session.mode === "timed" ? Math.max(5, Number(session.durationMin || 20) || 20) : null,
+      p_time_remaining_sec: null,
+      p_current_index: 0,
+      p_elapsed_seconds: Math.max(0, Math.floor(Number(session.elapsedSec || 0) || 0)),
+      p_status: "completed",
+      p_external_id: String(session.id || "").trim(),
+    }),
+    "Answer key test creation timed out.",
+  );
+  const block = Array.isArray(row) ? row[0] : row;
+  const blockId = String(block?.id || "").trim();
+  if (!isUuidValue(blockId)) {
+    return "";
+  }
+  const target = getSessionById(session.id);
+  if (target) {
+    target.liveBlockId = blockId;
+    target.liveBlockClosed = true;
+  }
+  return blockId;
+}
+
+// Fetches the keys a session is missing. Deduplicated per session; retries
+// with back-off while some are still missing (offline, answers not pushed
+// yet, block not created yet).
+function requestSessionAnswerKeys(sessionId) {
+  const normalizedId = String(sessionId || "").trim();
+  if (!normalizedId) {
+    return Promise.resolve(false);
+  }
+  if (answerKeyRuntime.inFlight.has(normalizedId)) {
+    return answerKeyRuntime.inFlight.get(normalizedId);
+  }
+  const run = (async () => {
+    const context = getLiveTestBlockContext();
+    let session = getSessionById(normalizedId);
+    if (!session) {
+      return false;
+    }
+    const questionStore = getQuestionStore();
+    if (!getSessionQuestionsNeedingAnswerKey(session, questionStore).length) {
+      answerKeyRuntime.attempts.delete(normalizedId);
+      return false;
+    }
+    if (!context || isBrowserOffline()) {
+      scheduleAnswerKeyRetry(normalizedId);
+      return false;
+    }
+    // Push local answers (and the finish) first: the server only hands out
+    // keys for answers and finishes it has.
+    await syncLiveTestBlocks().catch(() => { });
+    session = getSessionById(normalizedId) || session;
+    let blockId = String(session.liveBlockId || "").trim();
+    if (!isUuidValue(blockId) && String(session.status || "").trim() === "completed") {
+      blockId = await createCompletedAnswerKeyBlock(context.client, session, questionStore);
+      session = getSessionById(normalizedId) || session;
+    }
+    const needed = getSessionQuestionsNeedingAnswerKey(session, questionStore);
+    if (!isUuidValue(blockId) || !needed.length) {
+      if (needed.length) {
+        scheduleAnswerKeyRetry(normalizedId);
+      }
+      return false;
+    }
+    const questionIdsByDbId = new Map();
+    needed.forEach(({ questionId, dbId }) => {
+      const list = questionIdsByDbId.get(dbId) || [];
+      list.push(questionId);
+      questionIdsByDbId.set(dbId, list);
+    });
+    const rows = [];
+    for (const idBatch of splitIntoBatches([...questionIdsByDbId.keys()], 500)) {
+      const data = await runRelationalQueryWithTimeout(
+        context.client.rpc("get_test_answer_key", { p_block_id: blockId, p_question_ids: idBatch }),
+        "Answer key request timed out.",
+      );
+      rows.push(...(Array.isArray(data) ? data : []));
+    }
+    const target = getSessionById(normalizedId);
+    if (!target) {
+      return false;
+    }
+    let changed = false;
+    const gradedQuestionIds = [];
+    rows.forEach((row) => {
+      const questionIds = questionIdsByDbId.get(String(row?.question_id || "").trim()) || [];
+      questionIds.forEach((questionId) => {
+        if (row?.capped === true) {
+          changed = markSessionAnswerKeyCapped(target, questionId, questionStore) || changed;
+          return;
+        }
+        if (applyAnswerKeyToSession(target, questionId, row, questionStore)) {
+          changed = true;
+          gradedQuestionIds.push(questionId);
+        }
+      });
+    });
+    if (changed) {
+      if (String(target.status || "").trim() === "completed") {
+        addGradedMistakesToIncorrectQueue(target, gradedQuestionIds, questionStore);
+      }
+      target.updatedAt = nowISO();
+      upsertSession(target);
+      rerenderIfShowingSession(normalizedId);
+    }
+    if (getSessionQuestionsNeedingAnswerKey(target, questionStore).length) {
+      scheduleAnswerKeyRetry(normalizedId);
+    } else {
+      answerKeyRuntime.attempts.delete(normalizedId);
+    }
+    return changed;
+  })().catch((error) => {
+    console.warn("[grading] Could not load answer keys.", error?.message || error);
+    scheduleAnswerKeyRetry(normalizedId);
+    return false;
+  }).finally(() => {
+    answerKeyRuntime.inFlight.delete(normalizedId);
+  });
+  answerKeyRuntime.inFlight.set(normalizedId, run);
+  return run;
+}
+
+// Checks one answer (tutor "Check"): stores it as submitted and brings back
+// its key in one call. The stored answer wins if the question was already
+// solved elsewhere. Falls back to requestSessionAnswerKeys when there is no
+// block yet or the call fails.
+async function submitSessionAnswerToServer(sessionId, questionId) {
+  const normalizedId = String(sessionId || "").trim();
+  const context = getLiveTestBlockContext();
+  let session = getSessionById(normalizedId);
+  if (!context || !session || isBrowserOffline()) {
+    scheduleAnswerKeyRetry(normalizedId);
+    return false;
+  }
+  const questionStore = getQuestionStore();
+  const dbId = getLiveTestBlockQuestionDbId(session, questionId, questionStore);
+  if (!isUuidValue(String(session.liveBlockId || "").trim())) {
+    await syncLiveTestBlocks().catch(() => { });
+    session = getSessionById(normalizedId) || session;
+  }
+  const blockId = String(session.liveBlockId || "").trim();
+  const response = getLiveTestBlockResponse(session, questionId, questionStore);
+  const selected = getLiveTestBlockSelectedLabels(response);
+  if (!isUuidValue(blockId) || !dbId || !selected.length) {
+    return requestSessionAnswerKeys(normalizedId);
+  }
+  let result;
+  try {
+    result = await runRelationalQueryWithTimeout(
+      context.client.rpc("submit_test_answer", {
+        p_block_id: blockId,
+        p_question_id: dbId,
+        p_selected_labels: selected,
+        p_flagged: response?.flagged === true,
+        p_notes: String(response?.notes || ""),
+      }),
+      "Checking the answer timed out.",
+    );
+  } catch (error) {
+    console.warn("[grading] Could not check the answer.", error?.message || error);
+    scheduleAnswerKeyRetry(normalizedId);
+    return false;
+  }
+  const target = getSessionById(normalizedId);
+  const targetResponse = target ? getLiveTestBlockResponse(target, questionId, questionStore) : null;
+  if (!target || !targetResponse || !isRecordObject(result)) {
+    return false;
+  }
+  const storedLabels = getLiveTestBlockSelectedLabels({ selected: result.selected_labels });
+  if (result.submitted === true && storedLabels.length) {
+    if (!arraysEqual([...storedLabels].sort(), [...getLiveTestBlockSelectedLabels(targetResponse)].sort())) {
+      // Solved elsewhere first: the stored answer is the answer.
+      targetResponse.selected = storedLabels;
+    }
+    targetResponse.submitted = true;
+    target.liveBlockAnswerSigs = {
+      ...(isRecordObject(target.liveBlockAnswerSigs) ? target.liveBlockAnswerSigs : {}),
+      [dbId]: buildLiveTestBlockAnswerSig(targetResponse),
+    };
+  }
+  if (result.graded === true) {
+    applyAnswerKeyToSession(target, questionId, result, questionStore);
+    addGradedMistakesToIncorrectQueue(target, [questionId], questionStore);
+  } else if (result.capped === true) {
+    markSessionAnswerKeyCapped(target, questionId, questionStore);
+  }
+  target.updatedAt = nowISO();
+  upsertSession(target);
+  rerenderIfShowingSession(normalizedId);
+  return result.graded === true;
+}
+
+// After a sign-in or reconnect: fill in keys for this user's tests that are
+// missing them (newest first, a few at a time).
+async function requestAnswerKeysForUserSessions() {
+  const currentUser = getCurrentUser();
+  if (!currentUser) {
+    return;
+  }
+  const questionStore = getQuestionStore();
+  const sessions = getSessionsForUser(currentUser.id)
+    .filter((session) => getSessionQuestionsNeedingAnswerKey(session, questionStore).length)
+    .sort((a, b) => parseSyncTimestampMs(b?.updatedAt) - parseSyncTimestampMs(a?.updatedAt))
+    .slice(0, ANSWER_KEY_SWEEP_SESSION_LIMIT);
+  for (const session of sessions) {
+    await requestSessionAnswerKeys(session.id);
+  }
+}
+
+// From wireSession / wireReview: fetch missing keys unless a fetch or a
+// retry is already under way, or the retries ran out (reconnecting resets).
+function ensureSessionAnswerKeysSoon(sessionId) {
+  const normalizedId = String(sessionId || "").trim();
+  if (
+    !normalizedId
+    || answerKeyRuntime.inFlight.has(normalizedId)
+    || answerKeyRuntime.retryTimers.has(normalizedId)
+    || (answerKeyRuntime.attempts.get(normalizedId) || 0) >= ANSWER_KEY_RETRY_DELAYS_MS.length
+  ) {
+    return;
+  }
+  const session = getSessionById(normalizedId);
+  if (session && getSessionQuestionsNeedingAnswerKey(session).length) {
+    requestSessionAnswerKeys(normalizedId).catch(() => { });
+  }
+}
+
+function renderAwaitingAnswerKeyPane(question) {
+  const message = isAnswerKeyCappedRecently(question)
+    ? "You've seen the most answers allowed for one day. This answer will show tomorrow."
+    : (isBrowserOffline()
+      ? "Your answer is saved. The correct answer shows when you're back online."
+      : "Checking your answer…");
+  return `
+    <section class="exam-feedback-block" aria-live="polite">
+      <header class="exam-feedback-head">
+        <h4>${escapeHtml(message)}</h4>
+      </header>
+    </section>
+  `;
 }
 
 function shuffle(list) {
