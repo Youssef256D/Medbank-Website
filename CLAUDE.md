@@ -117,5 +117,8 @@ rest of this section dates from 2026-06-30.
 - `framer-motion` removed from `package.json` 2026-10-27. See
   `docs/ARCHITECTURE.md` §7 for the follow-up list.
 - **Backups / restore:** `docs/backup-restore-runbook.md`.
-- **CI** runs `npm test` and `npm run check:anon` (signed-out callers must not
-  read paid content or user data on the hosted project).
+- **CI** runs `npm test`, `npm run check:anon` (signed-out callers must not
+  read paid content or user data on the hosted project) and
+  `npm run check:migrations` (repo vs. hosted ledger; needs the
+  `SUPABASE_ACCESS_TOKEN` repo secret, skipped without it). A migration
+  applied from the Flutter repo goes in `supabase/migration-drift-allowlist.json`.

@@ -1,0 +1,21 @@
+{
+  "appliedFromOtherRepos": {
+    "20260811150435": "Medbank-App: claim_push_notification_targets",
+    "20260910120000": "Medbank-App: app_popups",
+    "20260922133056": "Medbank-App: allow_self_account_deletion_with_coupons",
+    "20260928021608": "Medbank-App: my_test_block_subject_names",
+    "20260928030940": "Medbank-App: my_test_block_topics",
+    "20260928045006": "Medbank-App: device_integrity_frozen_sensors",
+    "20260928054933": "Medbank-App: device_integrity_per_device",
+    "20260928120000": "Medbank-App: device_integrity_verdicts",
+    "20260928150000": "Medbank-App: device_integrity_signals",
+    "20260928170000": "Medbank-App: device_integrity_enforcement",
+    "20261007120000": "Medbank-App: question_catalog_delta_sync",
+    "20261007130000": "Medbank-App: question_catalog_delta_course_topic_changes",
+    "20261019210000": "Medbank-App: creator_students",
+    "20261024120000": "Medbank-App: admin_action_log"
+  },
+  "unappliedOnPurpose": {
+    "20260909101500": "add_student_auto_approval_feature_flag: the app upserts the flag row itself (refactor log 2026-09-09)"
+  }
+}

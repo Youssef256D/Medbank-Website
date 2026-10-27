@@ -65,5 +65,10 @@ jobs:
       - name: Signed-out access check (hosted project, read-only)
         run: npm run check:anon
 
+      - name: Migration drift check (skipped without SUPABASE_ACCESS_TOKEN)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: npm run check:migrations
+
       - name: Build optional assets
         run: npm run build

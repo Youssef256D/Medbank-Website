@@ -2,6 +2,18 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-27 — Migration drift check
+- `build/check-migration-drift.mjs` (`npm run check:migrations`, in CI):
+  compares `supabase/migrations/` with the hosted ledger (Management API,
+  `SUPABASE_ACCESS_TOKEN` secret; `--ledger <file>` for offline runs; skipped
+  when neither is given). Fails on a version applied but not committed, or
+  committed but not applied.
+- `supabase/migration-drift-allowlist.json` lists the 14 versions applied from
+  the Medbank-App repo and `20260909101500` (unapplied on purpose). Add to it
+  when a migration is applied from the app repo.
+- On 2026-10-27 it flags only `20261027130000` and `20261027140000` (applied,
+  in open PRs #54/#55); merging those clears it.
+
 ### 2026-10-27 — Audit follow-ups (everything except billing)
 - `20261027120100_delete_legacy_app_state_user_blobs`: deletes `mcq_users` /
   `g:mcq_users` (legacy user lists, two plain-text passwords). No rollback on
