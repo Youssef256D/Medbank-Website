@@ -12988,8 +12988,9 @@ async function hydrateRelationalSessions(currentUser) {
 // Answers sync one question at a time: `liveBlockAnswerSigs` holds what was
 // last pushed or pulled per question (keyed by DB question id), so only
 // answers changed on this device are sent and only untouched ones are
-// replaced by the app's. An empty selection is never sent, so it can't wipe
-// an answer given in the app.
+// replaced by the app's. Writes go through the RPCs save_test_responses /
+// save_test_block_progress (migration 20261027130000), which hold the merge
+// rules for both clients; don't re-add them here.
 //
 // The app hides questions it can't show (unpublished since the test was
 // made), so its current_index counts only visible questions. Indexes are
@@ -13151,8 +13152,7 @@ async function syncLiveTestBlocks() {
       // so its older answers can't overwrite the app's.
       const awaitingFirstPull = isUuidValue(String(session.liveBlockId || "")) && !isRecordObject(session.liveBlockAnswerSigs);
       const storedAnswerSigs = isRecordObject(session.liveBlockAnswerSigs) ? session.liveBlockAnswerSigs : {};
-      const answerRows = [];
-      const markRows = [];
+      const responseRows = [];
       const nextAnswerSigs = {};
       questionIds.forEach((questionId, index) => {
         const dbId = questionDbIds[index];
@@ -13164,28 +13164,26 @@ async function syncLiveTestBlocks() {
         const selected = getLiveTestBlockSelectedLabels(response);
         const flagged = response?.flagged === true;
         const notes = String(response?.notes || "");
-        if (selected.length) {
-          answerRows.push({
-            previousSig: storedAnswerSigs[dbId],
-            row: {
-              question_id: dbId,
-              selected_choice_labels: selected,
-              flagged,
-              submitted: response?.submitted === true,
-              notes,
-              answered_at: response?.answeredAt || nowISO(),
-            },
-          });
-        } else if (flagged || notes || storedAnswerSigs[dbId] !== undefined) {
-          // Flag and note only: never send an empty selection.
-          markRows.push({ question_id: dbId, flagged, notes });
-        } else {
+        if (!selected.length && !flagged && !notes && storedAnswerSigs[dbId] === undefined) {
           return;
         }
+        // Flag and note only: no `selected` key, so the stored answer stays.
+        const row = { question_id: dbId, flagged, notes };
+        if (selected.length) {
+          // `expected` is what this device last saw (nothing, for a question
+          // it never synced), so an answer the app changed meanwhile is kept.
+          row.selected = selected;
+          row.submitted = response?.submitted === true;
+          row.answered_at = response?.answeredAt || nowISO();
+          row.expected = storedAnswerSigs[dbId] === undefined
+            ? []
+            : String(storedAnswerSigs[dbId]).split("|")[0].split("").filter(Boolean);
+        }
+        responseRows.push(row);
         nextAnswerSigs[dbId] = answerSig;
       });
       const hasBlock = isUuidValue(String(session.liveBlockId || ""));
-      if (hasBlock && session.liveBlockSig === signature && !answerRows.length && !markRows.length) {
+      if (hasBlock && session.liveBlockSig === signature && !responseRows.length) {
         continue;
       }
       const visibleDbIds = getLiveTestBlockVisibleDbIds(questionDbIds, questionStore);
@@ -13219,91 +13217,46 @@ async function syncLiveTestBlocks() {
         }
         remoteUpdatedAt = String(block?.updated_at || "");
       }
-      // An answer is written only over the value this device last saw. A
-      // question it never synced is insert-only, so an answer the app already
-      // holds is never replaced; a changed one is a compare-and-set on the old
-      // selection, and a mismatch (the app changed it meanwhile) is left for
-      // the next pull to bring in.
-      const insertOnlyRows = [];
-      for (const entry of answerRows) {
-        if (entry.previousSig === undefined) {
-          insertOnlyRows.push(entry.row);
-          continue;
-        }
-        const previousLabels = String(entry.previousSig).split("|")[0].split("").filter(Boolean);
-        let compareQuery = client
-          .from("test_responses")
-          .update(entry.row)
-          .eq("block_id", blockId)
-          .eq("question_id", entry.row.question_id);
-        compareQuery = previousLabels.length
-          ? compareQuery.eq("selected_choice_labels", `{${previousLabels.join(",")}}`)
-          : compareQuery.or("selected_choice_labels.is.null,selected_choice_labels.eq.{}");
-        const matched = await runRelationalQueryWithTimeout(
-          compareQuery.select("question_id"),
+      // The merge rules (compare-and-set, solved stays solved, a finished
+      // test stays finished, the clock never runs back) live in the RPCs
+      // save_test_responses / save_test_block_progress, shared with the app.
+      // An answer the database kept instead of ours is brought in by the next
+      // pull: its record stays at our value, so the pull sees it untouched.
+      let answerKept = false;
+      for (const rowBatch of splitIntoBatches(responseRows, 200)) {
+        const stored = await runRelationalQueryWithTimeout(
+          client.rpc("save_test_responses", { p_block_id: blockId, p_rows: rowBatch }),
           "Shared test answers timed out.",
         );
-        if (!Array.isArray(matched) || !matched.length) {
-          insertOnlyRows.push(entry.row);
-        }
+        (Array.isArray(stored) ? stored : []).forEach((row) => {
+          const dbId = String(row?.question_id || "");
+          const storedSig = buildLiveTestBlockAnswerSig({
+            selected: row?.selected_choice_labels,
+            flagged: row?.flagged === true,
+            submitted: row?.submitted === true,
+            notes: row?.notes,
+          });
+          if (nextAnswerSigs[dbId] !== undefined && storedSig !== nextAnswerSigs[dbId]) {
+            answerKept = true;
+          }
+        });
       }
-      const skippedRows = [];
-      for (const rowBatch of splitIntoBatches(insertOnlyRows, 200)) {
-        const inserted = await runRelationalQueryWithTimeout(
-          client
-            .from("test_responses")
-            .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id", ignoreDuplicates: true })
-            .select("question_id"),
-          "Shared test answers timed out.",
-        );
-        const insertedIds = new Set((Array.isArray(inserted) ? inserted : []).map((row) => String(row?.question_id || "")));
-        skippedRows.push(...rowBatch.filter((row) => !insertedIds.has(row.question_id)));
-      }
-      // A skipped row already holds an answer this device's record doesn't
-      // match (often a stale record, not a change in the app). A submitted
-      // answer here is never left behind an unsubmitted one there: the next
-      // pull would take that copy and the question would open unsolved again.
-      const submittedSkipped = skippedRows.filter((row) => row.submitted === true);
-      for (const idBatch of splitIntoBatches(submittedSkipped.map((row) => row.question_id), RELATIONAL_UUID_IN_BATCH_SIZE)) {
-        const existing = await runRelationalQueryWithTimeout(
-          client.from("test_responses").select("question_id,selected_choice_labels,submitted").eq("block_id", blockId).in("question_id", idBatch),
-          "Shared test answers timed out.",
-        );
-        const remoteSubmittedIds = new Set((Array.isArray(existing) ? existing : [])
-          .filter((row) => row?.submitted === true && getLiveTestBlockSelectedLabels({ selected: row.selected_choice_labels }).length)
-          .map((row) => String(row.question_id || "")));
-        for (const row of submittedSkipped.filter((entry) => idBatch.includes(entry.question_id) && !remoteSubmittedIds.has(entry.question_id))) {
-          await runRelationalQueryWithTimeout(
-            client.from("test_responses").update(row).eq("block_id", blockId).eq("question_id", row.question_id),
-            "Shared test answers timed out.",
-          );
-        }
-      }
-      for (const rowBatch of splitIntoBatches(markRows, 200)) {
-        await runRelationalQueryWithTimeout(
-          client
-            .from("test_responses")
-            .upsert(rowBatch.map((row) => ({ block_id: blockId, ...row })), { onConflict: "block_id,question_id" }),
-          "Shared test answers timed out.",
-        );
-      }
-      let updateQuery = client
-        .from("test_blocks")
-        .update({
-          ...progress,
-          status: isCompleted ? "completed" : "in_progress",
-          ...(isCompleted ? { completed_at: session.completedAt || nowISO() } : {}),
-        })
-        .eq("id", blockId);
-      if (!isCompleted) {
-        // Never reopen a test the app already finished.
-        updateQuery = updateQuery.neq("status", "completed");
-      }
-      const updated = await runRelationalQueryWithTimeout(
-        updateQuery.select("updated_at"),
+      const saved = await runRelationalQueryWithTimeout(
+        client.rpc("save_test_block_progress", {
+          p_block_id: blockId,
+          p_current_index: progress.current_index,
+          p_elapsed_seconds: progress.elapsed_seconds,
+          p_time_remaining_sec: progress.time_remaining_sec,
+          p_status: isCompleted ? "completed" : "in_progress",
+          p_completed_at: isCompleted ? (session.completedAt || nowISO()) : null,
+        }),
         "Shared test progress timed out.",
       );
-      remoteUpdatedAt = String((Array.isArray(updated) ? updated[0] : updated)?.updated_at || remoteUpdatedAt);
+      remoteUpdatedAt = String((Array.isArray(saved) ? saved[0] : saved)?.updated_at || remoteUpdatedAt);
+      if (answerKept) {
+        // Forces the next hydrate to pull this block.
+        remoteUpdatedAt = "";
+      }
       const target = getSessionById(sessionId);
       if (target) {
         target.liveBlockId = blockId;
@@ -13312,7 +13265,7 @@ async function syncLiveTestBlocks() {
           ...(isRecordObject(target.liveBlockAnswerSigs) ? target.liveBlockAnswerSigs : {}),
           ...nextAnswerSigs,
         };
-        if (remoteUpdatedAt) {
+        if (remoteUpdatedAt || answerKept) {
           target.liveBlockRemoteAt = remoteUpdatedAt;
         }
         if (isCompleted) {

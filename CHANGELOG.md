@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-27 — One set of rules for tests shared with the app
+- Saving answers and progress of a test shared between the website and the
+  app now goes through two database functions both use, so the website and
+  the app can no longer disagree about whose answer wins. A solved question
+  stays solved, a finished test stays finished, and the timer of a test
+  opened on two devices never runs back.
+- Migration `20261027130000_shared_test_write_rpcs` is applied to the hosted
+  database (2026-10-27).
+
 ### 2026-10-27 — One set of design tokens; Figtree on the website
 - The website and the app now take their colours, corner radii, spacing and
   type scale from one file, so they can no longer drift apart. A check in CI

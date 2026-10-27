@@ -2,6 +2,44 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-27 — Shared-test write rules moved into the database (RPCs)
+- **Why:** the rules for merging a test shared between the website and the
+  app were written twice (`main.js` `syncLiveTestBlocks` and the app's
+  `lib/features/tests`) and drifted; PRs #45–#52 were all that drift.
+- **Migration `20261027130000_shared_test_write_rpcs`** applied to the hosted
+  project 2026-10-27 (rollback in `supabase/rollbacks/`, SQL check in `supabase/tests/shared_test_write_rpcs.sql`,
+  run on a throwaway local Postgres):
+  - `save_test_responses(p_block_id, p_rows jsonb)`: a key left out of a row
+    keeps what is stored. Per row: not a block item → skipped; completed
+    block → answer frozen (flag/notes still save); empty `selected` → answer
+    kept; solved (selection + submitted) → kept; `expected` (optional,
+    unsubmitted picks only) is a compare-and-set on the stored selection; a
+    submitted answer beats an unsubmitted one elsewhere. Returns the stored rows.
+  - `save_test_block_progress(...)`: completed is final, `completed_at` set
+    once; `elapsed_seconds` only grows, `time_remaining_sec` only shrinks;
+    `current_index` last write wins (still the app's visible index). No write
+    when nothing changes, so `updated_at` (the website's pull trigger) only
+    moves on a real change.
+  - Triggers (for old app builds / stale tabs that still write the tables):
+    `protect_test_response_answer` now also keeps a solved answer solved (body shared word for word with `20261027140000_server_side_grading`);
+    new `trg_protect_completed_test_block` keeps a completed block completed.
+    A data repair that must change a solved answer has to disable the trigger.
+  - Both RPCs are `security invoker`: RLS is unchanged.
+- **Website:** `syncLiveTestBlocks` sends one `save_test_responses` call per
+  block (`expected` from `liveBlockAnswerSigs`; `[]` for a never-synced
+  question) and one `save_test_block_progress`. The insert-only /
+  compare-and-set / read-back code is gone. When the database kept a
+  different answer, the record stays at our value and `liveBlockRemoteAt` is
+  cleared so the next hydrate pulls the block. The pull side
+  (`applyLiveTestBlockResponses`, index translation) is unchanged. **No
+  fallback:** apply the migration before this reaches `main`.
+- **App** (Medbank-App `claude/shared-test-rpcs`): `saveResponse` /
+  `updateBlockProgress` call the RPCs (table writes only on `PGRST202`); a
+  pick sends only the answer, a flag/note only the marks (a flag toggle used
+  to resend a stale pick); the runner shows the stored row when the server
+  kept another answer; finishing scores and archives the stored rows.
+- Do not re-add merge rules to either client: change the RPC.
+
 ### 2026-10-27 — Design tokens: one tokens.json for the website and the app; Figtree everywhere
 - `design-tokens/tokens.json` now owns the colours of all three themes, radii,
   spacing, the type scale and the font. `design-tokens/generate.mjs` (no
