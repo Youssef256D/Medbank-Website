@@ -203,7 +203,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "results", "universities", "organizations", "mcq-subjects", "questions", "question-reports", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "results", "universities", "organizations", "device-limit", "mcq-subjects", "questions", "question-reports", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -222,6 +222,7 @@ const ADMIN_NAV_GROUPS = [
       { page: "results", label: "Student results" },
       { page: "universities", label: "Universities" },
       { page: "organizations", label: "Organizations" },
+      { page: "device-limit", label: "Device limit" },
     ],
   },
   {
@@ -36511,6 +36512,7 @@ const ADMIN_PAGE_AREAS = {
   results: "people",
   universities: "people",
   organizations: "people",
+  "device-limit": "people",
   "mcq-subjects": "mcq",
   questions: "mcq",
   "question-reports": "mcq",
@@ -36528,6 +36530,7 @@ const ADMIN_PAGE_PERMISSIONS = {
   results: ["users.create", "users.edit", "users.access", "users.password", "users.delete", "users.organizations"],
   universities: ["users.organizations"],
   organizations: ["users.organizations"],
+  "device-limit": ["users.edit"],
   "mcq-subjects": ["mcq.subjects"],
   questions: ["mcq.questions_create", "mcq.questions_edit", "mcq.questions_delete"],
   "question-reports": ["mcq.questions_create", "mcq.questions_edit", "mcq.questions_delete", "mcq.bulk_import"],
@@ -37623,7 +37626,7 @@ function renderAdmin() {
           menuItems.push({ label: "Set password", attrs: 'data-action="reset-user-password"' });
         }
         if (account.role === "student" && usersCan.edit) {
-          menuItems.push({ label: "Device", attrs: 'data-action="view-user-device"' });
+          menuItems.push({ label: "Devices", attrs: 'data-action="view-user-device"' });
           menuItems.push({ label: "University", attrs: 'data-action="edit-user-university"' });
         }
         if (account.role === "student" && canAdminAccessPage(getCurrentAdminAccess(), "results")) {
@@ -39184,6 +39187,10 @@ function renderAdmin() {
     pageContent = renderAdminAccessSection();
   }
 
+  if (activeAdminPage === "device-limit") {
+    pageContent = renderAdminDeviceLimitSection();
+  }
+
   if (activeAdminPage === "logs") {
     const allLogs = getSystemLogs();
     const totalLogsCount = allLogs.length;
@@ -40092,6 +40099,7 @@ function wireAdmin() {
   wireAdminSupportNumber();
   wireAdminOrganizations();
   wireAdminAccess();
+  wireAdminDeviceLimit();
 
   // In the phone/tablet rail, bring the current page into view. scrollLeft,
   // not scrollIntoView, so the page itself never jumps.
@@ -61406,12 +61414,17 @@ function getAdminCourseEnrollmentPickerPortalCourseId() {
   return isUuidValue(selectedCourseId) ? selectedCourseId : "";
 }
 
-// Registered device: one app installation per student account (migration
-// 20260927145744, enforced by the mobile app's claim/check RPCs, which the
-// website must never call). Admins may only read and release. The dialog lives
-// outside render() on purpose: the Users page re-renders on every admin poll,
-// and the device row is always re-read from Supabase, never cached in state.
+// Registered devices (20261029120000_devices_per_course, mirroring the MedBank
+// app's user page). A student may use several app installations, up to the
+// limit an admin sets, and each paid course plays only on the device it was
+// activated on. Admins read the devices, release one, move its courses to
+// another, put a course that is on no device yet onto one, and set this
+// student's own limit. The app's claim/check RPCs are never called here. The
+// dialog lives outside render() on purpose: the Users page re-renders on every
+// admin poll, and the devices are always re-read from Supabase, never cached.
 let adminUserDeviceDialogToken = 0;
+
+const ADMIN_DEVICE_LIMIT_MAX = 10;
 
 function handleAdminUserDeviceDialogKeydown(event) {
   if (event.key === "Escape") {
@@ -61426,7 +61439,9 @@ function closeAdminUserDeviceDialog() {
 }
 
 function getAdminUserDeviceLabel(device) {
-  return String(device?.device_name || "").trim() || "another device";
+  return String(device?.device_name || "").trim()
+    || String(device?.platform || "").trim()
+    || "another device";
 }
 
 function renderAdminUserDeviceExemption(exemption) {
@@ -61439,8 +61454,8 @@ function renderAdminUserDeviceExemption(exemption) {
         ${exemption.exempt ? "Remove exemption" : "Exempt from device limit"}
       </button>
       <p class="subtle">${exemption.exempt
-        ? "Removing the exemption puts the one-device limit back. The next device this student signs in on becomes their device."
-        : "Lets this student use the app on any number of devices."}</p>
+        ? "Removing the exemption puts this student's device limit back. Devices already registered keep working."
+        : "For demo and review accounts: lets this student use the app on any number of devices."}</p>
     </div>
   `;
 }
@@ -61487,37 +61502,166 @@ function renderAdminUserDeviceIntegrity(integrity) {
   `;
 }
 
-function renderAdminUserDeviceDetails(device, exemption) {
+function renderAdminUserDeviceCourseList(courses) {
+  if (!courses.length) {
+    return `<p class="subtle">No paid courses on this device.</p>`;
+  }
+  return `
+    <ul class="admin-user-device-courses">
+      ${courses.map((course) => `<li>${escapeHtml(course.course_name || "Untitled course")}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function renderAdminUserDeviceMoveControl(fromKey, targets) {
+  if (!targets.length) {
+    return "";
+  }
+  const picker = targets.length > 1
+    ? `
+      <select class="admin-user-device-select" data-move-target aria-label="Move the courses to">
+        ${targets.map((target) => `<option value="${target.index}">${escapeHtml(getAdminUserDeviceLabel(target.device))}</option>`).join("")}
+      </select>
+    `
+    : `<input type="hidden" data-move-target value="${targets[0].index}">`;
+  return `
+    <div class="admin-user-device-actions" data-move-from="${escapeHtml(fromKey)}">
+      ${picker}
+      <button class="btn ghost admin-btn-sm" type="button" data-action="move-device-courses">
+        ${targets.length > 1 ? "Move courses" : `Move courses to ${escapeHtml(getAdminUserDeviceLabel(targets[0].device))}`}
+      </button>
+    </div>
+  `;
+}
+
+function renderAdminUserDeviceLimitRule(rule) {
+  if (rule.error) {
+    return `<p class="subtle">This student's device limit is unavailable: ${escapeHtml(rule.error)}</p>`;
+  }
+  const mode = rule.mode || "inherit";
+  const limit = Number(rule.limit) || 1;
+  const option = (value, label) => `<option value="${value}"${mode === value ? " selected" : ""}>${label}</option>`;
+  return `
+    <div class="admin-user-device-limit" data-device-limit-rule>
+      <label class="admin-user-device-limit-field">
+        <span>This student's device limit</span>
+        <select class="admin-user-device-select" data-limit-mode>
+          ${option("inherit", "Follow their university and organizations")}
+          ${option("off", "No limit for this student")}
+          ${option("custom", "A set number for this student")}
+        </select>
+      </label>
+      <label class="admin-user-device-limit-field" data-limit-count-wrap${mode === "custom" ? "" : " hidden"}>
+        <span>Devices</span>
+        <input class="admin-user-device-select" type="number" min="1" max="${ADMIN_DEVICE_LIMIT_MAX}" step="1" value="${limit}" data-limit-count>
+      </label>
+      <div class="admin-user-device-release">
+        <button class="btn ghost admin-btn-sm" type="button" data-action="save-user-device-limit">Save limit</button>
+        <p class="subtle">This student's own setting beats every other. Otherwise the strictest of their university and organizations applies, then the global setting.</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminUserDeviceUsage(devices, limit, exemption) {
   if (exemption.exempt) {
     return `
       <p class="admin-user-device-count">Device limit: <b>exempt</b></p>
       <p class="subtle">This student can use the app on any number of devices.</p>
-      ${renderAdminUserDeviceExemption(exemption)}
     `;
   }
-  if (!device) {
+  if (limit.error) {
+    return `<p class="admin-user-device-count">Devices used: <b>${devices.length}</b></p>`;
+  }
+  if (limit.value == null) {
+    return `<p class="admin-user-device-count">Devices used: <b>${devices.length}</b> (no limit)</p>`;
+  }
+  return `<p class="admin-user-device-count">Devices used: <b>${devices.length} of ${limit.value}</b></p>`;
+}
+
+function renderAdminUserDeviceDetails(data) {
+  const { devices, courses, limit, rule, exemption } = data;
+  const indexed = devices.map((device, index) => ({ device, index }));
+  const onDevice = (deviceId) => courses.filter((course) => course.device_id === deviceId);
+  const unplaced = courses.filter((course) => !course.device_id);
+  const released = new Map();
+  courses.forEach((course) => {
+    if (course.device_id && !course.device_registered) {
+      if (!released.has(course.device_id)) {
+        released.set(course.device_id, []);
+      }
+      released.get(course.device_id).push(course);
+    }
+  });
+
+  const deviceCards = indexed.map(({ device, index }) => {
+    const platform = String(device.platform || "").trim();
+    const fields = [
+      platform ? ["Platform", platform] : null,
+      ["Registered", formatReportDateTime(device.registered_at)],
+      ["Last seen", formatReportDateTime(device.last_seen_at)]
+    ].filter(Boolean);
+    const deviceCourses = onDevice(device.device_id);
+    const targets = indexed.filter((entry) => entry.index !== index);
     return `
-      <p class="admin-user-device-count">Devices used: <b>0 of 1</b></p>
-      <p class="subtle">No device registered. The next device this student signs in on becomes their device.</p>
-      ${renderAdminUserDeviceExemption(exemption)}
+      <article class="admin-user-device-item" data-device-index="${index}">
+        <h5 class="admin-user-device-name">${escapeHtml(getAdminUserDeviceLabel(device))}</h5>
+        <dl class="admin-user-device-fields">
+          ${fields.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+        </dl>
+        <p class="admin-user-device-label">Paid courses on this device</p>
+        ${renderAdminUserDeviceCourseList(deviceCourses)}
+        ${deviceCourses.length ? renderAdminUserDeviceMoveControl(`device:${index}`, targets) : ""}
+        <div class="admin-user-device-release">
+          <button class="btn danger admin-btn-sm" type="button" data-action="release-user-device">Release device</button>
+          <p class="subtle">Frees this device's place. It is signed out of MedBank within a minute, and its courses stop playing there. Move the courses first to keep them.</p>
+        </div>
+      </article>
     `;
-  }
-  const platform = String(device.platform || "").trim();
-  const fields = [
-    ["Device", getAdminUserDeviceLabel(device)],
-    platform ? ["Platform", platform] : null,
-    ["Registered", formatReportDateTime(device.registered_at)],
-    ["Last seen", formatReportDateTime(device.last_seen_at)]
-  ].filter(Boolean);
+  }).join("");
+
+  const releasedCards = [...released.entries()].map(([deviceId, list], position) => `
+    <article class="admin-user-device-item" data-released-index="${position}" data-released-device="${escapeHtml(deviceId)}">
+      <h5 class="admin-user-device-name">Released device</h5>
+      <p class="subtle">These courses stay on a device an admin released. They come back if that same install signs in again; move them to another device to use them now.</p>
+      ${renderAdminUserDeviceCourseList(list)}
+      ${renderAdminUserDeviceMoveControl(`released:${position}`, indexed)}
+    </article>
+  `).join("");
+
+  const unplacedCard = unplaced.length
+    ? `
+      <article class="admin-user-device-item">
+        <h5 class="admin-user-device-name">Courses on no device yet</h5>
+        <p class="subtle">They go to the first device this student opens the app on, or put each on a device now.</p>
+        <ul class="admin-user-device-courses">
+          ${unplaced.map((course) => `
+            <li class="admin-user-device-place" data-course-id="${escapeHtml(course.course_id)}">
+              <span>${escapeHtml(course.course_name || "Untitled course")}</span>
+              ${indexed.length ? `
+                <select class="admin-user-device-select" data-place-target aria-label="Device for ${escapeHtml(course.course_name || "this course")}">
+                  ${indexed.map((entry) => `<option value="${entry.index}">${escapeHtml(getAdminUserDeviceLabel(entry.device))}</option>`).join("")}
+                </select>
+                <button class="btn ghost admin-btn-sm" type="button" data-action="place-course-device">Put on device</button>
+              ` : ""}
+            </li>
+          `).join("")}
+        </ul>
+      </article>
+    `
+    : "";
+
+  const empty = devices.length
+    ? ""
+    : `<p class="subtle">No device registered. The next device this student signs in on becomes their device.</p>`;
+
   return `
-    <p class="admin-user-device-count">Devices used: <b>1 of 1</b></p>
-    <dl class="admin-user-device-fields">
-      ${fields.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
-    </dl>
-    <div class="admin-user-device-release">
-      <button class="btn danger admin-btn-sm" type="button" data-action="release-user-device">Release device</button>
-      <p class="subtle">Lets the student sign in on a new device. The current device is signed out of MedBank within a minute.</p>
-    </div>
+    ${renderAdminUserDeviceUsage(devices, limit, exemption)}
+    ${empty}
+    ${deviceCards}
+    ${releasedCards}
+    ${unplacedCard}
+    ${renderAdminUserDeviceLimitRule(rule)}
     ${renderAdminUserDeviceExemption(exemption)}
   `;
 }
@@ -61534,15 +61678,35 @@ async function loadAdminUserDeviceIntoDialog(context) {
     body.innerHTML = `<p class="subtle">Registered devices are only available for accounts stored in Supabase.</p>`;
     return;
   }
-  let device = null;
-  const exemption = { exempt: false, error: "" };
+  const data = {
+    devices: [],
+    courses: [],
+    limit: { value: null, error: "" },
+    rule: { mode: "inherit", limit: null, error: "" },
+    exemption: { exempt: false, error: "" }
+  };
   const integrity = { outcome: "", checkedAt: "", hints: [], exempt: false, error: "" };
   let errorMessage = "";
   try {
-    const [deviceResult, exemptionResult, verdictResult, integrityExemptionResult] = await Promise.all([
+    const [
+      deviceResult,
+      courseResult,
+      limitResult,
+      ruleResult,
+      exemptionResult,
+      verdictResult,
+      integrityExemptionResult
+    ] = await Promise.all([
       client
         .from("user_devices")
-        .select("device_name, platform, registered_at, last_seen_at")
+        .select("device_id, device_name, platform, registered_at, last_seen_at")
+        .eq("user_id", context.profileId)
+        .order("registered_at"),
+      client.rpc("admin_list_course_devices", { p_user: context.profileId }),
+      client.rpc("admin_get_device_limit", { p_user: context.profileId }),
+      client
+        .from("user_device_limits")
+        .select("device_limit_mode, device_limit")
         .eq("user_id", context.profileId)
         .maybeSingle(),
       client
@@ -61575,20 +61739,33 @@ async function loadAdminUserDeviceIntoDialog(context) {
         .filter(Boolean);
       integrity.exempt = Boolean(integrityExemptionResult.data);
     }
-    if (deviceResult.error) {
-      errorMessage = deviceResult.error.message || "Could not load the registered device.";
+    if (deviceResult.error || courseResult.error) {
+      errorMessage = (deviceResult.error || courseResult.error).message || "Could not load the registered devices.";
     } else {
-      device = deviceResult.data || null;
+      data.devices = Array.isArray(deviceResult.data) ? deviceResult.data : [];
+      data.courses = Array.isArray(courseResult.data) ? courseResult.data : [];
     }
-    // A failed exemption read must not hide the device, and must not be shown
-    // as "not exempt" either: surface it and offer no toggle.
-    if (exemptionResult.error) {
-      exemption.error = exemptionResult.error.message || "Could not load the exemption.";
+    // A limit that failed to load reads as unknown, never as "no limit".
+    if (limitResult.error) {
+      data.limit.error = limitResult.error.message || "Could not load the device limit.";
     } else {
-      exemption.exempt = Boolean(exemptionResult.data);
+      data.limit.value = limitResult.data == null ? null : Number(limitResult.data);
+    }
+    if (ruleResult.error) {
+      data.rule.error = ruleResult.error.message || "Could not load this student's device limit.";
+    } else if (ruleResult.data) {
+      data.rule.mode = ruleResult.data.device_limit_mode === "custom" ? "custom" : "off";
+      data.rule.limit = ruleResult.data.device_limit;
+    }
+    // A failed exemption read must not hide the devices, and must not be
+    // shown as "not exempt" either: surface it and offer no toggle.
+    if (exemptionResult.error) {
+      data.exemption.error = exemptionResult.error.message || "Could not load the exemption.";
+    } else {
+      data.exemption.exempt = Boolean(exemptionResult.data);
     }
   } catch (error) {
-    errorMessage = error?.message || "Could not load the registered device.";
+    errorMessage = error?.message || "Could not load the registered devices.";
   }
   if (token !== adminUserDeviceDialogToken) {
     return;
@@ -61605,25 +61782,119 @@ async function loadAdminUserDeviceIntoDialog(context) {
     });
     return;
   }
-  body.innerHTML = renderAdminUserDeviceDetails(device, exemption) + renderAdminUserDeviceIntegrity(integrity);
+  body.innerHTML = renderAdminUserDeviceDetails(data) + renderAdminUserDeviceIntegrity(integrity);
+  bindAdminUserDeviceDialogActions(body, context, data, integrity);
+}
+
+function bindAdminUserDeviceDialogActions(body, context, data, integrity) {
+  const deviceAt = (index) => data.devices[Number(index)] || null;
+  const releasedIds = [...body.querySelectorAll("[data-released-device]")]
+    .map((node) => node.getAttribute("data-released-device"));
+
+  body.querySelectorAll("[data-action='release-user-device']").forEach((button) => {
+    const device = deviceAt(button.closest("[data-device-index]")?.getAttribute("data-device-index"));
+    button.addEventListener("click", () => {
+      if (device) {
+        releaseAdminUserDevice(context, device, button);
+      }
+    });
+  });
+
+  body.querySelectorAll("[data-action='move-device-courses']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const control = button.closest("[data-move-from]");
+      const [kind, position] = String(control?.getAttribute("data-move-from") || "").split(":");
+      const target = deviceAt(control?.querySelector("[data-move-target]")?.value);
+      const fromId = kind === "device"
+        ? deviceAt(position)?.device_id
+        : releasedIds[Number(position)];
+      const fromName = kind === "device" ? getAdminUserDeviceLabel(deviceAt(position)) : "the released device";
+      if (fromId && target) {
+        moveAdminUserDeviceCourses(context, { fromId, fromName, target }, button);
+      }
+    });
+  });
+
+  body.querySelectorAll("[data-action='place-course-device']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = button.closest("[data-course-id]");
+      const target = deviceAt(row?.querySelector("[data-place-target]")?.value);
+      const courseId = row?.getAttribute("data-course-id");
+      if (courseId && target) {
+        placeAdminUserCourseOnDevice(context, courseId, target, button);
+      }
+    });
+  });
+
+  const rule = body.querySelector("[data-device-limit-rule]");
+  const modeSelect = rule?.querySelector("[data-limit-mode]");
+  modeSelect?.addEventListener("change", () => {
+    const wrap = rule.querySelector("[data-limit-count-wrap]");
+    if (wrap) {
+      wrap.hidden = modeSelect.value !== "custom";
+    }
+  });
+  rule?.querySelector("[data-action='save-user-device-limit']")?.addEventListener("click", (event) => {
+    const mode = modeSelect?.value || "inherit";
+    const count = Math.round(Number(rule.querySelector("[data-limit-count]")?.value));
+    if (mode === "custom" && !(count >= 1 && count <= ADMIN_DEVICE_LIMIT_MAX)) {
+      toast(`Pick between 1 and ${ADMIN_DEVICE_LIMIT_MAX} devices.`);
+      return;
+    }
+    saveAdminUserDeviceLimit(context, mode, mode === "custom" ? count : null, event.currentTarget);
+  });
+
   const integrityButton = body.querySelector("[data-action='toggle-user-integrity-exemption']");
   integrityButton?.addEventListener("click", () => {
     toggleAdminUserIntegrityExemption(context, integrity.exempt, integrityButton);
   });
-  const releaseButton = body.querySelector("[data-action='release-user-device']");
-  releaseButton?.addEventListener("click", () => {
-    releaseAdminUserDevice(context, device, releaseButton);
-  });
   const exemptionButton = body.querySelector("[data-action='toggle-user-device-exemption']");
   exemptionButton?.addEventListener("click", () => {
-    toggleAdminUserDeviceExemption(context, exemption.exempt, exemptionButton);
+    toggleAdminUserDeviceExemption(context, data.exemption.exempt, exemptionButton);
   });
+}
+
+// Runs one admin write from the devices dialog: disables the button, toasts the
+// error or the success, and re-reads the dialog. Returns the write's data.
+async function runAdminUserDeviceWrite(context, button, write, doneMessage) {
+  const client = getSupabaseAuthClient();
+  if (!client) {
+    toast("Supabase is not connected.");
+    return;
+  }
+  const token = adminUserDeviceDialogToken;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  let errorMessage = "";
+  let result = null;
+  try {
+    const { data, error } = await write(client);
+    if (error) {
+      errorMessage = error.message || "Could not save the change.";
+    } else {
+      result = data;
+    }
+  } catch (error) {
+    errorMessage = error?.message || "Could not save the change.";
+  }
+  if (errorMessage) {
+    toast(errorMessage);
+    if (token === adminUserDeviceDialogToken) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+    }
+    return;
+  }
+  toast(typeof doneMessage === "function" ? doneMessage(result) : doneMessage);
+  if (token === adminUserDeviceDialogToken) {
+    loadAdminUserDeviceIntoDialog(context);
+  }
 }
 
 async function toggleAdminUserDeviceExemption(context, currentlyExempt, button) {
   const confirmed = window.confirm(
     currentlyExempt
-      ? `Remove the device limit exemption?\n\n${context.name} will be limited to one device again. The next device they sign in on becomes their registered device.`
+      ? `Remove the device limit exemption?\n\n${context.name}'s device limit applies again. Devices already registered keep working.`
       : `Exempt from the device limit?\n\n${context.name} will be able to use MedBank on any number of devices until you remove the exemption.`
   );
   if (!confirmed) {
@@ -61708,41 +61979,450 @@ async function toggleAdminUserIntegrityExemption(context, currentlyExempt, butto
   }
 }
 
-async function releaseAdminUserDevice(context, device, button) {
+function releaseAdminUserDevice(context, device, button) {
   const confirmed = window.confirm(
-    `Release this device?\n\n${context.name} will no longer be able to use MedBank on ${getAdminUserDeviceLabel(device)}. The next device they sign in on becomes their registered device.`
+    `Release this device?\n\n${context.name} will no longer be able to use MedBank on ${getAdminUserDeviceLabel(device)}, and its courses stop playing there. Their place is free for a new device.`
   );
   if (!confirmed) {
     return;
   }
-  const client = getSupabaseAuthClient();
-  if (!client) {
-    toast("Supabase is not connected.");
+  return runAdminUserDeviceWrite(
+    context,
+    button,
+    (client) => client
+      .from("user_devices")
+      .delete()
+      .eq("user_id", context.profileId)
+      .eq("device_id", device.device_id),
+    "Device released."
+  );
+}
+
+function moveAdminUserDeviceCourses(context, { fromId, fromName, target }, button) {
+  const targetName = getAdminUserDeviceLabel(target);
+  const confirmed = window.confirm(
+    `Move the courses to ${targetName}?\n\nEvery paid course on ${fromName} will play on ${targetName} instead.`
+  );
+  if (!confirmed) {
     return;
   }
-  const token = adminUserDeviceDialogToken;
-  button.disabled = true;
-  button.classList.add("is-loading");
+  return runAdminUserDeviceWrite(
+    context,
+    button,
+    (client) => client.rpc("admin_move_device_courses", {
+      p_user: context.profileId,
+      p_from_device: fromId,
+      p_to_device: target.device_id
+    }),
+    (moved) => {
+      const count = Number(moved) || 0;
+      return count === 1 ? "1 course moved." : `${count} courses moved.`;
+    }
+  );
+}
+
+function placeAdminUserCourseOnDevice(context, courseId, target, button) {
+  return runAdminUserDeviceWrite(
+    context,
+    button,
+    (client) => client.rpc("admin_bind_course_device", {
+      p_user: context.profileId,
+      p_course: courseId,
+      p_device: target.device_id,
+      p_replace: true
+    }),
+    `Course put on ${getAdminUserDeviceLabel(target)}.`
+  );
+}
+
+// "Follow the others" is no row at all, as in the app.
+function saveAdminUserDeviceLimit(context, mode, limit, button) {
+  return runAdminUserDeviceWrite(
+    context,
+    button,
+    (client) => {
+      const table = client.from("user_device_limits");
+      return mode === "inherit"
+        ? table.delete().eq("user_id", context.profileId)
+        : table.upsert({ user_id: context.profileId, device_limit_mode: mode, device_limit: limit });
+    },
+    "Device limit saved."
+  );
+}
+
+// Device limit page (20261029120000_devices_per_course, mirroring the MedBank
+// app's /admin/device-limit): what applies now, the setting for everyone,
+// every university / organization / student with its own rule, older app
+// versions, and the order the levels are read in. A student's own rule is set
+// from Users → Devices; universities and organizations are added here. Like
+// the devices dialog, the data is always re-read from Supabase and painted
+// into the section body, never kept in `state`.
+const adminDeviceLimitPage = { data: null, error: "", loading: false, loadedAt: 0, busy: false };
+
+function formatAdminDeviceCount(count) {
+  return count === 1 ? "1 device" : `${count} devices`;
+}
+
+function getAdminDeviceRuleLabel(mode, limit) {
+  return mode === "custom" ? formatAdminDeviceCount(Number(limit) || 1) : "No limit";
+}
+
+function renderAdminDeviceLimitSection() {
+  const header = renderAdminPageHeader({
+    id: "device-limit",
+    title: "Device limit",
+    notes: [
+      "Each student gets one device unless you change it here.",
+      "Paid courses always play only on the device they were activated on; only an admin moves them (Users → Devices).",
+      "Lowering a limit never signs out a device already in use. It only blocks new ones.",
+    ],
+  });
+  return `
+    <section class="card admin-section" id="admin-device-limit-section">
+      ${header}
+      <div class="admin-device-limit-body" data-device-limit-body aria-live="polite">
+        ${renderAdminDeviceLimitBody()}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminDeviceLimitBody() {
+  const page = adminDeviceLimitPage;
+  if (page.error && !page.data) {
+    return `
+      <p class="subtle">${escapeHtml(page.error)}</p>
+      <div><button class="btn ghost admin-btn-sm" type="button" data-action="device-limit-retry">Try again</button></div>
+    `;
+  }
+  if (!page.data) {
+    return `<p class="subtle">Loading...</p>`;
+  }
+  const { settings, exceptions, universities, organizations } = page.data;
+  const disabled = page.busy ? "disabled" : "";
+  const nowTitle = settings.limit_enabled
+    ? `${formatAdminDeviceCount(settings.device_limit)} per student`
+    : "No limit for everyone";
+  const scopeLabels = { university: "University", organization: "Organization", student: "Student" };
+  const exceptionRows = exceptions.map((entry, index) => `
+    <li class="admin-device-limit-exception" data-exception-index="${index}">
+      <div class="admin-device-limit-exception-text">
+        <p class="admin-device-limit-exception-name">${escapeHtml(entry.name || "—")}</p>
+        <p class="subtle">${scopeLabels[entry.scope]}
+          <span class="admin-device-limit-pill${entry.mode === "custom" ? "" : " is-off"}">${escapeHtml(getAdminDeviceRuleLabel(entry.mode, entry.limit))}</span>
+        </p>
+      </div>
+      ${entry.scope === "student"
+        ? `<p class="subtle admin-device-limit-exception-where">Change it from Users → Devices</p>`
+        : `<button class="btn ghost admin-btn-sm" type="button" data-action="device-limit-exception-remove" ${disabled}>Remove</button>`}
+    </li>
+  `).join("");
+  const targetOptions = (list, scope) => list
+    .filter((entry) => !exceptions.some((rule) => rule.scope === scope && rule.id === entry.id))
+    .map((entry) => `<option value="${scope}:${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`)
+    .join("");
+  const universityOptions = targetOptions(universities, "university");
+  const organizationOptions = targetOptions(organizations, "organization");
+  const addForm = universityOptions || organizationOptions
+    ? `
+      <form class="admin-device-limit-add" data-device-limit-add>
+        <p class="admin-device-limit-label">Add a university or organization</p>
+        <div class="admin-device-limit-add-fields">
+          <select class="admin-user-device-select" name="target" aria-label="University or organization" required>
+            ${universityOptions ? `<optgroup label="Universities">${universityOptions}</optgroup>` : ""}
+            ${organizationOptions ? `<optgroup label="Organizations">${organizationOptions}</optgroup>` : ""}
+          </select>
+          <select class="admin-user-device-select" name="mode" aria-label="Their device limit">
+            <option value="custom">Their own number</option>
+            <option value="off">No limit for their students</option>
+          </select>
+          <input class="admin-user-device-select admin-device-limit-number" name="limit" type="number" min="1" max="${ADMIN_DEVICE_LIMIT_MAX}" step="1" value="2" aria-label="Devices">
+          <button class="btn primary admin-btn-sm" type="submit" ${disabled}>Add</button>
+        </div>
+      </form>
+    `
+    : "";
+  return `
+    <div class="admin-device-limit-now">
+      <span class="admin-device-limit-now-icon" aria-hidden="true">${settings.limit_enabled ? settings.device_limit : "∞"}</span>
+      <div>
+        <p class="admin-device-limit-now-title">${escapeHtml(nowTitle)}</p>
+        <p class="subtle">For every student without an exception below. Paid courses always play only on the device they were activated on.</p>
+      </div>
+    </div>
+
+    <section class="admin-device-limit-card">
+      <h4 class="admin-settings-section-title">For everyone</h4>
+      <div class="admin-settings-row">
+        <div class="admin-settings-row-text">
+          <p class="admin-settings-row-title">Limit devices for everyone</p>
+          <p class="admin-settings-row-desc">Off: no limit, unless a student's university, organization or own setting has one.</p>
+        </div>
+        <div class="admin-settings-row-control">
+          <label class="toggle-switch-label">
+            <input type="checkbox" class="toggle-switch-input" data-device-limit-enabled aria-label="Limit devices for everyone" ${settings.limit_enabled ? "checked" : ""} ${disabled} />
+            <span class="toggle-switch-track" aria-hidden="true"><span class="toggle-switch-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+      ${settings.limit_enabled ? `
+        <div class="admin-settings-row">
+          <div class="admin-settings-row-text">
+            <p class="admin-settings-row-title">Devices per student</p>
+          </div>
+          <div class="admin-settings-row-control admin-device-limit-stepper">
+            <button class="btn ghost admin-btn-sm" type="button" data-action="device-limit-step" data-step="-1" aria-label="One fewer device" ${settings.device_limit <= 1 ? "disabled" : disabled}>−</button>
+            <span class="admin-device-limit-value">${settings.device_limit}</span>
+            <button class="btn ghost admin-btn-sm" type="button" data-action="device-limit-step" data-step="1" aria-label="One more device" ${settings.device_limit >= ADMIN_DEVICE_LIMIT_MAX ? "disabled" : disabled}>+</button>
+          </div>
+        </div>
+      ` : ""}
+    </section>
+
+    <section class="admin-device-limit-card">
+      <h4 class="admin-settings-section-title">Exceptions</h4>
+      <p class="subtle">Universities, organizations and students with a setting of their own. When a student's university and organizations disagree, the strictest wins.</p>
+      ${exceptions.length
+        ? `<ul class="admin-device-limit-exceptions">${exceptionRows}</ul>`
+        : `<p class="subtle">No exceptions. Every student follows the setting above.</p>`}
+      ${addForm}
+    </section>
+
+    <section class="admin-device-limit-card">
+      <h4 class="admin-settings-section-title">Older app versions</h4>
+      <div class="admin-settings-row">
+        <div class="admin-settings-row-text">
+          <p class="admin-settings-row-title">Allow older app versions</p>
+          <p class="admin-settings-row-desc">Older versions do not say which device they are, so they always stay at one device. While this is on, they still play courses for a student with one device. Turn it off once everyone has updated.</p>
+        </div>
+        <div class="admin-settings-row-control">
+          <label class="toggle-switch-label">
+            <input type="checkbox" class="toggle-switch-input" data-device-limit-older aria-label="Allow older app versions" ${settings.allow_older_builds ? "checked" : ""} ${disabled} />
+            <span class="toggle-switch-track" aria-hidden="true"><span class="toggle-switch-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="admin-device-limit-card">
+      <h4 class="admin-settings-section-title">How it is decided</h4>
+      <ol class="admin-device-limit-steps">
+        <li>The student's own setting, if they have one.</li>
+        <li>Otherwise the strictest of their university and organizations.</li>
+        <li>Otherwise the setting for everyone.</li>
+      </ol>
+      <p class="subtle">Admins, creators and exempt accounts have no limit.</p>
+    </section>
+  `;
+}
+
+function paintAdminDeviceLimit() {
+  const body = appEl.querySelector("[data-device-limit-body]");
+  if (!body) {
+    return;
+  }
+  body.innerHTML = renderAdminDeviceLimitBody();
+  bindAdminDeviceLimitBody(body);
+}
+
+async function loadAdminDeviceLimit() {
+  const page = adminDeviceLimitPage;
+  const client = getSupabaseAuthClient();
+  if (page.loading) {
+    return;
+  }
+  if (!client) {
+    page.error = "Supabase is not connected.";
+    paintAdminDeviceLimit();
+    return;
+  }
+  page.loading = true;
+  try {
+    const [settings, universityRules, organizationRules, studentRules, universities, organizations] = await Promise.all([
+      client.from("device_access_settings").select("limit_enabled, device_limit, allow_older_builds").single(),
+      client.from("universities").select("id, name, device_limit_mode, device_limit").neq("device_limit_mode", "inherit").order("name"),
+      client.from("organizations").select("id, name, device_limit_mode, device_limit").neq("device_limit_mode", "inherit").order("name"),
+      // Two foreign keys point at profiles (user_id, updated_by).
+      client.from("user_device_limits").select("user_id, device_limit_mode, device_limit, profiles:profiles!user_device_limits_user_id_fkey(full_name, email)"),
+      client.from("universities").select("id, name").order("name"),
+      client.from("organizations").select("id, name").order("name"),
+    ]);
+    const failed = [settings, universityRules, organizationRules, studentRules, universities, organizations].find((result) => result.error);
+    if (failed) {
+      throw failed.error;
+    }
+    const rule = (scope, id, name, row) => ({
+      scope,
+      id,
+      name: String(name || "").trim(),
+      mode: row.device_limit_mode === "custom" ? "custom" : "off",
+      limit: row.device_limit,
+    });
+    const students = (studentRules.data || [])
+      .map((row) => rule(
+        "student",
+        row.user_id,
+        String(row.profiles?.full_name || "").trim() || row.profiles?.email,
+        row
+      ))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    page.data = {
+      settings: {
+        limit_enabled: settings.data?.limit_enabled !== false,
+        device_limit: Number(settings.data?.device_limit) || 1,
+        allow_older_builds: settings.data?.allow_older_builds !== false,
+      },
+      exceptions: [
+        ...(universityRules.data || []).map((row) => rule("university", row.id, row.name, row)),
+        ...(organizationRules.data || []).map((row) => rule("organization", row.id, row.name, row)),
+        ...students,
+      ],
+      universities: universities.data || [],
+      organizations: organizations.data || [],
+    };
+    page.error = "";
+    page.loadedAt = Date.now();
+  } catch (error) {
+    page.error = error?.message || "Could not load the device limit.";
+  } finally {
+    page.loading = false;
+  }
+  paintAdminDeviceLimit();
+}
+
+// One write, then a fresh read. Returns false when the write failed.
+async function runAdminDeviceLimitWrite(write, doneMessage) {
+  const page = adminDeviceLimitPage;
+  const client = getSupabaseAuthClient();
+  if (!client || page.busy) {
+    return false;
+  }
+  page.busy = true;
+  paintAdminDeviceLimit();
   let errorMessage = "";
   try {
-    const { error } = await client.from("user_devices").delete().eq("user_id", context.profileId);
+    const { error } = await write(client);
     if (error) {
-      errorMessage = error.message || "Could not release the device.";
+      errorMessage = error.message || "Could not save the change.";
     }
   } catch (error) {
-    errorMessage = error?.message || "Could not release the device.";
+    errorMessage = error?.message || "Could not save the change.";
   }
-  if (errorMessage) {
-    toast(errorMessage);
-    if (token === adminUserDeviceDialogToken) {
-      button.disabled = false;
-      button.classList.remove("is-loading");
-    }
+  page.busy = false;
+  toast(errorMessage || doneMessage);
+  await loadAdminDeviceLimit();
+  return !errorMessage;
+}
+
+async function saveAdminDeviceLimitSettings(next) {
+  const current = adminDeviceLimitPage.data?.settings;
+  if (!current) {
     return;
   }
-  toast("Device released.");
-  if (token === adminUserDeviceDialogToken) {
-    loadAdminUserDeviceIntoDialog(context);
+  const lowers = next.limit_enabled && (!current.limit_enabled || next.device_limit < current.device_limit);
+  if (lowers) {
+    const client = getSupabaseAuthClient();
+    let over = 0;
+    try {
+      const { data } = await client.rpc("admin_count_students_over_device_limit", { p_limit: next.device_limit });
+      over = Number(data) || 0;
+    } catch {
+      over = 0;
+    }
+    if (over > 0) {
+      const who = over === 1 ? "1 student already uses" : `${over} students already use`;
+      const confirmed = window.confirm(
+        `Lower the limit to ${next.device_limit}?\n\n${who} more devices than that. They keep them; only new devices are blocked.`
+      );
+      if (!confirmed) {
+        paintAdminDeviceLimit();
+        return;
+      }
+    }
+  }
+  await runAdminDeviceLimitWrite(
+    (client) => client.from("device_access_settings").update(next).eq("id", true),
+    "Device limit saved."
+  );
+}
+
+function bindAdminDeviceLimitBody(body) {
+  const page = adminDeviceLimitPage;
+  body.querySelector("[data-action='device-limit-retry']")?.addEventListener("click", () => {
+    loadAdminDeviceLimit();
+  });
+  const settings = page.data?.settings;
+  if (!settings) {
+    return;
+  }
+  body.querySelector("[data-device-limit-enabled]")?.addEventListener("change", (event) => {
+    saveAdminDeviceLimitSettings({ ...settings, limit_enabled: event.currentTarget.checked });
+  });
+  body.querySelector("[data-device-limit-older]")?.addEventListener("change", (event) => {
+    saveAdminDeviceLimitSettings({ ...settings, allow_older_builds: event.currentTarget.checked });
+  });
+  body.querySelectorAll("[data-action='device-limit-step']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = settings.device_limit + Number(button.getAttribute("data-step"));
+      if (next >= 1 && next <= ADMIN_DEVICE_LIMIT_MAX) {
+        saveAdminDeviceLimitSettings({ ...settings, device_limit: next });
+      }
+    });
+  });
+  body.querySelectorAll("[data-action='device-limit-exception-remove']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const entry = page.data.exceptions[Number(button.closest("[data-exception-index]")?.getAttribute("data-exception-index"))];
+      if (!entry || entry.scope === "student") {
+        return;
+      }
+      if (!window.confirm(`Remove the exception for ${entry.name}?\n\nIts students will follow the setting for everyone again.`)) {
+        return;
+      }
+      const table = entry.scope === "university" ? "universities" : "organizations";
+      runAdminDeviceLimitWrite(
+        (client) => client.from(table).update({ device_limit_mode: "inherit", device_limit: null }).eq("id", entry.id),
+        "Exception removed."
+      );
+    });
+  });
+  const addForm = body.querySelector("[data-device-limit-add]");
+  const modeSelect = addForm?.querySelector("select[name='mode']");
+  const limitInput = addForm?.querySelector("input[name='limit']");
+  modeSelect?.addEventListener("change", () => {
+    limitInput.hidden = modeSelect.value !== "custom";
+  });
+  addForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const [scope, id] = String(addForm.elements.target.value || "").split(":");
+    const mode = modeSelect.value === "off" ? "off" : "custom";
+    const limit = Math.round(Number(limitInput.value));
+    if (!id || (scope !== "university" && scope !== "organization")) {
+      return;
+    }
+    if (mode === "custom" && !(limit >= 1 && limit <= ADMIN_DEVICE_LIMIT_MAX)) {
+      toast(`Pick between 1 and ${ADMIN_DEVICE_LIMIT_MAX} devices.`);
+      return;
+    }
+    const table = scope === "university" ? "universities" : "organizations";
+    runAdminDeviceLimitWrite(
+      (client) => client.from(table)
+        .update({ device_limit_mode: mode, device_limit: mode === "custom" ? limit : null })
+        .eq("id", id),
+      "Exception added."
+    );
+  });
+}
+
+function wireAdminDeviceLimit() {
+  const body = appEl.querySelector("[data-device-limit-body]");
+  if (!body) {
+    return;
+  }
+  bindAdminDeviceLimitBody(body);
+  // Re-read whenever the page is opened again; a re-render within a few
+  // seconds keeps what it has.
+  if (!adminDeviceLimitPage.loading && Date.now() - adminDeviceLimitPage.loadedAt > 5000) {
+    loadAdminDeviceLimit();
   }
 }
 
@@ -61756,14 +62436,14 @@ function openAdminUserDeviceDialog(account) {
   wrapper.className = "admin-enrollment-picker-modal admin-user-device-modal";
   wrapper.dataset.adminUserDeviceDialog = "true";
   wrapper.innerHTML = `
-    <button class="admin-enrollment-picker-backdrop" type="button" data-device-dialog-close aria-label="Close registered device"></button>
+    <button class="admin-enrollment-picker-backdrop" type="button" data-device-dialog-close aria-label="Close registered devices"></button>
     <section class="admin-enrollment-picker-card admin-user-device-card" role="dialog" aria-modal="true" aria-labelledby="admin-user-device-title">
       <div class="admin-enrollment-picker-head">
         <div>
-          <h4 id="admin-user-device-title">Registered device</h4>
+          <h4 id="admin-user-device-title">Registered devices</h4>
           <p class="subtle">${escapeHtml(context.name)}</p>
         </div>
-        <button class="icon-btn" type="button" data-device-dialog-close aria-label="Close registered device">
+        <button class="icon-btn" type="button" data-device-dialog-close aria-label="Close registered devices">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
