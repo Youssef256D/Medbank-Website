@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-27 — Answers checked on the server (phase 1, not live yet)
+- The website and app now ask the server whether an answer is right and for
+  its explanation, instead of downloading every answer with the question
+  bank. Until the server replies, the answer shows "Checking…" rather than
+  right or wrong. Once enough students have the new app, a switch hides the
+  answers from the bank completely (phase 2), so they can't be read before
+  answering. Answers already given can't be changed afterwards, and each
+  student can see at most 2,500 new answers a day.
+
 ### 2026-10-27 — One set of design tokens; Figtree on the website
 - The website and the app now take their colours, corner radii, spacing and
   type scale from one file, so they can no longer drift apart. A check in CI
