@@ -21365,6 +21365,86 @@ small.admin-account-approval-gap {
   gap: 0.5rem;
 }
 
+/* Registered devices: one card per device, with the paid courses on it. */
+.admin-user-device-item {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+}
+
+.admin-user-device-name {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.admin-user-device-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.admin-user-device-courses {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.admin-user-device-place {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-user-device-place > span {
+  flex: 1 1 10rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-user-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-user-device-select {
+  min-height: 34px;
+  max-width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: inherit;
+}
+
+.admin-user-device-limit {
+  display: grid;
+  gap: 0.6rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.admin-user-device-limit-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.admin-user-device-limit-field[hidden] {
+  display: none;
+}
+
+.admin-user-device-limit-field > span {
+  font-weight: 600;
+}
+
 /* Opens from the topics window (.admin-course-topic-modal, z-index 20000). */
 .admin-enrollment-picker-modal.admin-topic-merge-modal {
   z-index: 20010;
