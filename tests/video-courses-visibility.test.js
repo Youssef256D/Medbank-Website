@@ -52,6 +52,7 @@ test("the shipped config and first paint hide public Video Courses surfaces", ()
 test("hidden landing and mobile renderers omit course marketing", () => {
   const context = vm.createContext({
     GOOGLE_PLAY_APP_URL: "https://example.test/app",
+    APP_STORE_APP_URL: "https://example.test/ios",
     getCurrentUser: () => null,
     isVideoCoursesHidden: () => true,
     landingMobileAppsSectionHtml: () => "mobile",

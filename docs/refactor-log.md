@@ -2,6 +2,17 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-30 — iOS app is on the App Store (TestFlight removed)
+Served files: `main.js`, `index.html`, `styles.css` (app-version `2026-10-30.01`).
+- `APP_STORE_APP_URL` (next to `GOOGLE_PLAY_APP_URL` in `main.js`) replaces
+  `TESTFLIGHT_APP_STORE_URL` / `TESTFLIGHT_INVITE_URL`. The mobile "get the app"
+  sheet now shows one App Store button (same `.map-store-btn` as Google Play);
+  the `.map-ios` / `.map-step-*` styles are gone.
+- The App Store card on the landing page (both `index.html` and the
+  `main.js` render) is now a live link; the URL is hardcoded in `index.html`
+  like the Google Play one. Only Huawei AppGallery is still "Coming soon".
+
+
 ### 2026-10-27 — Design tokens: one tokens.json for the website and the app; Figtree everywhere
 - `design-tokens/tokens.json` now owns the colours of all three themes, radii,
   spacing, the type scale and the font. `design-tokens/generate.mjs` (no
@@ -898,8 +909,7 @@ Google Play, plus the two-step TestFlight flow (`TESTFLIGHT_APP_STORE_URL`,
 - English/Arabic switch inside the sheet (`MOBILE_APP_PROMPT_COPY`); defaults to
   Arabic when `navigator.language` is Arabic, choice kept in localStorage
   `mcq_mobile_app_prompt_lang`. Arabic renders with `dir="rtl"` on the sheet only.
-- If the TestFlight invite link changes or the iOS app goes public, update the two
-  constants (and the "Coming soon" App Store card on the landing page).
+- iOS now links to the App Store, not TestFlight (see the 2026-10-30 entry).
 
 ### 2026-10-05 — Clear message when Supabase restricts the project (HTTP 402)
 Served files: `universities-utils.js`, `index.html` (app-version `2026-10-05.01`).

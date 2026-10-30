@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-30 — iPhone app links go to the App Store
+- The "get the app" sheet on phones and the landing page now link iPhone and
+  iPad users to MedBank on the App Store instead of the TestFlight beta.
+
 ### 2026-10-27 — One set of design tokens; Figtree on the website
 - The website and the app now take their colours, corner radii, spacing and
   type scale from one file, so they can no longer drift apart. A check in CI
