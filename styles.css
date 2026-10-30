@@ -23490,8 +23490,7 @@ body.theme-dark {
   display: grid;
   gap: 10px;
 }
-.map-store-btn,
-.map-ios {
+.map-store-btn {
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface-soft);
@@ -23526,53 +23525,6 @@ body.theme-dark {
 .map-store-copy small { font-size: 12px; color: var(--muted); }
 .map-store-copy strong { font-size: 17px; font-weight: 700; }
 .map-store-arrow { margin-inline-start: auto; font-size: 20px; opacity: 0.8; }
-.map-ios { padding: 12px 14px; }
-.map-ios.is-primary { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
-.map-ios-head { display: flex; align-items: center; gap: 12px; }
-.map-ios-steps {
-  display: grid;
-  gap: 8px;
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.map-ios-steps li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  line-height: 1.35;
-}
-.map-step-num {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--brand-soft);
-  color: var(--brand);
-  font-size: 13px;
-  font-weight: 700;
-}
-.map-step-text { flex: 1; min-width: 0; color: var(--ink); }
-.map-step-btn {
-  flex: none;
-  min-width: 64px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 700;
-  text-align: center;
-  text-decoration: none;
-}
-.map-step-btn.is-strong {
-  background: var(--brand-strong);
-  border-color: transparent;
-  color: #fff;
-}
 .map-skip {
   display: block;
   width: 100%;
@@ -23588,19 +23540,15 @@ body.theme-dark {
 }
 .map-close:focus-visible,
 .map-skip:focus-visible,
-.map-store-btn:focus-visible,
-.map-step-btn:focus-visible {
+.map-store-btn:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 body.theme-dark .map-eyebrow,
-body.theme-dark .map-store-icon,
-body.theme-dark .map-step-num { color: var(--ink); }
-body.theme-dark .map-store-btn.is-primary,
-body.theme-dark .map-step-btn.is-strong { background: #f5f5f5; color: #111; }
+body.theme-dark .map-store-icon { color: var(--ink); }
+body.theme-dark .map-store-btn.is-primary { background: #f5f5f5; color: #111; }
 body.theme-dark .map-store-btn.is-primary .map-store-copy small { color: rgba(0, 0, 0, 0.6); }
 body.theme-dark .map-store-btn.is-primary .map-store-icon { background: rgba(0, 0, 0, 0.08); color: #111; }
-body.theme-dark .map-ios.is-primary { border-color: var(--line-strong); box-shadow: none; }
 body.theme-dark .map-lang button[aria-pressed="true"] { background: #f5f5f5; color: #111; }
 @media (min-width: 640px) {
   .map-root { align-items: center; }

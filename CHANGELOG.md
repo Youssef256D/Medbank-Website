@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-30 — iPhone app links go to the App Store
+- The "get the app" sheet on phones and the landing page now link iPhone and
+  iPad users to MedBank on the App Store instead of the TestFlight beta.
+
 ### 2026-10-27 — Audit clean-up
 - Old copies of the user list (with two plain-text passwords) are deleted.
 - Small database fixes: a missing index, two unused indexes removed, coupons

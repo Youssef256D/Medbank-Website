@@ -25526,11 +25526,10 @@ function landingMcqBankSectionHtml() {
   `;
 }
 
-// Public Google Play listing for the released Android app. The iOS and Huawei
-// builds are not published yet, so their store cards stay non-clickable.
+// Public store listings for the released Android and iOS apps. The Huawei
+// build is not published yet, so its store card stays non-clickable.
 const GOOGLE_PLAY_APP_URL = "https://play.google.com/store/apps/details?id=medbank.com";
-const TESTFLIGHT_APP_STORE_URL = "https://apps.apple.com/eg/app/testflight/id899247664";
-const TESTFLIGHT_INVITE_URL = "https://testflight.apple.com/join/XzrwmE3k";
+const APP_STORE_APP_URL = "https://apps.apple.com/eg/app/medbank-app/id6798856406";
 // "Not now" hides the mobile app prompt for this long; it is a suggestion, not a gate.
 const MOBILE_APP_PROMPT_DISMISS_KEY = "mcq_mobile_app_prompt_dismissed_at";
 const MOBILE_APP_PROMPT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -25578,11 +25577,7 @@ const MOBILE_APP_PROMPT_COPY = {
     title: "MedBank works best in the app",
     desc: "Faster sessions, a layout made for your phone, and your progress synced with this account. Same login, nothing to lose.",
     androidSmall: "Android · Get it on",
-    iosSmall: "iPhone · iPad · beta via",
-    step1: "Install TestFlight from the App Store",
-    step1Btn: "Get",
-    step2: "Open the invite, then tap Accept &amp; Install",
-    step2Btn: "Join",
+    iosSmall: "iPhone · iPad · Download on the",
     skip: "Continue in browser",
     close: "Close",
     arrow: "&rarr;",
@@ -25593,11 +25588,7 @@ const MOBILE_APP_PROMPT_COPY = {
     title: "MedBank أحسن على التطبيق",
     desc: "جلسات أسرع، وتصميم معمول لموبايلك، وتقدّمك متزامن مع نفس الحساب. نفس تسجيل الدخول، ومش هتخسر حاجة.",
     androidSmall: "أندرويد · حمّله من",
-    iosSmall: "آيفون · آيباد · نسخة تجريبية عن طريق",
-    step1: "حمّل تطبيق TestFlight من الـ App Store",
-    step1Btn: "تحميل",
-    step2: "افتح لينك الدعوة واضغط Accept / Install",
-    step2Btn: "انضم",
+    iosSmall: "آيفون · آيباد · حمّله من",
     skip: "كمّل على المتصفح",
     close: "إغلاق",
     arrow: "&larr;",
@@ -25628,26 +25619,13 @@ function mobileAppPromptAndroidHtml(t, primary) {
 
 function mobileAppPromptIosHtml(t, primary) {
   return `
-    <div class="map-ios${primary ? " is-primary" : ""}">
-      <div class="map-ios-head">
-        <span class="map-store-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="2.8" width="14" height="18.4" rx="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M10 18h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </span>
-        <span class="map-store-copy"><small>${t.iosSmall}</small><strong>TestFlight</strong></span>
-      </div>
-      <ol class="map-ios-steps">
-        <li>
-          <span class="map-step-num" aria-hidden="true">1</span>
-          <span class="map-step-text">${t.step1}</span>
-          <a class="map-step-btn" href="${TESTFLIGHT_APP_STORE_URL}" target="_blank" rel="noopener noreferrer" data-map-store="testflight">${t.step1Btn}</a>
-        </li>
-        <li>
-          <span class="map-step-num" aria-hidden="true">2</span>
-          <span class="map-step-text">${t.step2}</span>
-          <a class="map-step-btn is-strong" href="${TESTFLIGHT_INVITE_URL}" target="_blank" rel="noopener noreferrer" data-map-store="ios">${t.step2Btn}</a>
-        </li>
-      </ol>
-    </div>
+    <a class="map-store-btn${primary ? " is-primary" : ""}" href="${APP_STORE_APP_URL}" target="_blank" rel="noopener noreferrer" data-map-store="ios">
+      <span class="map-store-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="2.8" width="14" height="18.4" rx="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M10 18h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </span>
+      <span class="map-store-copy"><small>${t.iosSmall}</small><strong>App Store</strong></span>
+      <span class="map-store-arrow" aria-hidden="true">${t.arrow}</span>
+    </a>
   `;
 }
 
@@ -25741,7 +25719,7 @@ function landingMobileAppsSectionHtml() {
         <div class="lp-app-brandline">
           <img class="lp-app-icon" src="Assets/mobile-app/medbank-app-icon.png" alt="" width="96" height="96" loading="lazy" decoding="async" />
           <div>
-            <p class="lp-launch-status"><span aria-hidden="true"></span> Android app · Out now on Google Play</p>
+            <p class="lp-launch-status"><span aria-hidden="true"></span> Out now on Google Play &amp; the App Store</p>
           </div>
         </div>
         <h2 class="lp-mobile-title">Your complete medical study loop, now built for mobile.</h2>
@@ -25763,13 +25741,13 @@ function landingMobileAppsSectionHtml() {
             <span class="lp-store-platform"><span class="lp-store-live-dot" aria-hidden="true"></span>Available now</span>
           </a>
 
-          <div class="lp-store-card" aria-label="Coming soon on the App Store for iPhone and iPad">
+          <a class="lp-store-card is-live" href="${APP_STORE_APP_URL}" target="_blank" rel="noopener noreferrer" aria-label="Download MedBank on the App Store for iPhone and iPad. Opens the App Store in a new tab.">
             <span class="lp-store-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="2.8" width="14" height="18.4" rx="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M9.2 16.2 12 7.8l2.8 8.4M10.1 13.4h3.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </span>
-            <span class="lp-store-copy"><small>Coming soon on the</small><strong>App Store</strong></span>
-            <span class="lp-store-platform">iPhone · iPad</span>
-          </div>
+            <span class="lp-store-copy"><small>Download on the</small><strong>App Store</strong></span>
+            <span class="lp-store-platform"><span class="lp-store-live-dot" aria-hidden="true"></span>iPhone · iPad</span>
+          </a>
 
           <div class="lp-store-card" aria-label="Coming soon on Huawei AppGallery">
             <span class="lp-store-icon" aria-hidden="true">
@@ -25779,7 +25757,7 @@ function landingMobileAppsSectionHtml() {
             <span class="lp-store-platform">Huawei devices</span>
           </div>
         </div>
-        <p class="lp-app-access-note">Free on Google Play · No ads or in-app purchases · Student access requires administrator approval.</p>
+        <p class="lp-app-access-note">Free on Google Play and the App Store · No ads or in-app purchases · Student access requires administrator approval.</p>
       </div>
 
       <div class="lp-app-showcase">
