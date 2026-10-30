@@ -198,6 +198,11 @@ route, or file you are touching; add your own entry at the top when you finish.
 - **Never let the `g:mcq_curriculum` / `g:mcq_course_topics` / `g:mcq_questions`
   app_state blobs merge back into live data** unless the DB is confirmed empty;
   they are stale since 2026-06-13 and resurrect deleted content (2026-10-13).
+- **`app_state` reads are an allow-list.** A new `g:` key that students or
+  signed-out visitors must read has to be added to
+  `app_state_select_authenticated` / `_anon` (and to
+  `supabase/tests/rls_signed_in.sql`); only admins write `g:` keys
+  (2026-10-27).
 - **Topic renames must not set `deleteQuestions`** on the pending topic-deletion
   queue; only real deletes do. The flag makes the sync hard-delete every DB
   question still on that topic (2026-10-13).
@@ -228,7 +233,7 @@ route, or file you are touching; add your own entry at the top when you finish.
 - **Tests slice `main.js` by function name** (`renderAdminSidebarNav`,
   `matchesAdminUserFilters`) — renaming or moving those silently breaks tests.
 - **Never deploy `send-push-notification` from this repo** (deployed copy is newer,
-  Flutter repo); `dispatch-notification-pushes` has no source here.
+  Flutter repo); `dispatch-notification-pushes` lives in the Flutter repo too.
 - **`index.html` first-paint fallback mirrors SPA markup** (landing, store cards,
   dark-mode guard) — edit both; recompute CSP hashes after inline-script edits,
   masking HTML comments first (2026-09-10).

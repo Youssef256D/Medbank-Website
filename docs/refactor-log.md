@@ -12,6 +12,87 @@ Served files: `main.js`, `index.html`, `styles.css` (app-version `2026-10-30.01`
   `main.js` render) is now a live link; the URL is hardcoded in `index.html`
   like the Google Play one. Only Huawei AppGallery is still "Coming soon".
 
+### 2026-10-27 — Signed-in RLS check
+- `supabase/tests/rls_signed_in.sql` (`npm run check:rls`, in CI via
+  `build/check-rls.mjs` and the Management API): inside a transaction that
+  always rolls back, sets `request.jwt.claims` to a real approved student, an
+  unapproved student and an admin, and checks app_state allow-list and writes,
+  other users' profiles/history/blocks/enrollments, unpublished questions,
+  self-promotion to admin and self-approval. Passes on 2026-10-27; a
+  mutated copy fails as expected.
+- When adding a `g:` key students read, add it to `student_readable_globals`
+  in that file too.
+- Note: 2 unapproved students have `mcq_access_enabled = true`; they still
+  read no questions (approval gates it).
+
+### 2026-10-27 — Migration drift check
+- `build/check-migration-drift.mjs` (`npm run check:migrations`, in CI):
+  compares `supabase/migrations/` with the hosted ledger (Management API,
+  `SUPABASE_ACCESS_TOKEN` secret; `--ledger <file>` for offline runs; skipped
+  when neither is given). Fails on a version applied but not committed, or
+  committed but not applied.
+- `supabase/migration-drift-allowlist.json` lists the 14 versions applied from
+  the Medbank-App repo and `20260909101500` (unapplied on purpose). Add to it
+  when a migration is applied from the app repo.
+- On 2026-10-27 it flags only `20261027130000` and `20261027140000` (applied,
+  in open PRs #54/#55); merging those clears it.
+
+### 2026-10-27 — Audit follow-ups (everything except billing)
+- `20261027120100_delete_legacy_app_state_user_blobs`: deletes `mcq_users` /
+  `g:mcq_users` (legacy user lists, two plain-text passwords). No rollback on
+  purpose. `g:mcq_questions`, `g:mcq_curriculum`, `g:mcq_course_topics` and
+  `g:mcq_system_logs` are kept (admin-only after the lockdown) because
+  `restoreAdminContentFromSupabaseBackupIfNeeded` still reads the first three.
+- `20261027120200_db_hygiene` (+ rollback): index on
+  `question_reports.resolved_by`; drops unused `idx_profiles_role_approved`
+  and `idx_profiles_role_approved_mcq`; PK `(version, question_id)` on
+  `private.question_change_log`; coupon `created_by`/`disabled_by` FKs now
+  `ON DELETE SET NULL` (deleting an admin who made coupons used to fail;
+  `created_by` is nullable now); `popup-images` limited to 5 MB images; crons
+  `prune-cron-run-details` (14 days) and `purge-deleted-accounts-archive`
+  (90 days, as `docs/legal/deletion.md` promises).
+- Checked, no change needed: every SECURITY DEFINER RPC the advisor lists
+  checks its caller (directly or through a guarded `private.*` helper).
+- Not done, needs a decision: 2 published questions with ≠1 correct choice
+  (`9a122e93-…`, `294c974f-…`, Elective 3; 58 drafts too), so no
+  one-correct-choice constraint yet; 108 phone numbers shared by >1 profile,
+  so no UNIQUE on phone; `test_history_entries.payload.questionSnapshots`
+  (~85 kB/test, 322 MB total) kept — the owner asked to approve any
+  compaction first.
+- The 20-day history docs were stale (history is permanent since
+  `20260716151050`): fixed `docs/legal/privacy.md`, `docs/legal/deletion.md`,
+  `docs/ARCHITECTURE.md`, and the app's English strings (Medbank-App branch
+  `claude/history-is-permanent-copy`; Arabic was already right).
+- `dispatch-notification-pushes` source is in the Flutter repo (checked
+  byte-identical to the deployed one); CLAUDE.md/AGENTS.md said it was lost.
+- CI now runs `npm test` and `npm run check:anon`
+  (`build/check-anon-access.mjs`: signed-out GETs against the hosted project;
+  fails if `app_state` returns any key besides the two public ones, or if any
+  of 9 protected tables returns rows). **It fails until
+  20261027120000 is applied.**
+- Removed unused `framer-motion`; new `docs/backup-restore-runbook.md`.
+
+### 2026-10-27 — app_state locked down (migration 20261027120000)
+- Before: `app_state_*_anon` and `app_state_*_authenticated` let anyone (anon
+  key, no session) read and write every `g:%` key and the legacy raw keys,
+  including the frozen `g:mcq_questions` backup, `g:mcq_users`/`mcq_users`
+  and `g:mcq_system_logs`.
+- Now: anon reads only `g:mcq_site_maintenance` and `g:support_whatsapp`;
+  signed-in users read those plus `g:mcq_course_topic_groups`,
+  `g:mcq_course_notebook_links`, `g:mcq_topic_new_catalog`,
+  `g:mcq_auto_approve_student_access`, `g:mcq_student_refresh_trigger` and
+  their own `u:<uid>:*` rows; only admins (`private.is_admin_user()`) read the
+  rest or write any `g:%`/legacy key. The three restrictive key guards stay.
+- The read list is the website's signed-in hydrate list (search
+  `STORAGE_KEYS.studentRefreshTrigger,` near `loadCoursesComingSoonFlag`) plus
+  the support number; the Flutter app reads only maintenance, support number
+  and notebook links. **A new global key a student must read needs adding to
+  `app_state_select_authenticated`**, or it silently comes back empty.
+- Students already never wrote global keys (`scheduleSupabaseWrite` returns
+  early for students on non-user-scoped keys). The student fallback
+  `hydrateQuestionsFromSupabaseBackup` now gets nothing, by design (stale
+  2026-06-13 data). Edge Functions use the service role and are unaffected.
+- Rollback: `supabase/rollbacks/20261027120000_lock_down_app_state.down.sql`.
 
 ### 2026-10-27 — Design tokens: one tokens.json for the website and the app; Figtree everywhere
 - `design-tokens/tokens.json` now owns the colours of all three themes, radii,

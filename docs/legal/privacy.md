@@ -120,9 +120,8 @@ Active account, enrollment, course-progress, and study records are kept while
 the account is in use. After a verified account-deletion request, active account
 data is normally deleted within 30 days.
 
-Previous-test history is automatically limited to the most recent 20 days.
-Older previous-test entries are pruned from hosted history and matching session
-backup payloads.
+Previous-test history is kept for as long as the account exists, so you can
+review past tests and results. It is deleted with the account.
 
 Limited support, security, fraud-prevention, audit, legal, and residual backup
 records may be retained for up to 90 days after deletion, then deleted or

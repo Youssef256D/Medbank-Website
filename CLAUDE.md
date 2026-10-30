@@ -102,17 +102,25 @@ rest of this section dates from 2026-06-30.
   Once applied, every new admin table/page needs an area (AGENTS.md entry).
 - **Edge Functions:** 12 are deployed (checked 2026-09-30), 9 have source in
   `supabase/functions/`. No source here: `dispatch-notification-pushes`,
-  `delete-my-account`, `verify-play-integrity`; and the deployed
-  `send-push-notification` is newer than the repo copy (Flutter repo). Do not
-  deploy that one from here.
-  `dispatch-notification-pushes` (called every minute by the
-  `dispatch-notification-pushes` cron job) is deployed with **no source in the
-  repo** — recover it before changing anything in that path.
+  `delete-my-account`, `verify-play-integrity`, `sign-in-with-phone` — their
+  source is in the Flutter repo (`Medbank-App/supabase/functions/`); the
+  deployed `dispatch-notification-pushes` was checked byte-identical to it on
+  2026-10-27. The deployed `send-push-notification` is newer than the copy
+  here (Flutter repo has the current one). Deploy these from the Flutter repo,
+  never from here.
 - **Course Platform (LMS):** live — 9 platform tables, 1 published course.
 - **Hermes AI agent:** removed 2026-10-19 (owner decision) — page, the
   `admin-agent-tool` Edge Function and the four `admin_agent*` tables
   (migration `20261019200000_drop_hermes_admin_agent`). Do not rebuild it.
 - **Cloudflare Stream:** parked (`cloudflareStreamEnabled: false`, pending
   billing); Edge Functions deployed, app falls back to Supabase Storage video.
-- `framer-motion` in `package.json` is unused — safe to remove. See
+- `framer-motion` removed from `package.json` 2026-10-27. See
   `docs/ARCHITECTURE.md` §7 for the follow-up list.
+- **Backups / restore:** `docs/backup-restore-runbook.md`.
+- **CI** runs `npm test`, `npm run check:anon` (signed-out callers must not
+  read paid content or user data on the hosted project) and
+  `npm run check:migrations` (repo vs. hosted ledger) and `npm run check:rls`
+  (`supabase/tests/rls_signed_in.sql`: acts as a real student, an unapproved
+  student and an admin, always rolls back). The last two need the
+  `SUPABASE_ACCESS_TOKEN` repo secret and are skipped without it. A migration
+  applied from the Flutter repo goes in `supabase/migration-drift-allowlist.json`.

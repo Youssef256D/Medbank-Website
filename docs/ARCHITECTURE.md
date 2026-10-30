@@ -60,7 +60,10 @@ deploy path — the committed `index.html`, `main.js`, `bootstrap.js`,
 - **Student dashboard & analytics** — topic accuracy, weak areas, retry queues.
 - **Notifications** — in-app, read tracking, realtime.
 - **Offline/cache sync** — `app_state` backup + localStorage fallback + retry queue.
-- **Previous-test 20-day retention** — Supabase cron + write guard + frontend filter.
+- **Previous-test history** — permanent since 2026-07-16
+  (`20260716151050_make_test_history_permanent`); the old 20-day prune cron
+  and write guard are gone. `delete_old_test_history_entries` still exists,
+  unscheduled.
 - **Admin portal** — users, courses, questions, bulk import, site-access, activity/logs.
 
 - **Course Platform (LMS)** — live. 9 hosted tables (`platform_courses`,
@@ -122,7 +125,7 @@ deploy path — the committed `index.html`, `main.js`, `bootstrap.js`,
 
 ## 7. Priority-ranked fixes / follow-ups
 
-1. **Remove the stray `framer-motion` dependency** in `package.json` — GSAP (CDN) is the real animation runtime; this dep is unused and misleading.
+1. ~~Remove the stray `framer-motion` dependency~~ — done 2026-10-27.
 2. **Drop the `-local` suffix from `app-version` for production deploys** — code treats the string as opaque so it works, but `…-local` is documented as preview-only, so shipping it is misleading. Convention: `YYYY-MM-DD.NN-local` for preview, `YYYY-MM-DD.NN` for production.
 3. **Re-enable Cloudflare Stream when billing is available** — Edge Functions are deployed; just flip `cloudflareStreamEnabled` and complete integration testing.
 4. **Clarify `user_course_enrollments` vs. `platform_course_enrollments`** — the conditional `IF EXISTS` guards suggest ambiguity about which is the live enrollment path.
