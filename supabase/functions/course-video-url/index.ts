@@ -13,7 +13,7 @@ function cors(origin: string): HeadersInit {
   return {
     "Access-Control-Allow-Origin": origin && values.includes(origin) ? origin : values[0],
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-client-info",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-client-info, x-medbank-device",
     Vary: "Origin",
   };
 }
@@ -82,6 +82,17 @@ Deno.serve(async (request) => {
         admin.from("platform_course_module_entitlements").select("module_id").eq("user_id", actorId).eq("module_id", lesson.module_id).maybeSingle(),
       ]);
       authorized = Boolean(full || entitlement);
+      // A paid lesson plays only on the device its course is on
+      // (20261029120000_devices_per_course). The app sends its install id
+      // in x-medbank-device; the service role skips RLS, so ask directly.
+      if (authorized) {
+        const { data: onDevice, error: deviceError } = await admin.rpc("course_device_allows_for", {
+          p_user: actorId,
+          p_course: lesson.course_id,
+          p_device: request.headers.get("x-medbank-device") || null,
+        });
+        authorized = !deviceError && onDevice === true;
+      }
     }
   }
   // The service role bypasses RLS, so the organization audience is asked

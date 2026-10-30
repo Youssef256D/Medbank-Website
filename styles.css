@@ -5692,6 +5692,23 @@ body.theme-comfort .maintenance-badge {
   border-bottom: 1px solid var(--line);
 }
 
+/* Live activity: the table is fixed-layout, so without widths every column
+   got the same share and a long email ran under the Role badge. The user
+   column gets the room, and an email or page path too long for its cell
+   wraps inside it. */
+.admin-activity-table th:nth-child(1) { width: 28%; }
+.admin-activity-table th:nth-child(2),
+.admin-activity-table th:nth-child(3) { width: 11%; }
+.admin-activity-table th:nth-child(4) { width: 18%; }
+.admin-activity-table th:nth-child(5),
+.admin-activity-table th:nth-child(6) { width: 10%; }
+.admin-activity-table th:nth-child(7) { width: 12%; }
+
+.admin-activity-table td:nth-child(1),
+.admin-activity-table td:nth-child(4) {
+  overflow-wrap: anywhere;
+}
+
 .admin-users-filter-form {
   display: grid;
   gap: 0.72rem;
@@ -8527,17 +8544,21 @@ table {
   max-width: 260px;
 }
 
+/* A long topic name wraps inside its column; kept on one line it ran over
+   the Mode and Score columns beside it. */
 .previous-test-chip {
   display: inline-flex;
   max-width: 100%;
   align-items: center;
-  border-radius: 999px;
+  border-radius: 0.7rem;
   padding: 0.2rem 0.48rem;
   background: var(--brand-soft);
   color: var(--brand-strong);
   font-size: 0.74rem;
   font-weight: 700;
-  white-space: nowrap;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .previous-test-chip.is-muted {
@@ -21342,6 +21363,240 @@ small.admin-account-approval-gap {
   display: grid;
   justify-items: start;
   gap: 0.5rem;
+}
+
+/* Registered devices: one card per device, with the paid courses on it. */
+.admin-user-device-item {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+}
+
+.admin-user-device-name {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.admin-user-device-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.admin-user-device-courses {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.admin-user-device-place {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-user-device-place > span {
+  flex: 1 1 10rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-user-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-user-device-select {
+  min-height: 34px;
+  max-width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: inherit;
+}
+
+.admin-user-device-limit {
+  display: grid;
+  gap: 0.6rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.admin-user-device-limit-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.admin-user-device-limit-field[hidden] {
+  display: none;
+}
+
+.admin-user-device-limit-field > span {
+  font-weight: 600;
+}
+
+/* Device limit page: one card per job, in reading order. */
+.admin-device-limit-body {
+  display: grid;
+  gap: 1rem;
+  max-width: 760px;
+}
+
+.admin-device-limit-body p {
+  margin: 0;
+}
+
+.admin-device-limit-now {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-device-limit-now-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.admin-device-limit-now-title {
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.admin-device-limit-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-device-limit-card .admin-settings-section-title {
+  margin: 0;
+}
+
+.admin-device-limit-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-device-limit-value {
+  min-width: 2ch;
+  text-align: center;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.admin-device-limit-exceptions {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-device-limit-exception {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.admin-device-limit-exception:first-child {
+  border-top: 0;
+}
+
+.admin-device-limit-exception-text {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+.admin-device-limit-exception-name {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.admin-device-limit-pill {
+  display: inline-block;
+  margin-inline-start: 0.4rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-device-limit-pill.is-off {
+  background: rgba(244, 162, 89, 0.2);
+  color: var(--ink);
+}
+
+.admin-device-limit-add {
+  display: grid;
+  gap: 0.45rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--line);
+}
+
+.admin-device-limit-label {
+  font-weight: 600;
+}
+
+.admin-device-limit-add-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.admin-device-limit-add-fields select {
+  flex: 1 1 12rem;
+}
+
+.admin-device-limit-number {
+  width: 5.5rem;
+}
+
+.admin-device-limit-number[hidden] {
+  display: none;
+}
+
+.admin-device-limit-steps {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-inline-start: 1.25rem;
 }
 
 /* Opens from the topics window (.admin-course-topic-modal, z-index 20000). */

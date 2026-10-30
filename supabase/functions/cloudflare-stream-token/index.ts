@@ -18,7 +18,7 @@ function buildCorsHeaders(requestOrigin: string): HeadersInit {
   const configured = parseAllowedOrigins();
   const base: Record<string, string> = {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-client-info",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-client-info, x-medbank-device",
   };
   // CORS never returns "*": parseAllowedOrigins() strips "*" and guarantees a non-empty allowlist.
   if (requestOrigin && configured.includes(requestOrigin)) {
@@ -174,6 +174,17 @@ Deno.serve(async (req) => {
             .maybeSingle(),
         ]);
         allowed = Boolean(enrollment || entitlement);
+        // A paid lesson plays only on the device its course is on
+        // (20261029120000_devices_per_course). The app sends its install id
+        // in x-medbank-device; the service role skips RLS, so ask directly.
+        if (allowed) {
+          const { data: onDevice, error: deviceError } = await adminClient.rpc("course_device_allows_for", {
+            p_user: actorId,
+            p_course: lesson.course_id,
+            p_device: req.headers.get("x-medbank-device") || null,
+          });
+          allowed = !deviceError && onDevice === true;
+        }
       }
     }
   }
