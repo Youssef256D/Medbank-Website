@@ -13,7 +13,10 @@
     "20261007120000": "Medbank-App: question_catalog_delta_sync",
     "20261007130000": "Medbank-App: question_catalog_delta_course_topic_changes",
     "20261019210000": "Medbank-App: creator_students",
-    "20261024120000": "Medbank-App: admin_action_log"
+    "20261024120000": "Medbank-App: admin_action_log",
+    "20261031120000": "Medbank-App: push_badge_counts",
+    "20261031150000": "Medbank-App: mcq_leaderboard",
+    "20261031170000": "Medbank-App: admin_mcq_leaderboard"
   },
   "unappliedOnPurpose": {
     "20260909101500": "add_student_auto_approval_feature_flag: the app upserts the flag row itself (refactor log 2026-09-09)"

@@ -45,6 +45,9 @@ function loadResults({ rpc } = {}) {
     canAdminAccessPage: () => true,
     getCurrentAdminAccess: () => null,
     adminAccessCan: () => true,
+    ensureUniversitiesLoaded: () => {},
+    getCachedUniversities: () => [{ id: 'uni-1', name: 'O6U' }],
+    getUniversityDisplayName: (id) => (id === 'uni-1' ? 'O6U' : ''),
   });
   vm.runInContext(
     [sliceFunction('escapeHtml'), sliceFunction('formatAdminCount'), sliceFunction('isUuidValue'), sliceFunction('toCsvCell'), mainSource.slice(blockStart, blockEnd)].join('\n'),
@@ -239,4 +242,57 @@ test('an export reads every page until a short one', async () => {
   assert.equal(rows.length, 413);
   assert.deepEqual(ctx.calls.map((call) => call.params.p_offset), [0, 200, 400]);
   assert.ok(ctx.calls.every((call) => call.params.p_limit === 200 && call.params.p_search === ''));
+});
+
+test('Leaderboard is a Results tab and its own sidebar entry', () => {
+  assert.match(mainSource, /\{ id: "leaderboard", label: "Leaderboard" \}/);
+  assert.match(mainSource, /\{ page: "results", resultsTab: "leaderboard", label: "Leaderboard" \}/);
+});
+
+test('leaderboard asks admin_get_mcq_leaderboard with the chosen class and links each student', async () => {
+  const ctx = loadResults({
+    rpc: () => Promise.resolve({
+      data: [
+        { rank: 1, user_id: 'u-1', full_name: 'Mariam <b>K</b>', university_id: 'uni-1', academic_year: 3, points: 42, is_hidden: true },
+        { rank: 2, user_id: 'u-2', full_name: 'Omar Hassan', university_id: 'uni-1', academic_year: 3, points: 7, is_hidden: false },
+      ],
+      error: null,
+    }),
+  });
+  const results = ctx.getAdminResultsState();
+  results.tab = 'leaderboard';
+  results.lbPeriod = 'all';
+  results.lbUniversity = 'uni-1';
+  results.lbYear = '3';
+  ctx.renderAdminResultsSection();
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.calls[0])), {
+    name: 'admin_get_mcq_leaderboard',
+    params: { p_university_id: 'uni-1', p_academic_year: 3, p_period: 'all', p_limit: 200 },
+  });
+  await flush();
+  const html = ctx.renderAdminResultsSection();
+  assert.match(html, /data-admin-results-student="u-1"/);
+  assert.match(html, /Mariam &lt;b&gt;K&lt;\/b&gt;/, 'names are escaped');
+  assert.match(html, /O6U · Year 3 · Name hidden from classmates/);
+  assert.match(html, />42</);
+  assert.doesNotMatch(html, /data-admin-results-filter="range"/, 'the results date filter does not apply here');
+});
+
+test('no university or year asks for everyone', () => {
+  const ctx = loadResults();
+  const results = ctx.getAdminResultsState();
+  results.tab = 'leaderboard';
+  ctx.renderAdminResultsSection();
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.calls[0].params)), {
+    p_university_id: null, p_academic_year: null, p_period: 'week', p_limit: 200,
+  });
+});
+
+test('a student opened from the leaderboard goes back to the leaderboard', () => {
+  const ctx = loadResults();
+  const results = ctx.getAdminResultsState();
+  results.tab = 'leaderboard';
+  results.returnTab = 'leaderboard';
+  ctx.openAdminResultsStudent('u-1');
+  assert.match(ctx.renderAdminResultsSection(), /‹ Leaderboard/);
 });

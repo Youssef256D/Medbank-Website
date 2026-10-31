@@ -2,6 +2,24 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-10-31 — MCQ leaderboard (students and admins)
+Served files: `main.js`, `index.html`, `styles.css` (app-version `2026-10-31.01`).
+- Ported from the Flutter app. Points live in the database: one per question
+  a student gets right for the first time (`mcq_correct_answers`, filled by a
+  trigger on `test_responses`). Migrations `20261031150000_mcq_leaderboard`
+  and `20261031170000_admin_mcq_leaderboard` live in the **Flutter repo** and
+  are applied; they are in `supabase/migration-drift-allowlist.json`.
+- Student dashboard: "Class leaderboard" (`renderDashboardLeaderboard`,
+  `get_mcq_leaderboard`, top 10 plus the student's own row), This week / All
+  time, and "Show my name to classmates" (`set_my_leaderboard_hidden`). An
+  empty answer means no class (no MCQ access, no university/year), and the
+  section is not shown.
+- Admin: a **Leaderboard** tab in Student results
+  (`renderAdminResultsLeaderboard`, `admin_get_mcq_leaderboard`), also its own
+  sidebar entry under People (`resultsTab` on the nav item). Full names, even
+  hidden ones (marked); clicking a name opens the student's results, and Back
+  returns to the leaderboard (`results.returnTab`).
+
 ### 2026-10-30 — iOS app is on the App Store (TestFlight removed)
 Served files: `main.js`, `index.html`, `styles.css` (app-version `2026-10-30.01`).
 - `APP_STORE_APP_URL` (next to `GOOGLE_PLAY_APP_URL` in `main.js`) replaces

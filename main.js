@@ -220,6 +220,8 @@ const ADMIN_NAV_GROUPS = [
     items: [
       { page: "users", label: "Users" },
       { page: "results", label: "Student results" },
+      // The Leaderboard tab of Student results, one click from the sidebar.
+      { page: "results", resultsTab: "leaderboard", label: "Leaderboard" },
       { page: "universities", label: "Universities" },
       { page: "organizations", label: "Organizations" },
       { page: "device-limit", label: "Device limit" },
@@ -28370,8 +28372,158 @@ function renderDashboard() {
       ${renderStudentLockedCoursesNotice(user, getLockedCoursesForUser(user, availableCourses))}
     </section>
 
+    ${renderDashboardLeaderboard(user)}
+
     ${renderPreviousTestsSection(user)}
   `;
+}
+
+// ── Class leaderboard (student dashboard) ───────────────────────────────
+// The same board as the app: the student's university and year, one point
+// per question answered right for the first time, this week (from Saturday
+// 00:00 Cairo) or all time. Ranking happens in get_mcq_leaderboard (Flutter
+// repo migration 20261031150000); classmates' names arrive as "Ahmed A." or
+// not at all when they hid them. An empty answer means the student has no
+// class to rank against, and the section is left out.
+const STUDENT_LEADERBOARD_PERIODS = [
+  { id: "week", label: "This week" },
+  { id: "all", label: "All time" },
+];
+const STUDENT_LEADERBOARD_TTL_MS = 60000;
+
+function getStudentLeaderboardState(userId) {
+  const id = String(userId || "");
+  if (!state.studentLeaderboard || state.studentLeaderboard.userId !== id) {
+    state.studentLeaderboard = { userId: id, period: "week", slots: {}, saving: false };
+  }
+  return state.studentLeaderboard;
+}
+
+function loadStudentLeaderboard(board, period, { force = false } = {}) {
+  if (!board.slots[period]) {
+    board.slots[period] = { rows: null, error: "", loading: false, fetchedAt: 0 };
+  }
+  const slot = board.slots[period];
+  if (slot.loading || (!force && slot.fetchedAt && Date.now() - slot.fetchedAt < STUDENT_LEADERBOARD_TTL_MS)) {
+    return slot;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return slot;
+  }
+  slot.loading = true;
+  runRelationalQueryWithTimeout(client.rpc("get_mcq_leaderboard", { p_period: period, p_limit: 10 }), "The leaderboard took too long to load.")
+    .then((rows) => {
+      slot.rows = Array.isArray(rows) ? rows : [];
+      slot.error = "";
+    })
+    .catch((error) => {
+      console.warn("get_mcq_leaderboard failed.", error?.message || error);
+      slot.error = "The leaderboard could not be loaded.";
+    })
+    .finally(() => {
+      slot.loading = false;
+      slot.fetchedAt = Date.now();
+      if (state.route === "dashboard" && state.studentLeaderboard === board) {
+        state.skipNextRouteAnimation = true;
+        render();
+      }
+    });
+  return slot;
+}
+
+function renderDashboardLeaderboard(user) {
+  if (!user?.id) {
+    return "";
+  }
+  const board = getStudentLeaderboardState(user.id);
+  const period = STUDENT_LEADERBOARD_PERIODS.some((entry) => entry.id === board.period) ? board.period : "week";
+  const slot = loadStudentLeaderboard(board, period);
+  const rows = Array.isArray(slot.rows) ? slot.rows : null;
+  // Nothing yet, or no class to rank against: no section at all, so a
+  // student outside the MCQ Bank never sees an empty board.
+  if (!rows || !rows.length) {
+    return "";
+  }
+  const me = rows.find((row) => row.is_me) || null;
+  const ranked = rows.filter((row) => row.rank !== null && row.rank !== undefined);
+  const points = (value) => {
+    const count = Number(value) || 0;
+    return `${formatAdminCount(count)} ${count === 1 ? "point" : "points"}`;
+  };
+  const myPlace = me && me.rank !== null && me.rank !== undefined
+    ? `#${String(me.rank)} in your class`
+    : "Not on the board yet";
+  const list = ranked.length
+    ? `<ol class="dash-leaderboard-list">${ranked.map((row) => {
+      const name = row.display_name ? escapeHtml(row.display_name) : '<i class="is-hidden-name">Student</i>';
+      return `<li class="${row.is_me ? "is-me" : ""}">
+        <span class="dash-leaderboard-rank rank-${row.rank <= 3 ? String(row.rank) : "rest"}">#${escapeHtml(String(row.rank))}</span>
+        <span class="dash-leaderboard-name">${name}${row.is_me ? ' <span class="dash-leaderboard-you">You</span>' : ""}</span>
+        <span class="dash-leaderboard-points">${escapeHtml(points(row.points))}</span>
+      </li>`;
+    }).join("")}</ol>`
+    : `<p class="subtle">No points yet. Get a question right to take first place.</p>`;
+  return `
+    <section class="panel dash-leaderboard" id="dash-leaderboard">
+      <div class="flex-between dash-leaderboard-head">
+        <h3>Class leaderboard</h3>
+        <div class="dash-leaderboard-periods" role="tablist" aria-label="Leaderboard period">
+          ${STUDENT_LEADERBOARD_PERIODS.map((entry) => `<button type="button" role="tab" aria-selected="${entry.id === period ? "true" : "false"}" class="${entry.id === period ? "is-active" : ""}" data-leaderboard-period="${escapeHtml(entry.id)}">${escapeHtml(entry.label)}</button>`).join("")}
+        </div>
+      </div>
+      <div class="dash-leaderboard-me">
+        <b>${escapeHtml(myPlace)}</b>
+        <span>${escapeHtml(points(me?.points))}</span>
+      </div>
+      ${list}
+      <p class="subtle dash-leaderboard-note">1 point for every question you get right for the first time.${period === "week" ? " A new week starts every Saturday." : ""}</p>
+      ${me ? `<label class="dash-leaderboard-show-name">
+        <input type="checkbox" data-leaderboard-show-name ${me.is_hidden ? "" : "checked"} ${board.saving ? "disabled" : ""} />
+        <span>Show my name to classmates <small class="subtle">When off, classmates see "Student" in your place.</small></span>
+      </label>` : ""}
+    </section>
+  `;
+}
+
+function wireDashboardLeaderboard() {
+  const section = appEl.querySelector("#dash-leaderboard");
+  const user = getCurrentUser();
+  if (!section || !user?.id) {
+    return;
+  }
+  const board = getStudentLeaderboardState(user.id);
+  section.querySelectorAll("[data-leaderboard-period]").forEach((button) => button.addEventListener("click", () => {
+    const next = String(button.getAttribute("data-leaderboard-period") || "");
+    if (!STUDENT_LEADERBOARD_PERIODS.some((entry) => entry.id === next) || next === board.period) {
+      return;
+    }
+    board.period = next;
+    state.skipNextRouteAnimation = true;
+    render();
+  }));
+  section.querySelector("[data-leaderboard-show-name]")?.addEventListener("change", async (event) => {
+    const client = getRelationalClient();
+    if (!client || board.saving) {
+      return;
+    }
+    board.saving = true;
+    try {
+      await runRelationalQueryWithTimeout(
+        client.rpc("set_my_leaderboard_hidden", { p_hidden: !event.target.checked }),
+        "Saving took too long.",
+      );
+    } catch (error) {
+      console.warn("set_my_leaderboard_hidden failed.", error?.message || error);
+      toast("Your choice could not be saved. Try again.");
+    } finally {
+      board.saving = false;
+      Object.values(board.slots).forEach((slot) => {
+        slot.fetchedAt = 0;
+      });
+      loadStudentLeaderboard(board, board.period, { force: true });
+    }
+  });
 }
 
 function renderResumeCard(userId) {
@@ -28843,6 +28995,8 @@ function wireDashboard() {
     state.skipNextRouteAnimation = true;
     navigate("create-test");
   });
+
+  wireDashboardLeaderboard();
 
   wireStudentRefreshButtons();
 
@@ -35502,7 +35656,7 @@ function renderAdminSidebarNav(activeAdminPage, activeCoursePlatformSection) {
       const isActive = isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection);
       const dataAttributes = item.section
         ? `data-action="admin-course-platform-section" data-section="${escapeHtml(item.section)}"`
-        : `data-action="admin-page" data-page="${escapeHtml(item.page)}"`;
+        : `data-action="admin-page" data-page="${escapeHtml(item.page)}"${item.resultsTab ? ` data-results-tab="${escapeHtml(item.resultsTab)}"` : ""}`;
       return `
         <button class="btn ghost ${isActive ? "is-active" : ""}" type="button" ${dataAttributes}${isActive ? ' aria-current="page"' : ""}>
           <span>${escapeHtml(item.label)}</span>
@@ -35565,9 +35719,14 @@ function setAdminNavGroupOpen(groupId, open) {
 }
 
 function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection) {
-  return item.section
-    ? activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE && activeCoursePlatformSection === item.section
-    : activeAdminPage === item.page;
+  if (item.section) {
+    return activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE && activeCoursePlatformSection === item.section;
+  }
+  if (item.page === "results" && activeAdminPage === "results") {
+    const onLeaderboard = getAdminResultsState().tab === "leaderboard";
+    return item.resultsTab === "leaderboard" ? onLeaderboard : !onLeaderboard;
+  }
+  return activeAdminPage === item.page;
 }
 
 // ── Organizations (admin) ────────────────────────────────────────────────
@@ -40114,6 +40273,24 @@ function wireAdmin() {
       const page = button.getAttribute("data-page");
       if (!KNOWN_ADMIN_PAGES.has(String(page || "").trim())) {
         return;
+      }
+      // Student results and its Leaderboard tab are two sidebar entries.
+      if (page === "results") {
+        const results = getAdminResultsState();
+        const nextTab = button.getAttribute("data-results-tab") === "leaderboard" ? "leaderboard" : "overview";
+        const switchingTab = (results.tab === "leaderboard") !== (nextTab === "leaderboard");
+        if (switchingTab || results.studentId) {
+          results.tab = nextTab;
+          results.studentId = "";
+          results.returnTo = "";
+          results.returnTab = "";
+        }
+        if (state.adminPage === page) {
+          if (switchingTab) {
+            refreshAdminResultsView();
+          }
+          return;
+        }
       }
       if (state.adminPage === page) {
         return;
@@ -66223,6 +66400,14 @@ const ADMIN_RESULTS_TABS = [
   { id: "subjects", label: "Subjects" },
   { id: "missed", label: "Most missed" },
   { id: "students", label: "Students" },
+  { id: "leaderboard", label: "Leaderboard" },
+];
+// The MCQ leaderboard (admin_get_mcq_leaderboard, Flutter repo migration
+// 20261031170000): one point per question a student gets right for the
+// first time; the week starts Saturday 00:00 Cairo time.
+const ADMIN_RESULTS_LEADERBOARD_PERIODS = [
+  { id: "week", label: "This week" },
+  { id: "all", label: "All time" },
 ];
 const ADMIN_RESULTS_MIN_ATTEMPTS = [5, 10, 20, 50];
 const ADMIN_RESULTS_PAGE_SIZE = 50;
@@ -66242,6 +66427,10 @@ function getAdminResultsState() {
       page: 1,
       studentId: "",
       studentTab: "progress",
+      returnTab: "",
+      lbPeriod: "week",
+      lbUniversity: "",
+      lbYear: "",
       subjectId: "",
       topicSort: "weakest",
       missedCourse: "",
@@ -66879,6 +67068,8 @@ function renderAdminResultsSection() {
     body = renderAdminResultsStudent(results);
   } else if (activeTab === "students") {
     body = renderAdminResultsStudents(results);
+  } else if (activeTab === "leaderboard") {
+    body = renderAdminResultsLeaderboard(results);
   } else if (activeTab === "subjects") {
     body = renderAdminResultsSubjects(results);
   } else if (activeTab === "missed") {
@@ -66901,20 +67092,73 @@ function renderAdminResultsSection() {
       "<b>Answered right</b> is right answers out of answered questions; skipped questions are not counted.",
       "A test counts on the day it was finished. Unfinished tests are listed but not scored.",
       "Open a student for their progress per subject and topic, every test, their mistakes and their profile.",
+      "<b>Leaderboard</b> ranks students by points: one for each question they get right for the first time. The week starts on Saturday. Students see their own class (same university and year); here you see full names, even of students who hid theirs from classmates.",
       "<b>Most missed</b> lists questions by how often they were answered wrong. When most students pick the same wrong choice, the card asks you to check the answer key.",
       "<b>Export CSV</b> downloads what the tab shows; long lists (students, most missed) are downloaded in full.",
     ],
   });
   const back = studentView
-    ? `<button type="button" class="btn ghost admin-btn-sm admin-results-back" data-admin-results-back>${results.returnTo === "users" ? "‹ Back to Users" : "‹ All students"}</button>`
+    ? `<button type="button" class="btn ghost admin-btn-sm admin-results-back" data-admin-results-back>${results.returnTo === "users" ? "‹ Back to Users" : results.returnTab === "leaderboard" ? "‹ Leaderboard" : "‹ All students"}</button>`
     : "";
   return `<section class="card admin-section admin-results" id="admin-results-section">
     ${pageHeader}
     ${back}
     ${tabs}
-    ${renderAdminResultsFilters(results, { studentView })}
+    ${!studentView && activeTab === "leaderboard" ? "" : renderAdminResultsFilters(results, { studentView })}
     ${body}
   </section>`;
+}
+
+// Leaderboard tab: every student who scored in the chosen university and
+// year (both optional), ranked by points. A name opens the student.
+function renderAdminResultsLeaderboard(results) {
+  ensureUniversitiesLoaded(refreshAdminResultsView);
+  const period = ADMIN_RESULTS_LEADERBOARD_PERIODS.some((entry) => entry.id === results.lbPeriod) ? results.lbPeriod : "week";
+  const year = Number(results.lbYear);
+  const key = `${period}|${results.lbUniversity}|${results.lbYear}`;
+  const slot = loadAdminResultsSlot("leaderboard", key, "admin_get_mcq_leaderboard", () => ({
+    p_university_id: results.lbUniversity || null,
+    p_academic_year: Number.isInteger(year) && year > 0 ? year : null,
+    p_period: period,
+    p_limit: 200,
+  }));
+  const universityOptions = [
+    { id: "", label: "All universities" },
+    ...getCachedUniversities().map((entry) => ({ id: entry.id, label: entry.name })),
+  ];
+  const yearOptions = [{ id: "", label: "All years" }, ...[1, 2, 3, 4, 5, 6].map((value) => ({ id: String(value), label: `Year ${String(value)}` }))];
+  const filters = `<div class="admin-results-filters">
+    ${renderAdminResultsSelect("lbPeriod", "Points", ADMIN_RESULTS_LEADERBOARD_PERIODS, period)}
+    ${renderAdminResultsSelect("lbUniversity", "University", universityOptions, results.lbUniversity)}
+    ${renderAdminResultsSelect("lbYear", "Year", yearOptions, results.lbYear)}
+  </div>`;
+  const rows = Array.isArray(slot.data) ? slot.data : [];
+  if (!rows.length) {
+    return `${filters}${renderAdminResultsStatus(slot, "No one here has points yet.")}`;
+  }
+  const body = rows.map((row) => {
+    const details = [
+      row.university_id ? getUniversityDisplayName(row.university_id) : "",
+      row.academic_year ? `Year ${String(row.academic_year)}` : "",
+      row.is_hidden ? "Name hidden from classmates" : "",
+    ].filter(Boolean).join(" · ");
+    return `<tr>
+      <td class="is-number admin-leaderboard-rank">#${escapeHtml(String(row.rank))}</td>
+      <td>
+        <button type="button" class="admin-results-student-link" data-admin-results-student="${escapeHtml(row.user_id)}">${escapeHtml(row.full_name || "Unnamed student")}</button>
+        ${details ? `<small>${escapeHtml(details)}</small>` : ""}
+      </td>
+      <td class="is-number"><b class="admin-results-score">${escapeHtml(formatAdminCount(Number(row.points) || 0))}</b></td>
+    </tr>`;
+  }).join("");
+  return `${filters}
+    <p class="subtle admin-results-note">${escapeHtml(`${formatAdminCount(rows.length)} students with points`)}${slot.loading ? " · updating…" : ""}</p>
+    <div class="admin-results-table-wrap">
+      <table class="admin-results-table">
+        <thead><tr><th class="is-number">Place</th><th>Student</th><th class="is-number">Points</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
 }
 
 // Subjects tab: every subject with results, then one subject's topics.
@@ -67416,7 +67660,7 @@ function wireAdminResults() {
   }));
   section.querySelectorAll("[data-admin-results-filter]").forEach((select) => select.addEventListener("change", () => {
     const field = select.getAttribute("data-admin-results-filter");
-    if (["range", "year", "semester", "sort", "topicSort", "missedCourse", "missedTopic", "missedMin"].includes(field)) {
+    if (["range", "year", "semester", "sort", "topicSort", "missedCourse", "missedTopic", "missedMin", "lbPeriod", "lbUniversity", "lbYear"].includes(field)) {
       results[field] = select.value;
       if (field === "missedCourse") {
         results.missedTopic = "";
@@ -67447,6 +67691,8 @@ function wireAdminResults() {
     applySearch();
   });
   section.querySelectorAll("[data-admin-results-student]").forEach((button) => button.addEventListener("click", () => {
+    // Back returns to the tab the student was opened from.
+    results.returnTab = results.tab;
     openAdminResultsStudent(button.getAttribute("data-admin-results-student"));
   }));
   section.querySelector("[data-admin-results-back]")?.addEventListener("click", () => {
@@ -67460,7 +67706,8 @@ function wireAdminResults() {
       render();
       return;
     }
-    results.tab = "students";
+    results.tab = results.returnTab === "leaderboard" ? "leaderboard" : "students";
+    results.returnTab = "";
     refreshAdminResultsView();
   });
   section.querySelectorAll("[data-admin-results-student-tab]").forEach((tab) => tab.addEventListener("click", () => {

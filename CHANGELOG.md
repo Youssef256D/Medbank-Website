@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-10-31 — MCQ leaderboard
+- Students see a class leaderboard on their dashboard: their place and points
+  this week or all time, with a switch to hide their name from classmates.
+- Admins get a Leaderboard (People → Leaderboard, or the tab in Student
+  results): every student's points by university and year; clicking a name
+  opens that student's results.
+
 ### 2026-10-30 — iPhone app links go to the App Store
 - The "get the app" sheet on phones and the landing page now link iPhone and
   iPad users to MedBank on the App Store instead of the TestFlight beta.
