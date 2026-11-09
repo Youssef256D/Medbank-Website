@@ -14458,7 +14458,10 @@ function mergeSessionQuestionSnapshots(localSession, remoteSession, preferLocalS
       ? session.questionSnapshots
       : {};
     Object.values(snapshots).forEach((snapshot) => {
-      const normalized = normalizeQuestionForSessionSnapshot(snapshot);
+      // Slimmed snapshots are kept as they are (see expandSlimQuestionSnapshot).
+      const normalized = isSlimQuestionSnapshot(snapshot)
+        ? snapshot
+        : normalizeQuestionForSessionSnapshot(snapshot);
       if (!normalized) {
         return;
       }
@@ -49379,6 +49382,77 @@ function getSessionQuestionSnapshotMap(session) {
   return session.questionSnapshots;
 }
 
+// Previous tests older than 30 days are slimmed on the server
+// (private.slim_history_snapshots): each snapshot keeps ids, names, choice
+// labels and `correct`, but no stem, choice text or explanation.
+const SLIM_SNAPSHOT_REMOVED_STEM = "This question was removed from the bank. Your answer still counts in the score.";
+
+function isSlimQuestionSnapshot(snapshot) {
+  return isRecordObject(snapshot) && !Object.prototype.hasOwnProperty.call(snapshot, "stem");
+}
+
+// Rebuilds a slimmed snapshot for review: text from the live question, answer
+// key from the snapshot (so the score stays the one the test was marked with).
+// A question no longer in the bank becomes a labelled placeholder.
+function expandSlimQuestionSnapshot(slim, questionStore = null) {
+  const store = questionStore || getQuestionStore();
+  const id = String(slim.id || slim.dbId || "").trim();
+  const dbId = String(slim.dbId || "").trim() || null;
+  if (!id) {
+    return null;
+  }
+  const labels = [...new Set(
+    (Array.isArray(slim.choices) ? slim.choices : [])
+      .map((choice) => normalizeQuestionChoiceLabel(choice?.id ?? choice))
+      .filter(Boolean),
+  )];
+  const correct = [...new Set(
+    (Array.isArray(slim.correct) ? slim.correct : [])
+      .map((entry) => normalizeQuestionChoiceLabel(entry))
+      .filter(Boolean),
+  )].sort();
+  const live = getQuestionFromLookup(store.byId, dbId || id, store)
+    || (dbId ? getQuestionFromLookup(store.byId, id, store) : null);
+  const liveTextByLabel = new Map(
+    normalizeQuestionChoiceEntries(live?.choices).map((choice) => [choice.id, choice.text]),
+  );
+  const meta = {
+    id,
+    dbId,
+    course: String(slim.course || slim.qbankCourse || "").trim(),
+    topic: String(slim.topic || slim.qbankTopic || "").trim(),
+    system: String(slim.system || slim.course || "").trim(),
+    qbankCourse: String(slim.qbankCourse || slim.course || "").trim(),
+    qbankTopic: String(slim.qbankTopic || slim.topic || "").trim(),
+  };
+  if (live) {
+    const expanded = normalizeQuestionForSessionSnapshot({
+      ...deepClone(live),
+      ...meta,
+      choices: labels.map((label) => ({ id: label, text: liveTextByLabel.get(label) || "\u2014" })),
+      correct,
+    });
+    if (expanded) {
+      return expanded;
+    }
+  }
+  return {
+    ...meta,
+    difficulty: normalizeImportDifficulty(slim.difficulty),
+    tags: [],
+    stem: SLIM_SNAPSHOT_REMOVED_STEM,
+    choices: labels.map((label) => ({ id: label, text: "\u2014" })),
+    correct,
+    explanation: "",
+    objective: "",
+    references: "",
+    questionImage: "",
+    explanationImage: "",
+    status: String(slim.status || "published").trim() || "published",
+    removedFromBank: true,
+  };
+}
+
 function getQuestionSnapshotFromSession(session, questionId, questionStore = null) {
   if (!session || typeof session !== "object") {
     return null;
@@ -49387,17 +49461,22 @@ function getQuestionSnapshotFromSession(session, questionId, questionStore = nul
   const snapshots = session.questionSnapshots && typeof session.questionSnapshots === "object" && !Array.isArray(session.questionSnapshots)
     ? session.questionSnapshots
     : {};
+  const resolveSnapshot = (raw) => (
+    isSlimQuestionSnapshot(raw) ? expandSlimQuestionSnapshot(raw, store) : normalizeQuestionForSessionSnapshot(raw)
+  );
   const candidates = getQuestionIdentityCandidates(questionId, store);
   for (const candidate of candidates) {
-    const snapshot = normalizeQuestionForSessionSnapshot(snapshots[candidate]);
+    const snapshot = resolveSnapshot(snapshots[candidate]);
     if (snapshot) {
       return snapshot;
     }
   }
-  return Object.values(snapshots)
-    .map((snapshot) => normalizeQuestionForSessionSnapshot(snapshot))
-    .find((snapshot) => getQuestionIdentityCandidates(snapshot, store).some((id) => candidates.includes(id)))
-    || null;
+  const matchingRaw = Object.values(snapshots).find((raw) => (
+    isRecordObject(raw)
+    && getQuestionIdentityCandidates(raw, store).some((id) => candidates.includes(id))
+    && resolveSnapshot(raw)
+  ));
+  return matchingRaw ? resolveSnapshot(matchingRaw) : null;
 }
 
 function getQuestionForSession(session, questionId, questionStore = null) {
@@ -49417,6 +49496,11 @@ function ensureSessionQuestionSnapshots(session, questionStore = null) {
   (Array.isArray(session.questionIds) ? session.questionIds : []).forEach((qid) => {
     const normalizedQid = String(qid || "").trim();
     if (!normalizedQid) {
+      return;
+    }
+    // A slimmed snapshot stays slim: refilling it from the bank would swap
+    // in today's answer key and grow the history row back to full size.
+    if (getQuestionIdentityCandidates(normalizedQid, store).some((id) => isSlimQuestionSnapshot(snapshots[id]))) {
       return;
     }
     const existingSnapshot = getQuestionSnapshotFromSession(session, normalizedQid, store);

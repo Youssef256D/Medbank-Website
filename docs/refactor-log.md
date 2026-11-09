@@ -2,6 +2,26 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-09 — Slim old test history (approved; migration not applied)
+- `20261109120000_slim_old_history_snapshots` (+ rollback):
+  `private.slim_question_snapshot(jsonb)` and procedure
+  `private.run_history_slimming(max_rows, batch, min_age)`, cron
+  `slim-old-history-snapshots` at 04:23 UTC (2,000 rows a night, batches of
+  200 with a commit each). Tests completed more than 30 days ago keep, per
+  question: ids, course/topic names, status, difficulty, `correct` and the
+  choice labels; stem, choice text, explanation and images are dropped. The
+  row gets `payload.snapshotsSlimmedAt` and a new `updated_at`.
+  `test_history_answers` is rebuilt by its trigger and comes out identical
+  (it reads only `dbId`, course/topic and `correct`). **Not applied.**
+- Website: a snapshot without `stem` is slim. `getQuestionSnapshotFromSession`
+  expands it through `expandSlimQuestionSnapshot` (live text, the snapshot's
+  own answer key, or a "removed from the bank" placeholder with
+  `removedFromBank: true`). `mergeSessionQuestionSnapshots` keeps slim
+  snapshots and `ensureSessionQuestionSnapshots` never refills them, so a row
+  never grows back. Hydrated rows have a `dbId` and are never re-uploaded.
+  Tests: `tests/history-slim-snapshots.test.js`.
+- App side shipped earlier (Medbank-App `da3a966`).
+
 ### 2026-11-09 — Admin: move one course to another device
 Served files: `main.js`, `index.html` (app-version `2026-11-09.01`).
 - Users → Devices: every paid course on a device (or a released device) now

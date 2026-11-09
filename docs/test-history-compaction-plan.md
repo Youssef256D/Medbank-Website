@@ -1,6 +1,9 @@
-# Plan: shrink `test_history_entries` (proposal, not approved)
+# Plan: shrink `test_history_entries`
 
-Status: **waiting for owner approval** (2026-10-27). Nothing below has run.
+Status (2026-11-09): **approved** by the owner on 2026-10-27 with a 30-day
+threshold. App fallback shipped (Medbank-App `da3a966`); website fallback and
+migration `20261109120000_slim_old_history_snapshots` are written but the
+migration is **not applied**.
 
 ## Where the space goes (measured 2026-10-27)
 
@@ -35,8 +38,11 @@ choice text, `explanation`, `explanationImage` (and `questionImage`).
   If a question was later edited, review shows the edited version; if it was
   deleted, review shows "question no longer available" for that one item.
 
-Estimated saving: roughly half the table (~150 MB), plus faster history loads
-on phones. This is an estimate from a 3% sample; measure on a copy first.
+Measured 2026-11-09 on 109 real rows older than 30 days (read-only): the
+uncompressed payload shrinks by 45% (202 kB to 112 kB); answer keys, ids and
+topics match exactly and no question is lost. Stored size is compressed, so
+the disk saving will be somewhat lower; expect roughly 100-150 MB of the
+334 MB table, plus faster history loads on phones.
 
 ## Steps
 
@@ -61,8 +67,13 @@ on phones. This is an estimate from a 3% sample; measure on a copy first.
 Slimming deletes text that only the live bank still has, so it cannot be
 undone from the database alone. Keep the exported rows (step 4) for 90 days.
 
-## Decision needed
+## Before applying
 
-- Approve slimming at all?
-- Age threshold (30 days proposed)?
-- Is "review shows the current version of an edited question" acceptable?
+1. Most app users are on a build with `da3a966` (History fallback).
+2. Website PR with `expandSlimQuestionSnapshot` is merged and live.
+3. Note the UTC time / confirm a fresh daily backup (the text is gone after).
+4. Apply `20261109120000`; the cron `slim-old-history-snapshots` runs at
+   04:23 UTC and slims up to 2,000 rows a night. To run once by hand:
+   `call private.run_history_slimming(2000);`
+5. After the backlog clears, check the table size; space is reused by new
+   rows, and only `VACUUM FULL` (locks the table) returns it to the disk.

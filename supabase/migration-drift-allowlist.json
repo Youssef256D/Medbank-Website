@@ -19,6 +19,7 @@
     "20261031170000": "Medbank-App: admin_mcq_leaderboard"
   },
   "unappliedOnPurpose": {
-    "20260909101500": "add_student_auto_approval_feature_flag: the app upserts the flag row itself (refactor log 2026-09-09)"
+    "20260909101500": "add_student_auto_approval_feature_flag: the app upserts the flag row itself (refactor log 2026-09-09)",
+    "20261109120000": "slim_old_history_snapshots: waits for the app fallback to reach most users and a fresh backup; remove this line when applied"
   }
 }
