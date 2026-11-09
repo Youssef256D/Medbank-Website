@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-09 — Smaller previous-test history (ready, not switched on)
+- Tests older than 30 days will keep only what scores and stats need; their
+  review shows the question's current text, and a question removed from the
+  bank says so. Scores never change. Switching it on is a separate step.
+
 ### 2026-11-09 — Move a single course between devices
 - Admins can move one paid course from a student's device to another and
   leave the device's other courses where they are (Users → Devices).
