@@ -9,6 +9,10 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-09 — Move a single course between devices
+- Admins can move one paid course from a student's device to another and
+  leave the device's other courses where they are (Users → Devices).
+
 ### 2026-10-31 — MCQ leaderboard
 - Students see a class leaderboard on their dashboard: their place and points
   this week or all time, with a switch to hide their name from classmates.

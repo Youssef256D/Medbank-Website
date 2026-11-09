@@ -61657,13 +61657,37 @@ function renderAdminUserDeviceIntegrity(integrity) {
   `;
 }
 
-function renderAdminUserDeviceCourseList(courses) {
+// Each course gets its own move control, so one course can move while the
+// others stay where they are; "Move all courses" stays for the whole device.
+function renderAdminUserDeviceCourseList(courses, fromKey = "", targets = []) {
   if (!courses.length) {
     return `<p class="subtle">No paid courses on this device.</p>`;
   }
+  const movable = Boolean(fromKey) && targets.length > 0;
   return `
     <ul class="admin-user-device-courses">
-      ${courses.map((course) => `<li>${escapeHtml(course.course_name || "Untitled course")}</li>`).join("")}
+      ${courses.map((course) => {
+        const name = course.course_name || "Untitled course";
+        if (!movable) {
+          return `<li>${escapeHtml(name)}</li>`;
+        }
+        const picker = targets.length > 1
+          ? `
+            <select class="admin-user-device-select" data-move-course-target aria-label="Move ${escapeHtml(name)} to">
+              ${targets.map((target) => `<option value="${target.index}">${escapeHtml(getAdminUserDeviceLabel(target.device))}</option>`).join("")}
+            </select>
+          `
+          : `<input type="hidden" data-move-course-target value="${targets[0].index}">`;
+        return `
+          <li class="admin-user-device-place" data-course-id="${escapeHtml(course.course_id)}" data-move-from="${escapeHtml(fromKey)}">
+            <span>${escapeHtml(name)}</span>
+            ${picker}
+            <button class="btn ghost admin-btn-sm" type="button" data-action="move-one-device-course">
+              ${targets.length > 1 ? "Move" : `Move to ${escapeHtml(getAdminUserDeviceLabel(targets[0].device))}`}
+            </button>
+          </li>
+        `;
+      }).join("")}
     </ul>
   `;
 }
@@ -61674,7 +61698,7 @@ function renderAdminUserDeviceMoveControl(fromKey, targets) {
   }
   const picker = targets.length > 1
     ? `
-      <select class="admin-user-device-select" data-move-target aria-label="Move the courses to">
+      <select class="admin-user-device-select" data-move-target aria-label="Move all the courses to">
         ${targets.map((target) => `<option value="${target.index}">${escapeHtml(getAdminUserDeviceLabel(target.device))}</option>`).join("")}
       </select>
     `
@@ -61683,7 +61707,7 @@ function renderAdminUserDeviceMoveControl(fromKey, targets) {
     <div class="admin-user-device-actions" data-move-from="${escapeHtml(fromKey)}">
       ${picker}
       <button class="btn ghost admin-btn-sm" type="button" data-action="move-device-courses">
-        ${targets.length > 1 ? "Move courses" : `Move courses to ${escapeHtml(getAdminUserDeviceLabel(targets[0].device))}`}
+        ${targets.length > 1 ? "Move all courses" : `Move all courses to ${escapeHtml(getAdminUserDeviceLabel(targets[0].device))}`}
       </button>
     </div>
   `;
@@ -61765,8 +61789,8 @@ function renderAdminUserDeviceDetails(data) {
           ${fields.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
         </dl>
         <p class="admin-user-device-label">Paid courses on this device</p>
-        ${renderAdminUserDeviceCourseList(deviceCourses)}
-        ${deviceCourses.length ? renderAdminUserDeviceMoveControl(`device:${index}`, targets) : ""}
+        ${renderAdminUserDeviceCourseList(deviceCourses, `device:${index}`, targets)}
+        ${deviceCourses.length > 1 ? renderAdminUserDeviceMoveControl(`device:${index}`, targets) : ""}
         <div class="admin-user-device-release">
           <button class="btn danger admin-btn-sm" type="button" data-action="release-user-device">Release device</button>
           <p class="subtle">Frees this device's place. It is signed out of MedBank within a minute, and its courses stop playing there. Move the courses first to keep them.</p>
@@ -61779,8 +61803,8 @@ function renderAdminUserDeviceDetails(data) {
     <article class="admin-user-device-item" data-released-index="${position}" data-released-device="${escapeHtml(deviceId)}">
       <h5 class="admin-user-device-name">Released device</h5>
       <p class="subtle">These courses stay on a device an admin released. They come back if that same install signs in again; move them to another device to use them now.</p>
-      ${renderAdminUserDeviceCourseList(list)}
-      ${renderAdminUserDeviceMoveControl(`released:${position}`, indexed)}
+      ${renderAdminUserDeviceCourseList(list, `released:${position}`, indexed)}
+      ${list.length > 1 ? renderAdminUserDeviceMoveControl(`released:${position}`, indexed) : ""}
     </article>
   `).join("");
 
@@ -61955,17 +61979,33 @@ function bindAdminUserDeviceDialogActions(body, context, data, integrity) {
     });
   });
 
+  const moveSource = (control) => {
+    const [kind, position] = String(control?.getAttribute("data-move-from") || "").split(":");
+    return kind === "device"
+      ? { fromId: deviceAt(position)?.device_id, fromName: getAdminUserDeviceLabel(deviceAt(position)) }
+      : { fromId: releasedIds[Number(position)], fromName: "the released device" };
+  };
+
   body.querySelectorAll("[data-action='move-device-courses']").forEach((button) => {
     button.addEventListener("click", () => {
       const control = button.closest("[data-move-from]");
-      const [kind, position] = String(control?.getAttribute("data-move-from") || "").split(":");
+      const { fromId, fromName } = moveSource(control);
       const target = deviceAt(control?.querySelector("[data-move-target]")?.value);
-      const fromId = kind === "device"
-        ? deviceAt(position)?.device_id
-        : releasedIds[Number(position)];
-      const fromName = kind === "device" ? getAdminUserDeviceLabel(deviceAt(position)) : "the released device";
       if (fromId && target) {
         moveAdminUserDeviceCourses(context, { fromId, fromName, target }, button);
+      }
+    });
+  });
+
+  body.querySelectorAll("[data-action='move-one-device-course']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = button.closest("[data-move-from]");
+      const { fromId, fromName } = moveSource(row);
+      const target = deviceAt(row?.querySelector("[data-move-course-target]")?.value);
+      const courseId = row?.getAttribute("data-course-id");
+      const courseName = row?.querySelector("span")?.textContent?.trim() || "this course";
+      if (fromId && target && courseId) {
+        moveAdminUserCourseToDevice(context, { courseId, courseName, fromId, fromName, target }, button);
       }
     });
   });
@@ -62173,6 +62213,41 @@ function moveAdminUserDeviceCourses(context, { fromId, fromName, target }, butto
       const count = Number(moved) || 0;
       return count === 1 ? "1 course moved." : `${count} courses moved.`;
     }
+  );
+}
+
+// Moves one course and leaves the device's other courses where they are. A
+// course can sit on several devices, so this adds the new device and removes
+// only the one it came from (both are existing People-admin writes). If the
+// second step fails the course is left on both devices, never on none.
+function moveAdminUserCourseToDevice(context, { courseId, courseName, fromId, fromName, target }, button) {
+  const targetName = getAdminUserDeviceLabel(target);
+  const confirmed = window.confirm(
+    `Move ${courseName} to ${targetName}?\n\nIt will play on ${targetName} instead of ${fromName}. The other courses on ${fromName} stay there.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  return runAdminUserDeviceWrite(
+    context,
+    button,
+    async (client) => {
+      const bound = await client.rpc("admin_bind_course_device", {
+        p_user: context.profileId,
+        p_course: courseId,
+        p_device: target.device_id,
+        p_replace: false
+      });
+      if (bound.error) {
+        return bound;
+      }
+      return client.from("course_device_bindings")
+        .delete()
+        .eq("user_id", context.profileId)
+        .eq("course_id", courseId)
+        .eq("device_id", fromId);
+    },
+    `${courseName} moved to ${targetName}.`
   );
 }
 

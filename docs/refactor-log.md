@@ -2,6 +2,18 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-09 — Admin: move one course to another device
+Served files: `main.js`, `index.html` (app-version `2026-11-09.01`).
+- Users → Devices: every paid course on a device (or a released device) now
+  has its own "Move" control (`moveAdminUserCourseToDevice`). "Move all
+  courses" stays, shown only when the device has two or more courses.
+- No migration. It reuses existing People-admin writes: `admin_bind_course_device`
+  with `p_replace: false` adds the target device, then a delete of that one
+  `course_device_bindings` row removes the source device. **Do not use
+  `p_replace: true` here** — a course can sit on several devices and that
+  would strip all of them. If the delete fails the course is left on both
+  devices, never on none.
+
 ### 2026-10-31 — MCQ leaderboard (students and admins)
 Served files: `main.js`, `index.html`, `styles.css` (app-version `2026-10-31.01`).
 - Ported from the Flutter app. Points live in the database: one per question
