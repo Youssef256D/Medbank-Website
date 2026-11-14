@@ -2,6 +2,24 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-14 — Admin: Student results → Weekly winners
+- New `winners` tab in `ADMIN_RESULTS_TABS` (and its own sidebar entry under
+  People, `resultsTab: "winners"`). `getAdminResultsSidebarTab` decides which
+  of the three Student-results sidebar entries is active; use it rather than
+  comparing to `"leaderboard"` when adding another tab with its own entry.
+- `renderAdminResultsWinners` calls `admin_get_mcq_weekly_winners` (top 3 +
+  ties per university + year, finished weeks only, 26 weeks) and groups rows
+  into week cards. A name opens the student; Back returns to the tab.
+- The switch on top writes app_state `g:weekly_winner_notifications`
+  (`{enabled: bool}`), the same row the app's Admin → Leaderboard → Winners
+  uses. Restrictive RLS lets only an admin write it, and the payload must
+  carry a boolean `enabled`. A missing row means on.
+- Both RPC and switch come from the Flutter repo's migrations
+  `20261114200000_admin_leaderboard_weeks` and
+  `20261115000000_mcq_weekly_winner_notifications` (applied 2026-11-14).
+  The second also schedules pg_cron `mcq-weekly-winner-notifications`
+  (Fridays 21:05 and 22:05 UTC), which sends the prize notifications.
+
 ### 2026-11-09 — Slim old test history (approved; migration not applied)
 - `20261109120000_slim_old_history_snapshots` (+ rollback):
   `private.slim_question_snapshot(jsonb)` and procedure

@@ -25796,6 +25796,20 @@ body.theme-dark .admin-user-last-test {
 .admin-results-table .is-number,
 .admin-results-table .is-nowrap { white-space: nowrap; }
 .admin-results-table td small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.8rem; }
+/* Student results → Weekly winners (2026-11-14): one card per finished week,
+   a row per class above its top 3. */
+.admin-winners-switch { margin: 0 0 0.85rem; }
+.admin-winners-weeks { display: grid; gap: 14px; }
+.admin-winners-week { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.admin-winners-week .admin-results-table-wrap { border: 0; border-radius: 0; margin: 0; }
+.admin-winners-week .admin-results-table { table-layout: fixed; }
+.admin-winners-week .admin-results-table thead th:first-child { width: 72px; }
+.admin-winners-week .admin-results-table thead th:last-child { width: 90px; }
+.admin-winners-week-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.admin-winners-week-head h4 { margin: 0; font-size: 1rem; }
+.admin-winners-badge { padding: 2px 8px; border-radius: 10px; background: var(--brand-soft); color: var(--brand-strong); font-size: 0.78rem; font-weight: 700; }
+body.theme-dark .admin-winners-badge { color: var(--ink); }
+.admin-results-table .admin-winners-cohort th { background: var(--brand-soft); color: var(--muted); font-size: 0.8rem; padding-block: 6px; }
 .admin-results-student-link {
   padding: 0;
   border: 0;

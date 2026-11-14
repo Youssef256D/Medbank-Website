@@ -220,8 +220,10 @@ const ADMIN_NAV_GROUPS = [
     items: [
       { page: "users", label: "Users" },
       { page: "results", label: "Student results" },
-      // The Leaderboard tab of Student results, one click from the sidebar.
+      // The Leaderboard and Weekly winners tabs of Student results, one click
+      // from the sidebar.
       { page: "results", resultsTab: "leaderboard", label: "Leaderboard" },
+      { page: "results", resultsTab: "winners", label: "Weekly winners" },
       { page: "universities", label: "Universities" },
       { page: "organizations", label: "Organizations" },
       { page: "device-limit", label: "Device limit" },
@@ -35726,8 +35728,8 @@ function isAdminNavItemActive(item, activeAdminPage, activeCoursePlatformSection
     return activeAdminPage === ADMIN_COURSES_PLATFORM_PAGE && activeCoursePlatformSection === item.section;
   }
   if (item.page === "results" && activeAdminPage === "results") {
-    const onLeaderboard = getAdminResultsState().tab === "leaderboard";
-    return item.resultsTab === "leaderboard" ? onLeaderboard : !onLeaderboard;
+    const sidebarTab = getAdminResultsSidebarTab(getAdminResultsState().tab);
+    return (item.resultsTab || "") === sidebarTab;
   }
   return activeAdminPage === item.page;
 }
@@ -40277,11 +40279,13 @@ function wireAdmin() {
       if (!KNOWN_ADMIN_PAGES.has(String(page || "").trim())) {
         return;
       }
-      // Student results and its Leaderboard tab are two sidebar entries.
+      // Student results, its Leaderboard tab and its Weekly winners tab are
+      // three sidebar entries.
       if (page === "results") {
         const results = getAdminResultsState();
-        const nextTab = button.getAttribute("data-results-tab") === "leaderboard" ? "leaderboard" : "overview";
-        const switchingTab = (results.tab === "leaderboard") !== (nextTab === "leaderboard");
+        const nextSidebarTab = getAdminResultsSidebarTab(button.getAttribute("data-results-tab"));
+        const nextTab = nextSidebarTab || "overview";
+        const switchingTab = getAdminResultsSidebarTab(results.tab) !== nextSidebarTab;
         if (switchingTab || results.studentId) {
           results.tab = nextTab;
           results.studentId = "";
@@ -66560,7 +66564,15 @@ const ADMIN_RESULTS_TABS = [
   { id: "missed", label: "Most missed" },
   { id: "students", label: "Students" },
   { id: "leaderboard", label: "Leaderboard" },
+  { id: "winners", label: "Weekly winners" },
 ];
+// Tabs that have their own sidebar entry; every other tab belongs to the
+// plain "Student results" entry ("").
+const ADMIN_RESULTS_SIDEBAR_TABS = new Set(["leaderboard", "winners"]);
+function getAdminResultsSidebarTab(tab) {
+  const value = String(tab || "");
+  return ADMIN_RESULTS_SIDEBAR_TABS.has(value) ? value : "";
+}
 // The MCQ leaderboard (admin_get_mcq_leaderboard, Flutter repo migration
 // 20261031170000): one point per question a student gets right for the
 // first time; the week starts Saturday 00:00 Cairo time.
@@ -66590,6 +66602,8 @@ function getAdminResultsState() {
       lbPeriod: "week",
       lbUniversity: "",
       lbYear: "",
+      winUniversity: "",
+      winYear: "",
       subjectId: "",
       topicSort: "weakest",
       missedCourse: "",
@@ -67229,6 +67243,8 @@ function renderAdminResultsSection() {
     body = renderAdminResultsStudents(results);
   } else if (activeTab === "leaderboard") {
     body = renderAdminResultsLeaderboard(results);
+  } else if (activeTab === "winners") {
+    body = renderAdminResultsWinners(results);
   } else if (activeTab === "subjects") {
     body = renderAdminResultsSubjects(results);
   } else if (activeTab === "missed") {
@@ -67252,18 +67268,19 @@ function renderAdminResultsSection() {
       "A test counts on the day it was finished. Unfinished tests are listed but not scored.",
       "Open a student for their progress per subject and topic, every test, their mistakes and their profile.",
       "<b>Leaderboard</b> ranks students by points: one for each question they get right for the first time. The week starts on Saturday. Students see their own class (same university and year); here you see full names, even of students who hid theirs from classmates.",
+      "<b>Weekly winners</b> shows the top 3 of every class (ties included) for each finished week. When a week ends, those students get a notification asking them to contact MedBank for their prize, unless you pause it there.",
       "<b>Most missed</b> lists questions by how often they were answered wrong. When most students pick the same wrong choice, the card asks you to check the answer key.",
       "<b>Export CSV</b> downloads what the tab shows; long lists (students, most missed) are downloaded in full.",
     ],
   });
   const back = studentView
-    ? `<button type="button" class="btn ghost admin-btn-sm admin-results-back" data-admin-results-back>${results.returnTo === "users" ? "‹ Back to Users" : results.returnTab === "leaderboard" ? "‹ Leaderboard" : "‹ All students"}</button>`
+    ? `<button type="button" class="btn ghost admin-btn-sm admin-results-back" data-admin-results-back>${results.returnTo === "users" ? "‹ Back to Users" : results.returnTab === "leaderboard" ? "‹ Leaderboard" : results.returnTab === "winners" ? "‹ Weekly winners" : "‹ All students"}</button>`
     : "";
   return `<section class="card admin-section admin-results" id="admin-results-section">
     ${pageHeader}
     ${back}
     ${tabs}
-    ${!studentView && activeTab === "leaderboard" ? "" : renderAdminResultsFilters(results, { studentView })}
+    ${!studentView && (activeTab === "leaderboard" || activeTab === "winners") ? "" : renderAdminResultsFilters(results, { studentView })}
     ${body}
   </section>`;
 }
@@ -67318,6 +67335,220 @@ function renderAdminResultsLeaderboard(results) {
         <tbody>${body}</tbody>
       </table>
     </div>`;
+}
+
+// ── Weekly winners tab ───────────────────────────────────────────────────
+// The top 3 (ties included) of every class — university + year, the groups
+// students compete in — for each finished Saturday-to-Friday Cairo week
+// (admin_get_mcq_weekly_winners, Flutter repo migrations 20261114200000 and
+// 20261115000000). Same data and switch as the app's Admin → Leaderboard →
+// Winners.
+//
+// The switch is app_state `g:weekly_winner_notifications` ({enabled: bool}).
+// When on, pg_cron sends each winner a notification on Saturday 00:05 Cairo
+// asking them to contact MedBank for their prize. Restrictive RLS lets only
+// an admin write it; a missing row counts as on, like the server does.
+const WEEKLY_WINNER_NOTIFICATIONS_STORAGE_KEY = "g:weekly_winner_notifications";
+
+function getAdminWinnerNotificationsState() {
+  if (!state.adminWinnerNotifications) {
+    state.adminWinnerNotifications = { enabled: null, loading: false, loaded: false, saving: false, error: "" };
+  }
+  return state.adminWinnerNotifications;
+}
+
+function ensureAdminWinnerNotificationsLoaded() {
+  const setting = getAdminWinnerNotificationsState();
+  if (setting.loading || setting.loaded) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    return;
+  }
+  setting.loading = true;
+  runRelationalQueryWithTimeout(
+    client.from("app_state").select("payload").eq("storage_key", WEEKLY_WINNER_NOTIFICATIONS_STORAGE_KEY).maybeSingle(),
+    "The prize notification setting took too long to load.",
+  )
+    .then((row) => {
+      const enabled = row?.payload?.enabled;
+      setting.enabled = typeof enabled === "boolean" ? enabled : true;
+      setting.error = "";
+    })
+    .catch((error) => {
+      console.warn("Weekly winner notification setting unavailable.", error?.message || error);
+      setting.error = "The prize notification setting could not be loaded.";
+    })
+    .finally(() => {
+      setting.loading = false;
+      setting.loaded = true;
+      refreshAdminResultsView();
+    });
+}
+
+async function toggleAdminWinnerNotifications() {
+  const setting = getAdminWinnerNotificationsState();
+  if (setting.saving || typeof setting.enabled !== "boolean") {
+    return;
+  }
+  const next = !setting.enabled;
+  const question = next
+    ? "Turn on prize notifications?\n\nWhen each week ends, the top 3 students of every class will get a notification asking them to contact MedBank for their prize."
+    : "Pause prize notifications?\n\nNo prize notification will be sent when a week ends until you turn this back on.";
+  if (!window.confirm(question)) {
+    return;
+  }
+  const client = getRelationalClient();
+  if (!client) {
+    toast("You're offline. Try again when you're connected.");
+    return;
+  }
+  setting.saving = true;
+  setting.error = "";
+  refreshAdminResultsView();
+  try {
+    const now = new Date().toISOString();
+    const { error } = await client.from("app_state").upsert({
+      storage_key: WEEKLY_WINNER_NOTIFICATIONS_STORAGE_KEY,
+      payload: { enabled: next, updated_at: now, updated_by: (await getQuestionReportUserId(client)) || null },
+      updated_at: now,
+    }, { onConflict: "storage_key" });
+    if (error) {
+      throw error;
+    }
+    setting.enabled = next;
+    toast(next ? "Prize notifications are on." : "Prize notifications are paused.");
+  } catch (error) {
+    setting.error = String(error?.message || "The setting could not be saved.");
+  } finally {
+    setting.saving = false;
+    refreshAdminResultsView();
+  }
+}
+
+function renderAdminWinnerNotificationsPanel() {
+  ensureAdminWinnerNotificationsLoaded();
+  const setting = getAdminWinnerNotificationsState();
+  const known = typeof setting.enabled === "boolean";
+  const enabled = setting.enabled === true;
+  const label = setting.saving ? "Prize notifications..." : "Prize notifications";
+  const describe = !known
+    ? (setting.loaded ? "" : "Loading…")
+    : enabled
+      ? "On: when a week ends, the top 3 students of every class get a notification asking them to contact MedBank for their prize."
+      : "Paused: no prize notification is sent when a week ends.";
+  return `<div class="admin-auto-mcq-panel admin-winners-switch">
+    <div class="admin-auto-mcq-head">
+      <button class="admin-access-switch" type="button" data-admin-winner-notifications-toggle role="switch" aria-checked="${enabled ? "true" : "false"}" aria-describedby="admin-winners-switch-state" ${!known || setting.saving ? "disabled" : ""}>
+        ${renderAdminAccessSwitchContent(label, enabled)}
+      </button>
+    </div>
+    <p class="subtle admin-auto-mcq-state" id="admin-winners-switch-state">${escapeHtml(describe)}</p>
+    ${setting.error ? `<p class="subtle admin-auto-mcq-error">${escapeHtml(setting.error)}</p>` : ""}
+  </div>`;
+}
+
+// "Nov 8 – Nov 14, 2026" in Cairo time; week_end is the next Saturday 00:00.
+function formatAdminWinnersWeekRange(weekStart, weekEnd) {
+  const start = new Date(weekStart);
+  const lastDay = new Date(new Date(weekEnd).getTime() - 1);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(lastDay.getTime())) {
+    return "";
+  }
+  const day = new Intl.DateTimeFormat("en", { timeZone: "Africa/Cairo", month: "short", day: "numeric" });
+  const year = new Intl.DateTimeFormat("en", { timeZone: "Africa/Cairo", year: "numeric" });
+  return `${day.format(start)} – ${day.format(lastDay)}, ${year.format(lastDay)}`;
+}
+
+// Flat RPC rows (newest week first, then year, university, rank) → weeks,
+// each with its classes in order.
+function groupAdminWeeklyWinners(rows) {
+  const weeks = [];
+  const byWeek = new Map();
+  rows.forEach((row) => {
+    const weekKey = String(row.week_start || "");
+    let week = byWeek.get(weekKey);
+    if (!week) {
+      week = { weekStart: row.week_start, weekEnd: row.week_end, cohorts: [], byCohort: new Map() };
+      byWeek.set(weekKey, week);
+      weeks.push(week);
+    }
+    const cohortKey = `${String(row.university_id || "")}|${String(row.academic_year || "")}`;
+    let cohort = week.byCohort.get(cohortKey);
+    if (!cohort) {
+      cohort = { universityId: row.university_id, academicYear: row.academic_year, winners: [] };
+      week.byCohort.set(cohortKey, cohort);
+      week.cohorts.push(cohort);
+    }
+    cohort.winners.push(row);
+  });
+  return weeks;
+}
+
+function renderAdminResultsWinners(results) {
+  ensureUniversitiesLoaded(refreshAdminResultsView);
+  const year = Number(results.winYear);
+  const key = `${results.winUniversity}|${results.winYear}`;
+  const slot = loadAdminResultsSlot("winners", key, "admin_get_mcq_weekly_winners", () => ({
+    p_university_id: results.winUniversity || null,
+    p_academic_year: Number.isInteger(year) && year > 0 ? year : null,
+    p_top_n: 3,
+    p_limit_weeks: 26,
+    p_include_current: false,
+  }));
+  const universityOptions = [
+    { id: "", label: "All universities" },
+    ...getCachedUniversities().map((entry) => ({ id: entry.id, label: entry.name })),
+  ];
+  const yearOptions = [{ id: "", label: "All years" }, ...[1, 2, 3, 4, 5, 6].map((value) => ({ id: String(value), label: `Year ${String(value)}` }))];
+  const head = `${renderAdminWinnerNotificationsPanel()}
+    <div class="admin-results-filters">
+      ${renderAdminResultsSelect("winUniversity", "University", universityOptions, results.winUniversity)}
+      ${renderAdminResultsSelect("winYear", "Year", yearOptions, results.winYear)}
+    </div>`;
+  const weeks = groupAdminWeeklyWinners(Array.isArray(slot.data) ? slot.data : []);
+  if (!weeks.length) {
+    return `${head}${renderAdminResultsStatus(slot, "No finished week has points yet.")}`;
+  }
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const cards = weeks.map((week) => {
+    const endedMs = Date.now() - new Date(week.weekEnd).getTime();
+    const isLastWeek = endedMs >= 0 && endedMs < sevenDaysMs;
+    const cohorts = week.cohorts.map((cohort) => {
+      const label = [
+        cohort.universityId ? getUniversityDisplayName(cohort.universityId) : "",
+        cohort.academicYear ? `Year ${String(cohort.academicYear)}` : "",
+      ].filter(Boolean).join(" · ");
+      const rows = cohort.winners.map((row) => `<tr>
+          <td class="is-number admin-leaderboard-rank">#${escapeHtml(String(row.rank))}</td>
+          <td>
+            <button type="button" class="admin-results-student-link" data-admin-results-student="${escapeHtml(row.user_id)}">${escapeHtml(row.full_name || "Unnamed student")}</button>
+            ${row.is_hidden ? "<small>Name hidden from classmates</small>" : ""}
+          </td>
+          <td class="is-number"><b class="admin-results-score">${escapeHtml(formatAdminCount(Number(row.points) || 0))}</b></td>
+        </tr>`).join("");
+      return `<tbody>
+          ${label ? `<tr class="admin-winners-cohort"><th colspan="3" scope="colgroup">${escapeHtml(label)}</th></tr>` : ""}
+          ${rows}
+        </tbody>`;
+    }).join("");
+    return `<article class="admin-winners-week">
+      <header class="admin-winners-week-head">
+        ${isLastWeek ? '<span class="admin-winners-badge">Last week</span>' : ""}
+        <h4>${escapeHtml(formatAdminWinnersWeekRange(week.weekStart, week.weekEnd))}</h4>
+      </header>
+      <div class="admin-results-table-wrap">
+        <table class="admin-results-table">
+          <thead><tr><th class="is-number">Place</th><th>Student</th><th class="is-number">Points</th></tr></thead>
+          ${cohorts}
+        </table>
+      </div>
+    </article>`;
+  }).join("");
+  return `${head}
+    <p class="subtle admin-results-note">${escapeHtml(`${formatAdminCount(weeks.length)} finished ${weeks.length === 1 ? "week" : "weeks"} with points`)}${slot.loading ? " · updating…" : ""}</p>
+    <div class="admin-winners-weeks">${cards}</div>`;
 }
 
 // Subjects tab: every subject with results, then one subject's topics.
@@ -67819,7 +68050,7 @@ function wireAdminResults() {
   }));
   section.querySelectorAll("[data-admin-results-filter]").forEach((select) => select.addEventListener("change", () => {
     const field = select.getAttribute("data-admin-results-filter");
-    if (["range", "year", "semester", "sort", "topicSort", "missedCourse", "missedTopic", "missedMin", "lbPeriod", "lbUniversity", "lbYear"].includes(field)) {
+    if (["range", "year", "semester", "sort", "topicSort", "missedCourse", "missedTopic", "missedMin", "lbPeriod", "lbUniversity", "lbYear", "winUniversity", "winYear"].includes(field)) {
       results[field] = select.value;
       if (field === "missedCourse") {
         results.missedTopic = "";
@@ -67865,9 +68096,12 @@ function wireAdminResults() {
       render();
       return;
     }
-    results.tab = results.returnTab === "leaderboard" ? "leaderboard" : "students";
+    results.tab = getAdminResultsSidebarTab(results.returnTab) || "students";
     results.returnTab = "";
     refreshAdminResultsView();
+  });
+  section.querySelector("[data-admin-winner-notifications-toggle]")?.addEventListener("click", () => {
+    toggleAdminWinnerNotifications();
   });
   section.querySelectorAll("[data-admin-results-student-tab]").forEach((tab) => tab.addEventListener("click", () => {
     const next = String(tab.getAttribute("data-admin-results-student-tab") || "");

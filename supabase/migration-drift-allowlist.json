@@ -16,7 +16,10 @@
     "20261024120000": "Medbank-App: admin_action_log",
     "20261031120000": "Medbank-App: push_badge_counts",
     "20261031150000": "Medbank-App: mcq_leaderboard",
-    "20261031170000": "Medbank-App: admin_mcq_leaderboard"
+    "20261031170000": "Medbank-App: admin_mcq_leaderboard",
+    "20261113015500": "Medbank-App: atomic_finish_test_block (second version)",
+    "20261114200000": "Medbank-App: admin_leaderboard_weeks",
+    "20261115000000": "Medbank-App: mcq_weekly_winner_notifications"
   },
   "unappliedOnPurpose": {
     "20260909101500": "add_student_auto_approval_feature_flag: the app upserts the flag row itself (refactor log 2026-09-09)",

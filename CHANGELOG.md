@@ -9,6 +9,11 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-14 — Weekly winners in the admin
+- Student results has a Weekly winners tab (also in the sidebar): the top 3
+  students of every class for each finished week, and a switch to pause or
+  turn on the prize notification they get when a week ends.
+
 ### 2026-11-09 — Smaller previous-test history (ready, not switched on)
 - Tests older than 30 days will keep only what scores and stats need; their
   review shows the question's current text, and a question removed from the
