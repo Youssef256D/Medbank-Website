@@ -2,6 +2,18 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-14 — Migration files caught up with the hosted ledger
+- `20261027130000_shared_test_write_rpcs` and `20261027140000_server_side_grading`
+  (+ their rollbacks) were live but only on the unmerged branches
+  `claude/shared-test-rpcs` and `claude/adoring-feynman-cf55c5`. Only the
+  migration and rollback files were copied to `main`; those branches'
+  `main.js` changes are still unmerged and not shipped. Every object the two
+  files create was checked present in production first.
+- Also committed `20261111020211`, `20261111225508` and `20261113010000`
+  (applied 2026-11-11..13, see the 2026-11-12 entry). `20261113015500` is the
+  same SQL applied a second time from the Flutter repo and stays allowlisted.
+- `check-migration-drift.mjs --ledger` passed against all 160 hosted versions.
+
 ### 2026-11-14 — Admin: Student results → Weekly winners
 - New `winners` tab in `ADMIN_RESULTS_TABS` (and its own sidebar entry under
   People, `resultsTab: "winners"`). `getAdminResultsSidebarTab` decides which
@@ -19,6 +31,16 @@ Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every ag
   `20261115000000_mcq_weekly_winner_notifications` (applied 2026-11-14).
   The second also schedules pg_cron `mcq-weekly-winner-notifications`
   (Fridays 21:05 and 22:05 UTC), which sends the prize notifications.
+
+### 2026-11-12 — Reverted experimental MCQ reliability changes
+- At the user’s request, restored the Flutter implementation that preceded the
+  exam draft/finalization work. Earlier Creator Studio changes were preserved.
+- Production migration `20261111225508_rollback_atomic_test_finalization` removes
+  only the additive `20261111020211` functions, trigger and empty private result
+  table. Existing attempts, responses, history and legacy RPCs are preserved;
+  the legacy RPC definitions were verified unchanged after rollback.
+- Removed this work’s empty `medbank-staging` preview branch and GitHub staging
+  environment. Both applied migration files remain as deployment history.
 
 ### 2026-11-09 — Slim old test history (approved; migration not applied)
 - `20261109120000_slim_old_history_snapshots` (+ rollback):
