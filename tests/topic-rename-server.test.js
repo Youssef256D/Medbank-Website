@@ -32,9 +32,11 @@ const setup = ({ topics, questions, failUpdate = false }) => {
           return Promise.resolve({ data: null, error: new Error('denied') }).then(resolve, reject);
         }
         const rows = table === 'course_topics' ? topics : questions;
-        const matching = rows.filter((row) => filters.every(([column, value]) => (
-          column === 'courses.course_name' ? row.course === value : row[column] === value
-        )));
+        const matching = rows.filter((row) => filters.every(([column, value]) => {
+          if (column === 'courses.course_name') return row.course === value;
+          if (column === 'courses.program_id') return (row.program_id ?? 'prog-o6u-med') === value;
+          return row[column] === value;
+        }));
         if (update) matching.forEach((row) => Object.assign(row, update));
         return Promise.resolve({ data: matching.map((row) => ({ id: row.id })), error: null }).then(resolve, reject);
       },
@@ -47,6 +49,7 @@ const setup = ({ topics, questions, failUpdate = false }) => {
     SUPABASE_QUERY_TIMEOUT_MS: 1000,
     QUESTION_RELATIONAL_TIMEOUT_MS: 1000,
     getRelationalClient: () => ({ from }),
+    resolveWebsiteMcqProgramScope: async () => ({ programId: 'prog-o6u-med', unconfirmed: false }),
     runWithTimeoutResult: (promise) => promise,
     markAdminQuestionCountsStale: () => {},
     flushPendingSyncNow: async () => { log.flushed += 1; },

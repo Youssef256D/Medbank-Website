@@ -54,6 +54,7 @@ const setup = ({ dbRows, localQuestions, serverCounts = null, topicRows = [{ id:
     SUPABASE_QUERY_TIMEOUT_MS: 1000,
     QUESTION_RELATIONAL_TIMEOUT_MS: 1000,
     getRelationalClient: () => client,
+    resolveWebsiteMcqProgramScope: async () => ({ programId: 'prog-o6u-med', unconfirmed: false }),
     runWithTimeoutResult: (promise) => promise,
     getQuestions: () => localQuestions,
     saveLocalOnly: (key, value) => { log.savedLocal = value; },

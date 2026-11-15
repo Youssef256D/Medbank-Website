@@ -806,12 +806,26 @@ const state = {
   universitiesLoading: false,
   universitiesLoadedAt: 0,
   universitiesError: "",
+  signupPrograms: [],
+  signupProgramsLoading: false,
+  signupProgramsLoadedAt: 0,
+  signupProgramsError: "",
+  universityColleges: [],
+  universityCollegesLoading: false,
+  universityCollegesLoadedAt: 0,
+  universityCollegesError: "",
   adminUniversityDraft: null,
   adminUniversityDraftInitial: "",
   adminUniversityDraftDirty: false,
   adminUniversityDialogReturnFocus: "",
   adminUniversityDialogNeedsFocus: false,
   adminUniversitySaving: false,
+  adminCollegeDraft: null,
+  adminCollegeDraftInitial: "",
+  adminCollegeDraftDirty: false,
+  adminCollegeDialogReturnFocus: "",
+  adminCollegeDialogNeedsFocus: false,
+  adminCollegeSaving: false,
   adminHelpOpen: loadAdminHelpOpenState(),
   userMenuOpen: false,
   notificationMenuOpen: false,
@@ -5226,13 +5240,14 @@ function getCoursesAccessBlockedMessage() {
   return "Video Courses access is unavailable for this account. Contact the admin if you need access.";
 }
 
-// University + college (MCQ Bank eligibility). Migration
-// 20260928083023_universities_and_college_mcq_eligibility: only students whose
-// university has `mcq_bank_available` AND whose college is 'medicine' may use
-// the MCQ Bank. The database enforces it (a trigger keeps
-// profiles.mcq_access_enabled false for everyone else), so the website reads
-// that flag as before; the helpers below only explain the rule and hide MCQ
-// entry points early. Pure logic lives in universities-utils.js.
+// University + college (MCQ Bank eligibility). Migrations
+// 20260928083023 and 20261116090000_mcq_programs: a student may use the MCQ Bank
+// only when their selected program (university + college in
+// `public.university_colleges`) offers it (`mcq_bank_available = true` on both
+// university and college). The database enforces it (a trigger keeps
+// profiles.mcq_access_enabled aligned), so the website reads that flag as
+// before; the helpers below only explain the rule and hide MCQ entry points
+// early. Pure logic lives in universities-utils.js.
 //
 // Local user fields: `universityId` / `college` are `null` when the profile was
 // read and the column is empty, and absent (undefined) when this browser has
@@ -5250,24 +5265,88 @@ const UNIVERSITY_COLLEGE_FALLBACK_OPTIONS = [
   { value: "applied_health_sciences", label: "Applied Health Sciences" },
   { value: "other", label: "Other" },
 ];
+const UNIVERSITY_COLLEGE_KEY_PATTERN = /^[a-z][a-z0-9_]{1,39}$/;
 const UNIVERSITIES_SELECT = "id,name,name_ar,mcq_bank_available,is_active,sort_order,created_at,updated_at";
-const MCQ_INELIGIBLE_NOTE_FALLBACK = "The MCQ Bank is available for Medicine students at October 6 University. You'll have full access to Video Courses.";
-const MCQ_INELIGIBLE_NOTE_HIDDEN_FALLBACK = "The MCQ Bank is available for Medicine students at October 6 University.";
+const UNIVERSITY_COLLEGES_SELECT = "id,university_id,college_key,name,name_ar,years_count,semesters_per_year,mcq_bank_available,is_active,sort_order,created_at,updated_at";
+const MCQ_INELIGIBLE_NOTE_FALLBACK = "The MCQ Bank is available for Medicine – October 6 University. You'll have full access to Video Courses.";
+const MCQ_INELIGIBLE_NOTE_HIDDEN_FALLBACK = "The MCQ Bank is available for Medicine – October 6 University.";
 
-function getCollegeOptions() {
-  return getUniversitiesUtils()?.COLLEGE_OPTIONS || UNIVERSITY_COLLEGE_FALLBACK_OPTIONS;
+function getCachedSignupPrograms() {
+  return Array.isArray(state.signupPrograms) ? state.signupPrograms : [];
+}
+
+function getCachedUniversityColleges() {
+  return Array.isArray(state.universityColleges) ? state.universityColleges : [];
+}
+
+function getKnownCollegePrograms() {
+  const signup = getCachedSignupPrograms();
+  if (signup.length) return signup;
+  return getCachedUniversityColleges();
+}
+
+function getCollegeOptions(universityId = null, programsOverride = null) {
+  const utils = getUniversitiesUtils();
+  const programs = Array.isArray(programsOverride) ? programsOverride : getKnownCollegePrograms();
+  const uid = normalizeUniversityIdValue(universityId);
+  if (uid && utils?.getProgramsForUniversity) {
+    const forUni = utils.getProgramsForUniversity(programs, uid);
+    if (forUni.length) {
+      return forUni.map((entry) => ({
+        value: entry.college_key,
+        label: entry.name || getCollegeLabel(entry.college_key, programs),
+        program: entry,
+      }));
+    }
+  }
+  return utils?.COLLEGE_OPTIONS || UNIVERSITY_COLLEGE_FALLBACK_OPTIONS;
 }
 
 function normalizeCollegeValue(value) {
   const utils = getUniversitiesUtils();
   if (utils) return utils.normalizeCollege(value);
   const college = String(value ?? "").trim().toLowerCase();
-  return UNIVERSITY_COLLEGE_FALLBACK_OPTIONS.some((entry) => entry.value === college) ? college : null;
+  return UNIVERSITY_COLLEGE_KEY_PATTERN.test(college) ? college : null;
 }
 
-function getCollegeLabel(value) {
+function getCollegeLabel(value, programsOverride = null) {
   const college = normalizeCollegeValue(value);
-  return getCollegeOptions().find((entry) => entry.value === college)?.label || "";
+  if (!college) return "";
+  const programs = Array.isArray(programsOverride) ? programsOverride : getKnownCollegePrograms();
+  const utils = getUniversitiesUtils();
+  if (utils?.getCollegeLabel) {
+    return utils.getCollegeLabel(college, programs);
+  }
+  const fallbackOption = UNIVERSITY_COLLEGE_FALLBACK_OPTIONS.find((entry) => entry.value === college);
+  if (fallbackOption) return fallbackOption.label;
+  const matched = programs.find((entry) => normalizeCollegeValue(entry?.college_key) === college && String(entry?.name || "").trim());
+  return matched ? String(matched.name).trim() : college;
+}
+
+function getProgramForSelection(universityId, college, programsOverride = null) {
+  const utils = getUniversitiesUtils();
+  const programs = Array.isArray(programsOverride) ? programsOverride : getKnownCollegePrograms();
+  if (utils?.findProgram) {
+    return utils.findProgram(programs, universityId, college);
+  }
+  const uid = normalizeUniversityIdValue(universityId);
+  const key = normalizeCollegeValue(college);
+  if (!uid || !key) return null;
+  return programs.find((entry) => entry && entry.university_id === uid && entry.college_key === key) || null;
+}
+
+function getTermBoundsForSelection(universityId, college, programsOverride = null) {
+  const utils = getUniversitiesUtils();
+  const program = getProgramForSelection(universityId, college, programsOverride);
+  if (utils?.getProgramTermBounds) {
+    return utils.getProgramTermBounds(program);
+  }
+  const years = Number(program?.years_count);
+  const semesters = Number(program?.semesters_per_year);
+  return {
+    yearsCount: Number.isInteger(years) && years >= 1 && years <= 7 ? years : 5,
+    semestersPerYear: Number.isInteger(semesters) && semesters >= 1 && semesters <= 3 ? semesters : 2,
+  };
 }
 
 function normalizeUniversityIdValue(value) {
@@ -5316,10 +5395,16 @@ function isUserMcqAccessHeld(account) {
 }
 
 function getMcqIneligibleNote() {
+  const utils = getUniversitiesUtils();
+  const programs = getKnownCollegePrograms();
+  const universities = getCachedUniversities();
+  if (utils?.formatMcqIneligibleNote && (programs.length || universities.length)) {
+    return utils.formatMcqIneligibleNote(programs, universities, { videoCoursesHidden: isVideoCoursesHidden() });
+  }
   if (isVideoCoursesHidden()) {
     return MCQ_INELIGIBLE_NOTE_HIDDEN_FALLBACK;
   }
-  return getUniversitiesUtils()?.MCQ_INELIGIBLE_NOTE || MCQ_INELIGIBLE_NOTE_FALLBACK;
+  return utils?.MCQ_INELIGIBLE_NOTE || MCQ_INELIGIBLE_NOTE_FALLBACK;
 }
 
 function getCachedUniversities() {
@@ -5344,11 +5429,12 @@ function resolveUserMcqEligibility(user) {
   if (!user) return null;
   const utils = getUniversitiesUtils();
   if (!utils) return null;
+  const programs = getKnownCollegePrograms();
   return utils.resolveMcqEligibility({
     role: user.role,
     universityId: user.universityId,
     college: user.college,
-  }, getCachedUniversities());
+  }, getCachedUniversities(), programs.length ? programs : null);
 }
 
 function isStudentUniversityCollegeMissing(user) {
@@ -5360,6 +5446,61 @@ function isStudentUniversityCollegeMissing(user) {
 }
 
 let universitiesLoadPromise = null;
+let signupProgramsLoadPromise = null;
+
+async function loadSignupPrograms(options = {}) {
+  if (signupProgramsLoadPromise && !options.force) {
+    return signupProgramsLoadPromise;
+  }
+  const client = getRelationalClient();
+  if (!client || typeof client.rpc !== "function") {
+    return false;
+  }
+  state.signupProgramsLoading = true;
+  state.signupProgramsError = "";
+  signupProgramsLoadPromise = (async () => {
+    try {
+      const { data, error } = await runWithTimeoutResult(
+        client.rpc("get_signup_programs"),
+        SUPABASE_QUERY_TIMEOUT_MS,
+        "Programs query timed out.",
+      );
+      if (error) {
+        if (typeof isMissingRpcFunctionError === "function" && isMissingRpcFunctionError(error)) {
+          state.signupPrograms = [];
+          state.signupProgramsLoadedAt = Date.now();
+          state.signupProgramsError = "";
+          return true;
+        }
+        throw error;
+      }
+      const utils = getUniversitiesUtils();
+      state.signupPrograms = utils?.sortUniversityColleges ? utils.sortUniversityColleges(data || []) : [];
+      state.signupProgramsLoadedAt = Date.now();
+      return true;
+    } catch (error) {
+      console.warn("Could not load signup programs.", error?.message || error);
+      state.signupProgramsError = getUniversitiesUtils()?.describeUniversityError(
+        error,
+        "Programs could not be loaded.",
+      ) || "Programs could not be loaded.";
+      return false;
+    } finally {
+      state.signupProgramsLoading = false;
+      signupProgramsLoadPromise = null;
+    }
+  })();
+  return signupProgramsLoadPromise;
+}
+
+function ensureSignupProgramsLoaded(onLoaded = null) {
+  if (state.signupProgramsLoadedAt || state.signupProgramsLoading || state.signupProgramsError) {
+    return;
+  }
+  loadSignupPrograms().then((ok) => {
+    if (ok && typeof onLoaded === "function") onLoaded();
+  });
+}
 
 // RLS decides what comes back: signed-out visitors and students see the
 // active (public) list, admins see every row. The pickers filter hidden rows
@@ -5427,11 +5568,71 @@ function renderUniversitySelectOptions(selectedId = null, options = {}) {
     : ""}`;
 }
 
-function renderCollegeSelectOptions(selected = null) {
+function renderCollegeSelectOptions(selected = null, options = {}) {
   const college = normalizeCollegeValue(selected);
-  return `<option value="" ${college ? "" : "selected"}>Select college</option>${getCollegeOptions()
+  const universityId = normalizeUniversityIdValue(options?.universityId);
+  const list = getCollegeOptions(universityId, options?.programs);
+  const knownValues = new Set(list.map((entry) => entry.value));
+  return `<option value="" ${college ? "" : "selected"}>Select college</option>${list
     .map((entry) => `<option value="${escapeHtml(entry.value)}" ${entry.value === college ? "selected" : ""}>${escapeHtml(entry.label)}</option>`)
-    .join("")}`;
+    .join("")}${college && !knownValues.has(college)
+    ? `<option value="${escapeHtml(college)}" selected>${escapeHtml(getCollegeLabel(college, options?.programs) || college)}</option>`
+    : ""}`;
+}
+
+function renderYearSelectOptions(selectedYear = null, yearsCount = 5) {
+  const maxYears = Math.min(7, Math.max(1, Number(yearsCount) || 5));
+  const year = Number.isInteger(Number(selectedYear)) && Number(selectedYear) >= 1 && Number(selectedYear) <= maxYears
+    ? Number(selectedYear)
+    : null;
+  const options = [`<option value="" ${year === null ? "selected" : ""}>Select year</option>`];
+  for (let entry = 1; entry <= maxYears; entry += 1) {
+    options.push(`<option value="${entry}" ${year === entry ? "selected" : ""}>Year ${entry}</option>`);
+  }
+  return options.join("");
+}
+
+function renderSemesterSelectOptions(selectedSemester = null, semestersPerYear = 2) {
+  const maxSemesters = Math.min(3, Math.max(1, Number(semestersPerYear) || 2));
+  const semester = Number.isInteger(Number(selectedSemester)) && Number(selectedSemester) >= 1 && Number(selectedSemester) <= maxSemesters
+    ? Number(selectedSemester)
+    : null;
+  const options = [`<option value="" ${semester === null ? "selected" : ""}>Select semester</option>`];
+  for (let entry = 1; entry <= maxSemesters; entry += 1) {
+    options.push(`<option value="${entry}" ${semester === entry ? "selected" : ""}>Semester ${entry}</option>`);
+  }
+  return options.join("");
+}
+
+function syncFormTermOptionsForProgram(form, selection = null) {
+  if (!form) return { yearsCount: 5, semestersPerYear: 2, program: null, changed: false };
+  const yearSelect = form.querySelector("select[name='academicYear']");
+  const semesterSelect = form.querySelector("select[name='academicSemester']");
+  const resolvedSelection = selection || readUniversityCollegeSelection(form);
+  const program = getProgramForSelection(resolvedSelection.universityId, resolvedSelection.college);
+  const { yearsCount, semestersPerYear } = getTermBoundsForSelection(resolvedSelection.universityId, resolvedSelection.college);
+  let changed = false;
+
+  if (yearSelect) {
+    const rawYear = String(yearSelect.value || "").trim();
+    const numericYear = Number(rawYear);
+    const nextYear = Number.isInteger(numericYear) && numericYear >= 1 && numericYear <= yearsCount ? numericYear : null;
+    if (rawYear && nextYear === null) {
+      changed = true;
+    }
+    yearSelect.innerHTML = renderYearSelectOptions(nextYear, yearsCount);
+  }
+  if (semesterSelect) {
+    const rawSem = String(semesterSelect.value || "").trim();
+    const numericSem = Number(rawSem);
+    const nextSemester = Number.isInteger(numericSem) && numericSem >= 1 && numericSem <= semestersPerYear ? numericSem : null;
+    if (rawSem && nextSemester === null) {
+      changed = true;
+    }
+    semesterSelect.innerHTML = renderSemesterSelectOptions(nextSemester, semestersPerYear);
+  }
+
+  return { yearsCount, semestersPerYear, program, changed };
 }
 
 // Shared University + College fields for sign-up, Google onboarding and
@@ -5448,7 +5649,7 @@ function renderUniversityCollegeFields({ idPrefix, universityId = null, college 
       </label>
       <label>College
         <select name="college" id="${prefix}-college" required aria-required="true">
-          ${renderCollegeSelectOptions(college)}
+          ${renderCollegeSelectOptions(college, { universityId })}
         </select>
       </label>
     </div>
@@ -5483,8 +5684,22 @@ function wireUniversityCollegeFields(form, { onChange = null } = {}) {
   const sync = () => {
     const selection = readUniversityCollegeSelection(form);
     const ineligible = isUniversityCollegeSelectionIneligible(selection);
-    if (note) note.hidden = !ineligible;
-    if (typeof onChange === "function") onChange({ ...selection, ineligible });
+    const program = getProgramForSelection(selection.universityId, selection.college);
+    const { yearsCount, semestersPerYear } = getTermBoundsForSelection(selection.universityId, selection.college);
+    if (note) {
+      note.textContent = getMcqIneligibleNote();
+      note.hidden = !ineligible;
+    }
+    if (typeof onChange === "function") {
+      onChange({ ...selection, ineligible, program, yearsCount, semestersPerYear });
+    }
+  };
+  const refillColleges = () => {
+    if (!collegeSelect || !collegeSelect.isConnected) return;
+    const selectedUniversityId = normalizeUniversityIdValue(universitySelect?.value);
+    const currentCollege = normalizeCollegeValue(collegeSelect.value);
+    collegeSelect.innerHTML = renderCollegeSelectOptions(currentCollege, { universityId: selectedUniversityId });
+    sync();
   };
   const refillUniversities = () => {
     if (!universitySelect || !universitySelect.isConnected) return;
@@ -5495,17 +5710,21 @@ function wireUniversityCollegeFields(form, { onChange = null } = {}) {
       const message = errorEl.querySelector("span");
       if (message) message.textContent = state.universitiesError || "";
     }
-    sync();
+    refillColleges();
   };
-  universitySelect?.addEventListener("change", sync);
+  universitySelect?.addEventListener("change", refillColleges);
   collegeSelect?.addEventListener("change", sync);
   errorEl?.querySelector("[data-action='retry-universities']")?.addEventListener("click", () => {
     state.universitiesError = "";
     refillUniversities();
     loadUniversities({ force: true }).then(refillUniversities);
+    loadSignupPrograms({ force: true }).then(refillColleges);
   });
   if (!state.universitiesLoadedAt) {
     loadUniversities().then(refillUniversities);
+  }
+  if (!state.signupProgramsLoadedAt) {
+    loadSignupPrograms().then(refillColleges);
   }
   sync();
 }
@@ -6200,7 +6419,16 @@ function hasCompleteStudentProfile(user) {
   const phoneValidation = validateAndNormalizePhoneNumber(String(user.phone || ""));
   const year = Number(user.academicYear);
   const semester = Number(user.academicSemester);
-  return phoneValidation.ok && year >= 1 && year <= 5 && (semester === 1 || semester === 2);
+  const bounds = typeof getTermBoundsForSelection === "function"
+    ? getTermBoundsForSelection(user.universityId, user.college)
+    : { yearsCount: 5, semestersPerYear: 2 };
+  return phoneValidation.ok
+    && Number.isInteger(year)
+    && year >= 1
+    && year <= bounds.yearsCount
+    && Number.isInteger(semester)
+    && semester >= 1
+    && semester <= bounds.semestersPerYear;
 }
 
 function hasSelectedStudentCourses(user) {
@@ -6208,6 +6436,9 @@ function hasSelectedStudentCourses(user) {
     return false;
   }
   if (user.role !== "student") {
+    return true;
+  }
+  if (typeof resolveUserMcqEligibility === "function" && resolveUserMcqEligibility(user) === false) {
     return true;
   }
   const year = normalizeAcademicYearOrNull(user.academicYear);
@@ -6446,12 +6677,16 @@ function describeMissingStudentApprovalFields(user) {
   if (!validateAndNormalizePhoneNumber(String(user.phone || "")).ok) {
     missing.push("phone number");
   }
+  const bounds = typeof getTermBoundsForSelection === "function"
+    ? getTermBoundsForSelection(user.universityId, user.college)
+    : { yearsCount: 5, semestersPerYear: 2 };
   const year = Number(user.academicYear);
-  if (!(year >= 1 && year <= 5)) {
+  const yearOk = Number.isInteger(year) && year >= 1 && year <= bounds.yearsCount;
+  if (!yearOk) {
     missing.push("year");
   }
   const semester = Number(user.academicSemester);
-  const semesterOk = semester === 1 || semester === 2;
+  const semesterOk = Number.isInteger(semester) && semester >= 1 && semester <= bounds.semestersPerYear;
   if (!semesterOk) {
     missing.push("semester");
   }
@@ -6460,7 +6695,7 @@ function describeMissingStudentApprovalFields(user) {
   // always falls through to the (usually empty) explicit assignment list. Naming
   // it there would tell an admin to pick courses that setting the term will
   // supply on its own. The badge re-evaluates as the row is filled in.
-  if ((year >= 1 && year <= 5) && semesterOk && !hasSelectedStudentCourses(user)) {
+  if (yearOk && semesterOk && !hasSelectedStudentCourses(user)) {
     missing.push("course selection");
   }
   return missing;
@@ -10976,22 +11211,197 @@ async function hydrateRelationalState(user) {
   }
 }
 
+let websiteMcqProgramIdCache;
+let websiteMcqProgramIdPromise = null;
+let universityCollegesTableMissing = false;
+const programIdByUniversityCollegeCache = new Map();
+const programIdByUniversityCollegePromises = new Map();
+
+function isMissingUniversityCollegesTableError(error) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const message = String(error?.message || "");
+  return code === "42P01"
+    || code === "PGRST205"
+    || (/university_colleges/i.test(message) && (/does not exist/i.test(message) || /could not find the table/i.test(message)));
+}
+
+// Resolves the website's MCQ curriculum program (October 6 University · Medicine)
+// once per session so admin/curriculum/name-based `courses` queries stay scoped
+// to it after migration 20261116090000_mcq_programs. Returns null on the older
+// schema without `university_colleges`.
+async function getWebsiteMcqProgramId() {
+  if (universityCollegesTableMissing) {
+    return null;
+  }
+  if (typeof websiteMcqProgramIdCache === "string" && websiteMcqProgramIdCache) {
+    return websiteMcqProgramIdCache;
+  }
+  if (websiteMcqProgramIdPromise) {
+    return websiteMcqProgramIdPromise;
+  }
+  const client = getRelationalClient();
+  if (!client || typeof client.from !== "function") {
+    return null;
+  }
+  websiteMcqProgramIdPromise = (async () => {
+    try {
+      const { data, error } = await runWithTimeoutResult(
+        client
+          .from("university_colleges")
+          .select("id,college_key,universities!inner(name)")
+          .eq("college_key", "medicine"),
+        RELATIONAL_SYNC_TIMEOUT_MS,
+        "Website MCQ program lookup timed out.",
+      );
+      if (error) {
+        if (isMissingUniversityCollegesTableError(error)) {
+          universityCollegesTableMissing = true;
+          websiteMcqProgramIdCache = undefined;
+          return null;
+        }
+        console.warn("Could not resolve website MCQ program id.", error?.message || error);
+        return null;
+      }
+      const rows = Array.isArray(data) ? data : [];
+      const match = rows.find((row) => {
+        const uni = Array.isArray(row?.universities) ? row.universities[0] : row?.universities;
+        return String(uni?.name || "").trim().toLowerCase() === "october 6 university";
+      });
+      if (match?.id && isUuidValue(match.id)) {
+        websiteMcqProgramIdCache = String(match.id).trim().toLowerCase();
+        return websiteMcqProgramIdCache;
+      }
+      return null;
+    } catch (error) {
+      if (isMissingUniversityCollegesTableError(error)) {
+        universityCollegesTableMissing = true;
+        websiteMcqProgramIdCache = undefined;
+        return null;
+      }
+      console.warn("Could not resolve website MCQ program id.", error?.message || error);
+      return null;
+    } finally {
+      websiteMcqProgramIdPromise = null;
+    }
+  })();
+  return websiteMcqProgramIdPromise;
+}
+
+const WEBSITE_MCQ_PROGRAM_UNCONFIRMED_ERROR_MESSAGE =
+  "Could not confirm the MCQ college; nothing was saved. Try again.";
+
+function resetWebsiteMcqProgramIdCache() {
+  websiteMcqProgramIdCache = undefined;
+  websiteMcqProgramIdPromise = null;
+}
+
+async function resolveWebsiteMcqProgramScope(options = {}) {
+  const programId = await getWebsiteMcqProgramId();
+  if (programId || universityCollegesTableMissing) {
+    return { programId: programId || null, unconfirmed: false };
+  }
+  if (options.throwIfUnconfirmed) {
+    throw new Error(WEBSITE_MCQ_PROGRAM_UNCONFIRMED_ERROR_MESSAGE);
+  }
+  return { programId: null, unconfirmed: true };
+}
+
+// Resolves a student's `university_colleges.id` (program id) from their
+// `university_id` + `college` and caches the lookup per pair. Returns null when
+// `university_colleges` does not exist yet or the pair is incomplete/missing.
+async function resolveProgramIdForUniversityCollege(universityId, college) {
+  if (universityCollegesTableMissing) {
+    return null;
+  }
+  const uid = normalizeUniversityIdValue(universityId);
+  const key = normalizeCollegeValue(college);
+  if (!uid || !key) {
+    return null;
+  }
+  const cacheKey = `${uid}::${key}`;
+  if (programIdByUniversityCollegeCache.has(cacheKey)) {
+    return programIdByUniversityCollegeCache.get(cacheKey);
+  }
+  const knownProgram = typeof getProgramForSelection === "function"
+    ? getProgramForSelection(uid, key)
+    : null;
+  const knownProgramId = normalizeUniversityIdValue(knownProgram?.program_id || knownProgram?.id);
+  if (knownProgramId) {
+    programIdByUniversityCollegeCache.set(cacheKey, knownProgramId);
+    return knownProgramId;
+  }
+  if (programIdByUniversityCollegePromises.has(cacheKey)) {
+    return programIdByUniversityCollegePromises.get(cacheKey);
+  }
+  const client = getRelationalClient();
+  if (!client || typeof client.from !== "function") {
+    return null;
+  }
+  const pending = (async () => {
+    try {
+      const { data, error } = await runWithTimeoutResult(
+        client
+          .from("university_colleges")
+          .select("id")
+          .eq("university_id", uid)
+          .eq("college_key", key)
+          .limit(1)
+          .maybeSingle(),
+        RELATIONAL_SYNC_TIMEOUT_MS,
+        "Program lookup timed out.",
+      );
+      if (error) {
+        if (isMissingUniversityCollegesTableError(error)) {
+          universityCollegesTableMissing = true;
+          programIdByUniversityCollegeCache.set(cacheKey, null);
+          return null;
+        }
+        console.warn("Could not resolve program id for university/college.", error?.message || error);
+        return null;
+      }
+      const resolvedId = normalizeUniversityIdValue(data?.id);
+      programIdByUniversityCollegeCache.set(cacheKey, resolvedId || null);
+      return resolvedId || null;
+    } catch (error) {
+      if (isMissingUniversityCollegesTableError(error)) {
+        universityCollegesTableMissing = true;
+        programIdByUniversityCollegeCache.set(cacheKey, null);
+        return null;
+      }
+      console.warn("Could not resolve program id for university/college.", error?.message || error);
+      return null;
+    } finally {
+      programIdByUniversityCollegePromises.delete(cacheKey);
+    }
+  })();
+  programIdByUniversityCollegePromises.set(cacheKey, pending);
+  return pending;
+}
+
 async function hydrateRelationalCoursesAndTopics() {
   const client = getRelationalClient();
   if (!client || !relationalSync.enabled) {
     return false;
   }
+  const { programId, unconfirmed } = await resolveWebsiteMcqProgramScope();
+  if (unconfirmed) {
+    return false;
+  }
 
-  const coursesResult = await fetchRowsPaged((from, to) => (
-    client
+  const coursesResult = await fetchRowsPaged((from, to) => {
+    let query = client
       .from("courses")
-      .select("id,course_name,course_code,academic_year,academic_semester,is_active")
+      .select("id,course_name,course_code,academic_year,academic_semester,is_active");
+    if (programId) {
+      query = query.eq("program_id", programId);
+    }
+    return query
       .order("academic_year", { ascending: true })
       .order("academic_semester", { ascending: true })
       .order("course_name", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, to)
-  ));
+      .range(from, to);
+  });
   if (coursesResult.error) {
     console.warn("Could not hydrate relational courses.", coursesResult.error?.message || coursesResult.error);
     return false;
@@ -11754,8 +12164,18 @@ async function fetchRowsByKeyset(fetchPage, options = {}) {
 // One course's questions, choices included, for the admin Questions page.
 // Rows come back in the catalog RPC's shape so the same mapping reads both.
 async function fetchAdminCourseQuestionRows(client, courseName, columnSupport) {
+  const { programId, unconfirmed } = typeof resolveWebsiteMcqProgramScope === "function"
+    ? await resolveWebsiteMcqProgramScope()
+    : { programId: typeof getWebsiteMcqProgramId === "function" ? await getWebsiteMcqProgramId() : null, unconfirmed: false };
+  if (unconfirmed) {
+    return { data: null, error: new Error(WEBSITE_MCQ_PROGRAM_UNCONFIRMED_ERROR_MESSAGE) };
+  }
+  let coursesQuery = client.from("courses").select("id,course_name").eq("course_name", courseName);
+  if (programId) {
+    coursesQuery = coursesQuery.eq("program_id", programId);
+  }
   const coursesResult = await runWithTimeoutResult(
-    client.from("courses").select("id,course_name").eq("course_name", courseName),
+    coursesQuery,
     SUPABASE_QUERY_TIMEOUT_MS,
     "Course lookup timed out.",
   );
@@ -15033,14 +15453,18 @@ async function fetchRelationalContentCountsForRestore() {
     return null;
   }
   try {
+    const programId = await getWebsiteMcqProgramId();
     const [coursesResult, topicsResult, questionsResult] = await Promise.all([
-      fetchRowsPaged((from, to) => (
-        client
+      fetchRowsPaged((from, to) => {
+        let query = client
           .from("courses")
           .select("id")
-          .eq("is_active", true)
-          .range(from, to)
-      )),
+          .eq("is_active", true);
+        if (programId) {
+          query = query.eq("program_id", programId);
+        }
+        return query.range(from, to);
+      }),
       fetchRowsPaged((from, to) => (
         client
           .from("course_topics")
@@ -16152,13 +16576,21 @@ function buildAdminQuestionCountSnapshotFromRows(questionRows, courseRows, topic
 }
 
 async function fetchAdminQuestionCountSnapshotFallback(client) {
+  const { programId, unconfirmed } = await resolveWebsiteMcqProgramScope();
+  if (unconfirmed) {
+    throw new Error(WEBSITE_MCQ_PROGRAM_UNCONFIRMED_ERROR_MESSAGE);
+  }
   const [questionsResult, coursesResult, topicsResult, choicesResult] = await Promise.all([
     fetchRowsPaged((from, to) => (
       client.from("questions").select("id,course_id,topic_id,status,created_at").range(from, to)
     ), { pageSize: 1000, timeoutMessage: "Question count query timed out." }),
-    fetchRowsPaged((from, to) => (
-      client.from("courses").select("id,course_name").range(from, to)
-    ), { pageSize: 1000, timeoutMessage: "Course count lookup timed out." }),
+    fetchRowsPaged((from, to) => {
+      let query = client.from("courses").select("id,course_name");
+      if (programId) {
+        query = query.eq("program_id", programId);
+      }
+      return query.range(from, to);
+    }, { pageSize: 1000, timeoutMessage: "Course count lookup timed out." }),
     fetchRowsPaged((from, to) => (
       client.from("course_topics").select("id,course_id,topic_name").range(from, to)
     ), { pageSize: 1000, timeoutMessage: "Topic count lookup timed out." }),
@@ -17747,58 +18179,169 @@ async function syncUserCourseEnrollmentsToRelational(usersPayload, options = {})
       ? String(options.assignedByAuthId).trim()
       : null;
 
-    const courses = await runRelationalQueryWithTimeout(
-      client
-        .from("courses")
-        .select("id,course_name,academic_year,academic_semester")
-        .eq("is_active", true),
-      "Course lookup timed out during enrollment sync.",
-      ENROLLMENT_SYNC_QUERY_TIMEOUT_MS,
-    );
+    const websiteProgramId = await getWebsiteMcqProgramId();
+    const studentProgramIdByUserId = new Map();
+    const distinctProgramIds = new Set();
+    for (const userId of userIds) {
+      const student = studentsByUserId.get(userId);
+      let studentProgramId = await resolveProgramIdForUniversityCollege(
+        student?.universityId,
+        student?.college,
+      );
+      if (!studentProgramId && !student?.universityId && !student?.college && websiteProgramId) {
+        studentProgramId = websiteProgramId;
+      }
+      studentProgramIdByUserId.set(userId, studentProgramId || null);
+      if (studentProgramId) {
+        distinctProgramIds.add(studentProgramId);
+      }
+    }
 
-    const courseIdByName = Object.fromEntries(
-      (courses || [])
-        .map((course) => [String(course?.course_name || "").trim(), String(course?.id || "").trim()])
-        .filter(([courseName, courseId]) => courseName && isUuidValue(courseId)),
-    );
-    const courseIdByScopedTerm = Object.fromEntries(
-      (courses || [])
-        .map((course) => {
-          const courseName = String(course?.course_name || "").trim();
-          const courseId = String(course?.id || "").trim();
-          const year = normalizeAcademicYearOrNull(course?.academic_year);
-          const semester = normalizeAcademicSemesterOrNull(course?.academic_semester);
-          return {
-            courseKey: `${courseName}::${year ?? ""}::${semester ?? ""}`,
-            courseId,
-            courseName,
-            year,
-            semester,
-          };
-        })
-        .filter((entry) => entry.courseName && entry.year !== null && entry.semester !== null && isUuidValue(entry.courseId))
-        .map((entry) => [entry.courseKey, entry.courseId]),
-    );
+    const courses = [];
+    if (universityCollegesTableMissing) {
+      const legacyCourses = await runRelationalQueryWithTimeout(
+        client
+          .from("courses")
+          .select("id,course_name,academic_year,academic_semester")
+          .eq("is_active", true),
+        "Course lookup timed out during enrollment sync.",
+        ENROLLMENT_SYNC_QUERY_TIMEOUT_MS,
+      );
+      if (Array.isArray(legacyCourses) && legacyCourses.length) {
+        courses.push(...legacyCourses);
+      }
+    } else if (distinctProgramIds.size) {
+      for (const programBatch of splitIntoBatches([...distinctProgramIds], RELATIONAL_UUID_IN_BATCH_SIZE)) {
+        const batchCourses = await runRelationalQueryWithTimeout(
+          client
+            .from("courses")
+            .select("id,program_id,course_name,academic_year,academic_semester")
+            .eq("is_active", true)
+            .in("program_id", programBatch),
+          "Course lookup timed out during enrollment sync.",
+          ENROLLMENT_SYNC_QUERY_TIMEOUT_MS,
+        );
+        if (Array.isArray(batchCourses) && batchCourses.length) {
+          courses.push(...batchCourses);
+        }
+      }
+    }
+
+    const courseIdByName = {};
+    const courseIdByScopedTerm = {};
+    const courseIdByProgramAndName = {};
+    const courseIdByProgramScopedTerm = {};
+    const courseIdsByProgramTerm = new Map();
+    courses.forEach((course) => {
+      const courseName = String(course?.course_name || "").trim();
+      const courseId = String(course?.id || "").trim();
+      if (!courseName || !isUuidValue(courseId)) {
+        return;
+      }
+      const courseProgramId = normalizeUniversityIdValue(course?.program_id) || "";
+      const year = normalizeAcademicYearOrNull(course?.academic_year);
+      const semester = normalizeAcademicSemesterOrNull(course?.academic_semester);
+      if (!courseIdByName[courseName]) {
+        courseIdByName[courseName] = courseId;
+      }
+      if (year !== null && semester !== null) {
+        const legacyTermKey = `${courseName}::${year}::${semester}`;
+        if (!courseIdByScopedTerm[legacyTermKey]) {
+          courseIdByScopedTerm[legacyTermKey] = courseId;
+        }
+      }
+      if (courseProgramId) {
+        courseIdByProgramAndName[`${courseProgramId}::${courseName}`] = courseId;
+        if (year !== null && semester !== null) {
+          courseIdByProgramScopedTerm[`${courseProgramId}::${courseName}::${year}::${semester}`] = courseId;
+          const programTermKey = `${courseProgramId}::${year}::${semester}`;
+          if (!courseIdsByProgramTerm.has(programTermKey)) {
+            courseIdsByProgramTerm.set(programTermKey, new Set());
+          }
+          courseIdsByProgramTerm.get(programTermKey).add(courseId);
+        }
+      }
+    });
 
     const desiredCourseIdsByUserId = new Map();
     studentsByUserId.forEach((student, userId) => {
       const enrollmentYear = normalizeAcademicYearOrNull(student.academicYear);
       const enrollmentSemester = normalizeAcademicSemesterOrNull(student.academicSemester);
-      const curriculumCourses = enrollmentYear !== null && enrollmentSemester !== null
-        ? getCurriculumCourses(enrollmentYear, enrollmentSemester)
-        : [];
-      const selectedCourses = curriculumCourses.length
-        ? curriculumCourses
-        : sanitizeCourseAssignments(student.assignedCourses || []);
+      if (universityCollegesTableMissing) {
+        const curriculumCourses = enrollmentYear !== null && enrollmentSemester !== null
+          ? getCurriculumCourses(enrollmentYear, enrollmentSemester)
+          : [];
+        const selectedCourses = curriculumCourses.length
+          ? curriculumCourses
+          : sanitizeCourseAssignments(student.assignedCourses || []);
+        const desiredCourseIds = new Set(
+          selectedCourses
+            .map((courseName) => {
+              const normalizedCourseName = String(courseName || "").trim();
+              const scopedCourseKey = normalizedCourseName && enrollmentYear !== null && enrollmentSemester !== null
+                ? `${normalizedCourseName}::${enrollmentYear}::${enrollmentSemester}`
+                : "";
+              return (scopedCourseKey ? courseIdByScopedTerm[scopedCourseKey] : "")
+                || courseIdByName[normalizedCourseName];
+            })
+            .filter((courseId) => isUuidValue(courseId)),
+        );
+        desiredCourseIdsByUserId.set(userId, desiredCourseIds);
+        return;
+      }
+
+      const studentProgramId = studentProgramIdByUserId.get(userId) || null;
+      if (!studentProgramId) {
+        // Leave existing enrollments untouched if the student's program did not resolve.
+        desiredCourseIdsByUserId.set(userId, null);
+        return;
+      }
+
+      if (websiteProgramId && studentProgramId === websiteProgramId) {
+        const curriculumCourses = enrollmentYear !== null && enrollmentSemester !== null
+          ? getCurriculumCourses(enrollmentYear, enrollmentSemester)
+          : [];
+        const selectedCourses = curriculumCourses.length
+          ? curriculumCourses
+          : sanitizeCourseAssignments(student.assignedCourses || []);
+        const desiredCourseIds = new Set(
+          selectedCourses
+            .map((courseName) => {
+              const normalizedCourseName = String(courseName || "").trim();
+              const scopedCourseKey = normalizedCourseName && enrollmentYear !== null && enrollmentSemester !== null
+                ? `${studentProgramId}::${normalizedCourseName}::${enrollmentYear}::${enrollmentSemester}`
+                : "";
+              return (scopedCourseKey ? courseIdByProgramScopedTerm[scopedCourseKey] : "")
+                || courseIdByProgramAndName[`${studentProgramId}::${normalizedCourseName}`];
+            })
+            .filter((courseId) => isUuidValue(courseId)),
+        );
+        desiredCourseIdsByUserId.set(userId, desiredCourseIds);
+        return;
+      }
+
+      const programTermKey = enrollmentYear !== null && enrollmentSemester !== null
+        ? `${studentProgramId}::${enrollmentYear}::${enrollmentSemester}`
+        : "";
+      const programTermCourseIds = programTermKey ? courseIdsByProgramTerm.get(programTermKey) : null;
+      if (programTermCourseIds && programTermCourseIds.size) {
+        desiredCourseIdsByUserId.set(userId, new Set(programTermCourseIds));
+        return;
+      }
+      const rawAssignedCourses = [
+        ...(Array.isArray(student.enrolledCourses) ? student.enrolledCourses : []),
+        ...(Array.isArray(student.assignedCourses) ? student.assignedCourses : []),
+      ]
+        .map((courseName) => String(courseName || "").trim())
+        .filter(Boolean);
       const desiredCourseIds = new Set(
-        selectedCourses
+        rawAssignedCourses
           .map((courseName) => {
-            const normalizedCourseName = String(courseName || "").trim();
-            const scopedCourseKey = normalizedCourseName && enrollmentYear !== null && enrollmentSemester !== null
-              ? `${normalizedCourseName}::${enrollmentYear}::${enrollmentSemester}`
+            const scopedCourseKey = enrollmentYear !== null && enrollmentSemester !== null
+              ? `${studentProgramId}::${courseName}::${enrollmentYear}::${enrollmentSemester}`
               : "";
-            return (scopedCourseKey ? courseIdByScopedTerm[scopedCourseKey] : "")
-              || courseIdByName[normalizedCourseName];
+            return (scopedCourseKey ? courseIdByProgramScopedTerm[scopedCourseKey] : "")
+              || courseIdByProgramAndName[`${studentProgramId}::${courseName}`];
           })
           .filter((courseId) => isUuidValue(courseId)),
       );
@@ -17834,9 +18377,13 @@ async function syncUserCourseEnrollmentsToRelational(usersPayload, options = {})
     });
 
     for (const userId of userIds) {
-      const desired = desiredCourseIdsByUserId.get(userId) || new Set();
+      const desired = desiredCourseIdsByUserId.get(userId);
+      if (desired === null) {
+        continue;
+      }
+      const desiredSet = desired || new Set();
       const existing = existingCourseIdsByUserId.get(userId) || new Set();
-      const removeCourseIds = [...existing].filter((courseId) => !desired.has(courseId));
+      const removeCourseIds = [...existing].filter((courseId) => !desiredSet.has(courseId));
       for (const courseBatch of splitIntoBatches(removeCourseIds, RELATIONAL_UUID_IN_BATCH_SIZE)) {
         await runRelationalQueryWithTimeout(
           client
@@ -17852,9 +18399,13 @@ async function syncUserCourseEnrollmentsToRelational(usersPayload, options = {})
 
     const enrollmentRows = [];
     userIds.forEach((userId) => {
-      const desired = desiredCourseIdsByUserId.get(userId) || new Set();
+      const desired = desiredCourseIdsByUserId.get(userId);
+      if (desired === null) {
+        return;
+      }
+      const desiredSet = desired || new Set();
       const existing = existingCourseIdsByUserId.get(userId) || new Set();
-      desired.forEach((courseId) => {
+      desiredSet.forEach((courseId) => {
         if (existing.has(courseId)) {
           return;
         }
@@ -17930,6 +18481,7 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
     return;
   }
 
+  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
   const curriculum = normalizeCurriculum(curriculumPayload || MEDBANK_CURRICULUM);
   const topicsByCourseName = normalizeCourseTopicMap(topicPayload || COURSE_TOPIC_OVERRIDES);
 
@@ -17939,6 +18491,7 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
       const entries = sanitizeCurriculumCourseList(curriculum?.[year]?.[semester] || []);
       entries.forEach((courseName) => {
         desiredCourses.push({
+          ...(programId ? { program_id: programId } : {}),
           course_name: courseName,
           course_code: extractCourseCode(courseName),
           academic_year: year,
@@ -17949,16 +18502,20 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
     }
   }
 
-  const fetchAllCourses = () => fetchRowsPaged((from, to) => (
-    client
+  const fetchAllCourses = () => fetchRowsPaged((from, to) => {
+    let query = client
       .from("courses")
-      .select("id,course_name,course_code,academic_year,academic_semester,is_active")
+      .select("id,course_name,course_code,academic_year,academic_semester,is_active");
+    if (programId) {
+      query = query.eq("program_id", programId);
+    }
+    return query
       .order("academic_year", { ascending: true })
       .order("academic_semester", { ascending: true })
       .order("course_name", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, to)
-  ));
+      .range(from, to);
+  });
 
   const fetchAllTopics = () => fetchRowsPaged((from, to) => (
     client
@@ -17990,11 +18547,15 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
       const targetRow = findCourseRow(rename.toName, rename.academicYear, rename.academicSemester);
       if (sourceRow && !targetRow && isUuidValue(sourceRow.id)) {
         const nextCode = extractCourseCode(rename.toName);
+        let renameQuery = client
+          .from("courses")
+          .update({ course_name: rename.toName, course_code: nextCode, is_active: true })
+          .eq("id", sourceRow.id);
+        if (programId) {
+          renameQuery = renameQuery.eq("program_id", programId);
+        }
         await runRelationalQueryWithTimeout(
-          client
-            .from("courses")
-            .update({ course_name: rename.toName, course_code: nextCode, is_active: true })
-            .eq("id", sourceRow.id),
+          renameQuery,
           "Course rename sync timed out.",
         );
         sourceRow.course_name = rename.toName;
@@ -18014,11 +18575,14 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
   const coursesNeedingUpsert = selectCoursesNeedingUpsert(desiredCourses, allCourses, reactivateCourseKeys);
 
   if (coursesNeedingUpsert.length) {
+    const courseConflictColumns = programId
+      ? "program_id,course_name,academic_year,academic_semester"
+      : "course_name,academic_year,academic_semester";
     for (const courseBatch of splitIntoBatches(coursesNeedingUpsert, RELATIONAL_UPSERT_BATCH_SIZE)) {
       await runRelationalQueryWithTimeout(
         client
           .from("courses")
-          .upsert(courseBatch, { onConflict: "course_name,academic_year,academic_semester", defaultToNull: false }),
+          .upsert(courseBatch, { onConflict: courseConflictColumns, defaultToNull: false }),
         "Course sync timed out.",
       );
     }
@@ -18136,11 +18700,15 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
           .in("course_id", deactivateBatch),
         "Course topic deactivation sync timed out.",
       );
+      let deactivateQuery = client
+        .from("courses")
+        .update({ is_active: false })
+        .in("id", deactivateBatch);
+      if (programId) {
+        deactivateQuery = deactivateQuery.eq("program_id", programId);
+      }
       await runRelationalQueryWithTimeout(
-        client
-          .from("courses")
-          .update({ is_active: false })
-          .in("id", deactivateBatch),
+        deactivateQuery,
         "Course deactivation sync timed out.",
       );
     }
@@ -18433,6 +19001,7 @@ async function syncQuestionsToRelationalUnsafe(questionsPayload) {
     return;
   }
 
+  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
   let questions = Array.isArray(questionsPayload) ? questionsPayload : [];
   const promotedInlineImages = await promoteInlineQuestionImagesToStorage(questions, {
     client,
@@ -18491,15 +19060,19 @@ async function syncQuestionsToRelationalUnsafe(questionsPayload) {
   let courses = [];
   let topics = [];
   const loadActiveCourseTopicRows = async () => {
-    const coursesResult = await fetchRowsPaged((from, to) => (
-      client
+    const coursesResult = await fetchRowsPaged((from, to) => {
+      let query = client
         .from("courses")
         .select("id,course_name,is_active")
-        .eq("is_active", true)
+        .eq("is_active", true);
+      if (programId) {
+        query = query.eq("program_id", programId);
+      }
+      return query
         .order("course_name", { ascending: true })
         .order("id", { ascending: true })
-        .range(from, to)
-    ));
+        .range(from, to);
+    });
     if (coursesResult.error) {
       throw coursesResult.error;
     }
@@ -19131,33 +19704,144 @@ async function syncSessionsToRelational(sessionsPayload) {
     return;
   }
 
-  const courseRowsResult = await fetchRowsPaged((from, to) => (
-    client
-      .from("courses")
-      .select("id,course_name,is_active")
-      .eq("is_active", true)
-      .order("course_name", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, to)
-  ), {
-    pageSize: 250,
-    timeoutMs: SESSION_HISTORY_SYNC_TIMEOUT_MS,
-    timeoutMessage: "Course lookup for session history sync timed out.",
+  const websiteProgramId = await getWebsiteMcqProgramId();
+  const userByProfileId = new Map();
+  users.forEach((entry) => {
+    const profileId = String(getUserProfileId(entry) || "").trim();
+    if (isUuidValue(profileId) && !userByProfileId.has(profileId)) {
+      userByProfileId.set(profileId, entry);
+    }
   });
-  if (courseRowsResult.error) {
-    throw courseRowsResult.error;
+  if (isUuidValue(currentSessionProfileId) && !userByProfileId.has(currentSessionProfileId)) {
+    userByProfileId.set(currentSessionProfileId, currentUser);
   }
-  const courseIdByName = Object.fromEntries(
-    (Array.isArray(courseRowsResult.data) ? courseRowsResult.data : [])
-      .map((row) => [String(row?.course_name || "").trim(), String(row?.id || "").trim()])
-      .filter(([courseName, courseId]) => courseName && isUuidValue(courseId)),
-  );
+
+  const syncableOwnerProfileIds = [...new Set(
+    syncableOwnedSessions
+      .map((session) => String(sessionOwnerProfileIdBySessionId.get(String(session?.id || "").trim()) || "").trim())
+      .filter((profileId) => isUuidValue(profileId)),
+  )];
+
+  const programIdByOwnerProfileId = new Map();
+  const unresolvedOwnerProfileIds = [];
+  if (!universityCollegesTableMissing) {
+    for (const ownerProfileId of syncableOwnerProfileIds) {
+      const owner = userByProfileId.get(ownerProfileId)
+        || (ownerProfileId === currentSessionProfileId ? currentUser : null);
+      let ownerProgramId = null;
+      if (owner?.role === "admin") {
+        ownerProgramId = websiteProgramId;
+      } else {
+        ownerProgramId = await resolveProgramIdForUniversityCollege(
+          owner?.universityId,
+          owner?.college,
+        );
+      }
+      if (ownerProgramId) {
+        programIdByOwnerProfileId.set(ownerProfileId, ownerProgramId);
+      } else {
+        unresolvedOwnerProfileIds.push(ownerProfileId);
+      }
+    }
+  }
+
+  const legacyCourseIdByName = {};
+  const courseIdByProgramAndName = new Map();
+  const enrolledCourseIdByUserAndName = new Map();
+
+  if (universityCollegesTableMissing) {
+    const courseRowsResult = await fetchRowsPaged((from, to) => (
+      client
+        .from("courses")
+        .select("id,course_name,is_active")
+        .eq("is_active", true)
+        .order("course_name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+    ), {
+      pageSize: 250,
+      timeoutMs: SESSION_HISTORY_SYNC_TIMEOUT_MS,
+      timeoutMessage: "Course lookup for session history sync timed out.",
+    });
+    if (courseRowsResult.error) {
+      throw courseRowsResult.error;
+    }
+    (Array.isArray(courseRowsResult.data) ? courseRowsResult.data : []).forEach((row) => {
+      const courseName = String(row?.course_name || "").trim();
+      const courseId = String(row?.id || "").trim();
+      if (courseName && isUuidValue(courseId) && !legacyCourseIdByName[courseName]) {
+        legacyCourseIdByName[courseName] = courseId;
+      }
+    });
+  } else {
+    const distinctOwnerProgramIds = [...new Set([...programIdByOwnerProfileId.values()].filter(Boolean))];
+    for (const programBatch of splitIntoBatches(distinctOwnerProgramIds, RELATIONAL_UUID_IN_BATCH_SIZE)) {
+      const courseRowsResult = await fetchRowsPaged((from, to) => (
+        client
+          .from("courses")
+          .select("id,program_id,course_name,is_active")
+          .eq("is_active", true)
+          .in("program_id", programBatch)
+          .order("course_name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to)
+      ), {
+        pageSize: 250,
+        timeoutMs: SESSION_HISTORY_SYNC_TIMEOUT_MS,
+        timeoutMessage: "Course lookup for session history sync timed out.",
+      });
+      if (courseRowsResult.error) {
+        throw courseRowsResult.error;
+      }
+      (Array.isArray(courseRowsResult.data) ? courseRowsResult.data : []).forEach((row) => {
+        const courseProgramId = normalizeUniversityIdValue(row?.program_id);
+        const courseName = String(row?.course_name || "").trim();
+        const courseId = String(row?.id || "").trim();
+        if (courseProgramId && courseName && isUuidValue(courseId)) {
+          courseIdByProgramAndName.set(`${courseProgramId}::${courseName}`, courseId);
+        }
+      });
+    }
+    for (const ownerBatch of splitIntoBatches(unresolvedOwnerProfileIds, RELATIONAL_UUID_IN_BATCH_SIZE)) {
+      const enrollmentRows = await runRelationalQueryWithTimeout(
+        client
+          .from("user_course_enrollments")
+          .select("user_id,course_id,courses(id,course_name,is_active)")
+          .in("user_id", ownerBatch),
+        "Enrollment course lookup for session history sync timed out.",
+        SESSION_HISTORY_SYNC_TIMEOUT_MS,
+      );
+      (Array.isArray(enrollmentRows) ? enrollmentRows : []).forEach((row) => {
+        const rowUserId = String(row?.user_id || "").trim();
+        const rowCourse = Array.isArray(row?.courses) ? row.courses[0] : row?.courses;
+        const rowCourseId = String(rowCourse?.id || row?.course_id || "").trim();
+        const rowCourseName = String(rowCourse?.course_name || "").trim();
+        if (
+          isUuidValue(rowUserId)
+          && isUuidValue(rowCourseId)
+          && rowCourseName
+          && rowCourse?.is_active !== false
+        ) {
+          enrolledCourseIdByUserAndName.set(`${rowUserId}::${rowCourseName}`, rowCourseId);
+        }
+      });
+    }
+  }
+
   const desiredRows = syncableOwnedSessions.map((session) => {
     const sessionId = String(session?.id || "").trim();
     const ownerProfileId = String(sessionOwnerProfileIdBySessionId.get(sessionId) || "").trim();
     normalizeSession(session, { questionStore: getQuestionStore(), users });
     const snapshot = buildRelationalSessionHistorySnapshot(session);
     const courseName = String(getSessionCourseList(session)[0] || snapshot?.courses?.[0] || "").trim();
+    const ownerProgramId = programIdByOwnerProfileId.get(ownerProfileId) || "";
+    const resolvedCourseId = universityCollegesTableMissing
+      ? (legacyCourseIdByName[courseName] || null)
+      : (
+        (ownerProgramId ? courseIdByProgramAndName.get(`${ownerProgramId}::${courseName}`) : "")
+        || enrolledCourseIdByUserAndName.get(`${ownerProfileId}::${courseName}`)
+        || null
+      );
     const questionCount = Math.max(
       0,
       Number(
@@ -19172,7 +19856,7 @@ async function syncSessionsToRelational(sessionsPayload) {
       row: {
         user_id: ownerProfileId,
         external_id: sessionId,
-        course_id: courseIdByName[courseName] || null,
+        course_id: resolvedCourseId,
         session_name: getSessionDisplayName(session),
         session_test_id: getSessionDisplayId(session),
         mode: session.mode === "timed" ? "timed" : "tutor",
@@ -22758,6 +23442,7 @@ async function buildAdminActivityReportSnapshot() {
 
   const dayRange = getLocalDayRange();
   const lookbackStartIso = new Date(dayRange.startMs - ACTIVITY_REPORT_LOOKBACK_MS).toISOString();
+  const programId = await getWebsiteMcqProgramId();
 
   const [
     profilesResult,
@@ -22795,7 +23480,13 @@ async function buildAdminActivityReportSnapshot() {
       "Test history query timed out.",
     ),
     runWithTimeoutResult(
-      client.from("courses").select("id,course_name,course_code"),
+      (() => {
+        let query = client.from("courses").select("id,course_name,course_code");
+        if (programId) {
+          query = query.eq("program_id", programId);
+        }
+        return query;
+      })(),
       ADMIN_REQUEST_TIMEOUT_MS,
       "MCQ subjects query timed out.",
     ),
@@ -26547,6 +27238,22 @@ function renderAuth(mode) {
       || (isGoogleOnboardingFlow ? normalizeUniversityIdValue(currentUser?.universityId) : null);
     const defaultCollege = normalizeCollegeValue(onboardingDraft?.college)
       || (isGoogleOnboardingFlow ? normalizeCollegeValue(currentUser?.college) : null);
+    const defaultTermBounds = getTermBoundsForSelection(defaultUniversityId, defaultCollege);
+    const boundedDefaultYear = defaultYear !== null && defaultYear <= defaultTermBounds.yearsCount ? defaultYear : null;
+    const boundedDefaultSemester = defaultSemester !== null && defaultSemester <= defaultTermBounds.semestersPerYear ? defaultSemester : null;
+    const signupHasTerm = boundedDefaultYear !== null && boundedDefaultSemester !== null;
+    const signupDefaultCourses = signupHasTerm
+      ? getSignupCurriculumCourses(boundedDefaultYear, boundedDefaultSemester, { universityId: defaultUniversityId, college: defaultCollege })
+      : [];
+    const signupDraftSelected = hasDraftSelectedCourses
+      ? onboardingDraft.selectedCourses.map((course) => String(course || "").trim()).filter((course) => signupDefaultCourses.includes(course))
+      : [];
+    const signupPreferred = Array.isArray(currentUser?.assignedCourses)
+      ? currentUser.assignedCourses.filter((course) => signupDefaultCourses.includes(course))
+      : [];
+    const signupCheckedCourses = hasDraftSelectedCourses
+      ? signupDraftSelected
+      : (signupPreferred.length ? signupPreferred : signupDefaultCourses);
 
     if (isGoogleOnboardingFlow) {
       return `
@@ -26576,30 +27283,23 @@ function renderAuth(mode) {
               <div class="form-row">
                 <label>Year
                   <select name="academicYear" id="signup-academic-year" required aria-required="true">
-                    <option value="" ${defaultYear === null ? "selected" : ""}>Select year</option>
-                    <option value="1" ${defaultYear === 1 ? "selected" : ""}>Year 1</option>
-                    <option value="2" ${defaultYear === 2 ? "selected" : ""}>Year 2</option>
-                    <option value="3" ${defaultYear === 3 ? "selected" : ""}>Year 3</option>
-                    <option value="4" ${defaultYear === 4 ? "selected" : ""}>Year 4</option>
-                    <option value="5" ${defaultYear === 5 ? "selected" : ""}>Year 5</option>
+                    ${renderYearSelectOptions(boundedDefaultYear, defaultTermBounds.yearsCount)}
                   </select>
                 </label>
                 <label>Semester
                   <select name="academicSemester" id="signup-academic-semester" required aria-required="true">
-                    <option value="" ${defaultSemester === null ? "selected" : ""}>Select semester</option>
-                    <option value="1" ${defaultSemester === 1 ? "selected" : ""}>Semester 1</option>
-                    <option value="2" ${defaultSemester === 2 ? "selected" : ""}>Semester 2</option>
+                    ${renderSemesterSelectOptions(boundedDefaultSemester, defaultTermBounds.semestersPerYear)}
                   </select>
                 </label>
               </div>
               <div class="signup-course-field" data-mcq-subjects-field>
                 <p class="signup-course-label">MCQ Subjects (from selected year and semester)</p>
                 <div id="signup-course-options" class="signup-course-grid">
-                  ${defaultCourses
+                  ${signupDefaultCourses
             .map(
               (course) => `
                         <label class="admin-course-check">
-                          <input type="checkbox" name="signupCourses" value="${escapeHtml(course)}" ${initiallyCheckedCourses.includes(course) ? "checked" : ""} />
+                          <input type="checkbox" name="signupCourses" value="${escapeHtml(course)}" ${signupCheckedCourses.includes(course) ? "checked" : ""} />
                           <span>${escapeHtml(course)}</span>
                         </label>
                       `,
@@ -26660,26 +27360,19 @@ function renderAuth(mode) {
             <div class="form-row">
               <label>Year
                 <select name="academicYear" id="signup-academic-year" required aria-required="true">
-                  <option value="" ${defaultYear === null ? "selected" : ""}>Select year</option>
-                  <option value="1" ${defaultYear === 1 ? "selected" : ""}>Year 1</option>
-                  <option value="2" ${defaultYear === 2 ? "selected" : ""}>Year 2</option>
-                  <option value="3" ${defaultYear === 3 ? "selected" : ""}>Year 3</option>
-                  <option value="4" ${defaultYear === 4 ? "selected" : ""}>Year 4</option>
-                  <option value="5" ${defaultYear === 5 ? "selected" : ""}>Year 5</option>
+                  ${renderYearSelectOptions(boundedDefaultYear, defaultTermBounds.yearsCount)}
                 </select>
               </label>
               <label>Semester
                 <select name="academicSemester" id="signup-academic-semester" required aria-required="true">
-                  <option value="" ${defaultSemester === null ? "selected" : ""}>Select semester</option>
-                  <option value="1" ${defaultSemester === 1 ? "selected" : ""}>Semester 1</option>
-                  <option value="2" ${defaultSemester === 2 ? "selected" : ""}>Semester 2</option>
+                  ${renderSemesterSelectOptions(boundedDefaultSemester, defaultTermBounds.semestersPerYear)}
                 </select>
               </label>
             </div>
             <div class="signup-course-field" data-mcq-subjects-field>
               <p class="signup-course-label">MCQ Subjects (from selected year and semester)</p>
               <div id="signup-course-options" class="signup-course-grid">
-                ${defaultCourses
+                ${signupDefaultCourses
           .map(
             (course) => `
                       <label class="admin-course-check">
@@ -27132,7 +27825,7 @@ function wireAuth(mode) {
         persistSignupDraft();
         return;
       }
-      const courses = getCurriculumCourses(year, semester);
+      const courses = getSignupCurriculumCourses(year, semester, readUniversityCollegeSelection(form));
       const selectedSet = new Set(preferred.filter((course) => courses.includes(course)));
       const selectAllByDefault = !options.explicitSelection && selectedSet.size === 0;
 
@@ -27184,17 +27877,34 @@ function wireAuth(mode) {
 
     const savedDraft = isGoogleOnboardingFlow ? loadStudentOnboardingDraft(onboardingUser, "signup") : null;
     const preferredCourses = Array.isArray(savedDraft?.selectedCourses)
-      ? sanitizeCourseAssignments(savedDraft.selectedCourses)
+      ? savedDraft.selectedCourses.map((course) => String(course || "").trim()).filter(Boolean)
       : (isGoogleOnboardingFlow && Array.isArray(onboardingUser?.assignedCourses)
         ? onboardingUser.assignedCourses
         : []);
-    renderSignupCourseOptions(preferredCourses, {
-      explicitSelection: Array.isArray(savedDraft?.selectedCourses),
-    });
-    refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "signupCourses", renderSignupCourseOptions);
+    let initialSignupRendered = false;
+    let lastSignupCatalogKey = null;
     wireUniversityCollegeFields(form, {
-      onChange: ({ ineligible }) => {
+      onChange: ({ universityId, college, ineligible, program, yearsCount, semestersPerYear }) => {
+        syncFormTermOptionsForProgram(form, { universityId, college });
         syncMcqSubjectFieldsForEligibility(form, ineligible);
+        const preferred = initialSignupRendered
+          ? getSelectedSignupCourses()
+          : preferredCourses;
+        const explicitSelection = initialSignupRendered
+          ? Boolean(courseOptionsEl?.querySelector("input[name='signupCourses']"))
+          : Array.isArray(savedDraft?.selectedCourses);
+        renderSignupCourseOptions(preferred, { explicitSelection });
+        initialSignupRendered = true;
+
+        const catalogKey = `${program?.id || "default"}|${yearsCount}|${semestersPerYear}`;
+        if (!ineligible && catalogKey !== lastSignupCatalogKey) {
+          lastSignupCatalogKey = catalogKey;
+          refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "signupCourses", renderSignupCourseOptions, {
+            programId: program?.id || null,
+            yearsCount,
+            semestersPerYear,
+          });
+        }
         persistSignupDraft();
       },
     });
@@ -27214,25 +27924,28 @@ function wireAuth(mode) {
       const phone = String(data.get("phone") || "").trim();
       const phoneValidation = validateAndNormalizePhoneNumber(phone);
       const normalizedPhone = phoneValidation.number;
-      const academicYear = normalizeAcademicYearOrNull(data.get("academicYear"));
-      const academicSemester = normalizeAcademicSemesterOrNull(data.get("academicSemester"));
-      if (academicYear === null || academicSemester === null) {
-        toast("You need to choose the year and semester.");
-        return;
-      }
-      const availableCourses = getCurriculumCourses(academicYear, academicSemester);
-      if (!availableCourses.length) {
-        toast("No courses are available for the selected year and semester.");
-        return;
-      }
-      const selectedCourses = getSelectedSignupCourses().filter((course) => availableCourses.includes(course));
-      const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
       const universitySelection = readUniversityCollegeSelection(form);
       if (!universitySelection.universityId || !universitySelection.college) {
         toast("Choose your university and college.");
         return;
       }
-      if (!selectedCourses.length) {
+      const termBounds = getTermBoundsForSelection(universitySelection.universityId, universitySelection.college);
+      const academicYear = normalizeAcademicYearOrNull(data.get("academicYear"));
+      const academicSemester = normalizeAcademicSemesterOrNull(data.get("academicSemester"));
+      if (academicYear === null || academicSemester === null
+        || academicYear > termBounds.yearsCount || academicSemester > termBounds.semestersPerYear) {
+        toast("Choose a valid year and semester for your program.");
+        return;
+      }
+      const selectionIneligible = isUniversityCollegeSelectionIneligible(universitySelection) || areMcqSubjectFieldsHidden(form);
+      const availableCourses = getSignupCurriculumCourses(academicYear, academicSemester, universitySelection);
+      if (!selectionIneligible && !availableCourses.length) {
+        toast("No courses are available for the selected year and semester.");
+        return;
+      }
+      const selectedCourses = getSelectedSignupCourses().filter((course) => availableCourses.includes(course));
+      const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      if (!selectionIneligible && !selectedCourses.length) {
         toast("Select at least one course for your enrollment.");
         return;
       }
@@ -27287,6 +28000,8 @@ function wireAuth(mode) {
             academicYear,
             academicSemester,
             assignedCourses: selectedCourses,
+            universityId: universitySelection.universityId,
+            college: universitySelection.college,
           });
           const previousUser = {
             ...users[idx],
@@ -27411,6 +28126,8 @@ function wireAuth(mode) {
           academicYear,
           academicSemester,
           assignedCourses: selectedCourses,
+          universityId: universitySelection.universityId,
+          college: universitySelection.college,
         });
         if (authClient) {
           const emailRedirectTo = getAuthRedirectToUrl();
@@ -27718,15 +28435,24 @@ function renderCompleteProfile() {
   const user = getCurrentUser();
   const onboardingDraft = loadStudentOnboardingDraft(user, "complete-profile");
   const shouldForceEmptyEnrollment = isGoogleOnboardingRequired(user);
+  const defaultUniversityId = normalizeUniversityIdValue(onboardingDraft?.universityId)
+    || normalizeUniversityIdValue(user?.universityId);
+  const defaultCollege = normalizeCollegeValue(onboardingDraft?.college) || normalizeCollegeValue(user?.college);
+  const termBounds = getTermBoundsForSelection(defaultUniversityId, defaultCollege);
+  const selectedProgram = getProgramForSelection(defaultUniversityId, defaultCollege);
   const draftYear = normalizeAcademicYearOrNull(onboardingDraft?.academicYear);
   const draftSemester = normalizeAcademicSemesterOrNull(onboardingDraft?.academicSemester);
-  const year = draftYear !== null
+  const rawYear = draftYear !== null
     ? draftYear
     : (shouldForceEmptyEnrollment ? null : normalizeAcademicYearOrNull(user?.academicYear));
-  const semester = draftSemester !== null
+  const rawSemester = draftSemester !== null
     ? draftSemester
     : (shouldForceEmptyEnrollment ? null : normalizeAcademicSemesterOrNull(user?.academicSemester));
-  const courses = year !== null && semester !== null ? getCurriculumCourses(year, semester) : [];
+  const year = rawYear !== null && rawYear <= termBounds.yearsCount ? rawYear : null;
+  const semester = rawSemester !== null && rawSemester <= termBounds.semestersPerYear ? rawSemester : null;
+  const courses = year !== null && semester !== null
+    ? getSignupCurriculumCourses(year, semester, selectedProgram?.id || null)
+    : [];
   const hasDraftSelectedCourses = Array.isArray(onboardingDraft?.selectedCourses);
   const draftSelectedCourses = hasDraftSelectedCourses
     ? sanitizeCourseAssignments(onboardingDraft.selectedCourses).filter((course) => courses.includes(course))
@@ -27738,9 +28464,6 @@ function renderCompleteProfile() {
   const defaultPhone = typeof onboardingDraft?.phone === "string"
     ? onboardingDraft.phone
     : String(user?.phone || "");
-  const defaultUniversityId = normalizeUniversityIdValue(onboardingDraft?.universityId)
-    || normalizeUniversityIdValue(user?.universityId);
-  const defaultCollege = normalizeCollegeValue(onboardingDraft?.college) || normalizeCollegeValue(user?.college);
 
   return `
     <section class="panel" style="max-width: 680px; margin-inline: auto;">
@@ -27752,17 +28475,12 @@ function renderCompleteProfile() {
         <div class="form-row">
           <label>Year
             <select name="academicYear" id="complete-profile-year" required aria-required="true">
-              <option value="" ${year === null ? "selected" : ""}>Select year</option>
-              ${[1, 2, 3, 4, 5]
-      .map((entry) => `<option value="${entry}" ${year === entry ? "selected" : ""}>Year ${entry}</option>`)
-      .join("")}
+              ${renderYearSelectOptions(year, termBounds.yearsCount)}
             </select>
           </label>
           <label>Semester
             <select name="academicSemester" id="complete-profile-semester" required aria-required="true">
-              <option value="" ${semester === null ? "selected" : ""}>Select semester</option>
-              <option value="1" ${semester === 1 ? "selected" : ""}>Semester 1</option>
-              <option value="2" ${semester === 2 ? "selected" : ""}>Semester 2</option>
+              ${renderSemesterSelectOptions(semester, termBounds.semestersPerYear)}
             </select>
           </label>
         </div>
@@ -27835,10 +28553,26 @@ function wireCompleteProfile() {
     }, currentUser, "complete-profile");
   };
 
+  const getSelectedTermContext = () => {
+    const sel = readUniversityCollegeSelection(form);
+    const bounds = getTermBoundsForSelection(sel.universityId, sel.college);
+    const program = getProgramForSelection(sel.universityId, sel.college);
+    return {
+      ...sel,
+      ...bounds,
+      programId: program?.id || null,
+    };
+  };
+
   const renderCompleteProfileCourseOptions = (preferred = [], options = {}) => {
-    const year = normalizeAcademicYearOrNull(yearSelect?.value);
-    const semester = normalizeAcademicSemesterOrNull(semesterSelect?.value);
-    const courses = year !== null && semester !== null ? getCurriculumCourses(year, semester) : [];
+    const ctx = getSelectedTermContext();
+    const rawYear = normalizeAcademicYearOrNull(yearSelect?.value);
+    const rawSemester = normalizeAcademicSemesterOrNull(semesterSelect?.value);
+    const year = rawYear !== null && rawYear <= ctx.yearsCount ? rawYear : null;
+    const semester = rawSemester !== null && rawSemester <= ctx.semestersPerYear ? rawSemester : null;
+    const courses = year !== null && semester !== null
+      ? getSignupCurriculumCourses(year, semester, ctx.programId)
+      : [];
     if (courseOptionsEl) {
       if (year === null || semester === null) {
         courseOptionsEl.innerHTML = "";
@@ -27899,10 +28633,25 @@ function wireCompleteProfile() {
   renderCompleteProfileCourseOptions(preferredCourses, {
     explicitSelection: Array.isArray(savedDraft?.selectedCourses),
   });
-  refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "completeProfileCourses", renderCompleteProfileCourseOptions);
+  const initialCtx = getSelectedTermContext();
+  refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "completeProfileCourses", renderCompleteProfileCourseOptions, {
+    programId: initialCtx.programId,
+    yearsCount: initialCtx.yearsCount,
+    semestersPerYear: initialCtx.semestersPerYear,
+  });
   wireUniversityCollegeFields(form, {
-    onChange: ({ ineligible }) => {
+    onChange: ({ universityId, college, ineligible, program }) => {
+      syncFormTermOptionsForProgram(form, { universityId, college });
       syncMcqSubjectFieldsForEligibility(form, ineligible);
+      const nextPreferred = getSelectedCompleteProfileCourses();
+      const hasExplicit = Boolean(courseOptionsEl?.querySelector("input[name='completeProfileCourses']"));
+      renderCompleteProfileCourseOptions(nextPreferred, { explicitSelection: hasExplicit });
+      const bounds = getTermBoundsForSelection(universityId, college);
+      refreshCourseOptionsFromSignupCatalog(courseOptionsEl, "completeProfileCourses", renderCompleteProfileCourseOptions, {
+        programId: program?.id || null,
+        yearsCount: bounds.yearsCount,
+        semestersPerYear: bounds.semestersPerYear,
+      });
       persistCompleteProfileDraft();
     },
   });
@@ -27923,30 +28672,46 @@ function wireCompleteProfile() {
     const phone = String(data.get("phone") || "").trim();
     const phoneValidation = validateAndNormalizePhoneNumber(phone);
     const normalizedPhone = phoneValidation.number;
+    const universitySelection = readUniversityCollegeSelection(form);
+    if (!universitySelection.universityId || !universitySelection.college) {
+      toast("Choose your university and college.");
+      return;
+    }
+    const termBounds = getTermBoundsForSelection(universitySelection.universityId, universitySelection.college);
+    const selectedProgram = getProgramForSelection(universitySelection.universityId, universitySelection.college);
     const academicYear = normalizeAcademicYearOrNull(data.get("academicYear"));
     const academicSemester = normalizeAcademicSemesterOrNull(data.get("academicSemester"));
-    if (academicYear === null || academicSemester === null) {
+    if (
+      academicYear === null
+      || academicSemester === null
+      || academicYear > termBounds.yearsCount
+      || academicSemester > termBounds.semestersPerYear
+    ) {
       toast("You need to choose the year and semester.");
       return;
     }
-    const availableCourses = getCurriculumCourses(academicYear, academicSemester);
-    const assignedCourses = getSelectedCompleteProfileCourses().filter((course) => availableCourses.includes(course));
+    const selectionEligible = resolveUserMcqEligibility({
+      role: "student",
+      universityId: universitySelection.universityId,
+      college: universitySelection.college,
+    }) !== false;
+    const availableCourses = selectionEligible
+      ? getSignupCurriculumCourses(academicYear, academicSemester, selectedProgram?.id || null)
+      : [];
+    const assignedCourses = selectionEligible
+      ? getSelectedCompleteProfileCourses().filter((course) => availableCourses.includes(course))
+      : [];
 
     if (!phoneValidation.ok) {
       toast(phoneValidation.message || "Please enter a valid phone number.");
       return;
     }
-    if (!availableCourses.length) {
+    if (selectionEligible && !availableCourses.length) {
       toast("No courses are available for this year and semester.");
       return;
     }
-    if (!assignedCourses.length) {
+    if (selectionEligible && !assignedCourses.length) {
       toast("Choose at least one course for your enrollment.");
-      return;
-    }
-    const universitySelection = readUniversityCollegeSelection(form);
-    if (!universitySelection.universityId || !universitySelection.college) {
-      toast("Choose your university and college.");
       return;
     }
 
@@ -27979,6 +28744,8 @@ function wireCompleteProfile() {
         academicYear,
         academicSemester,
         assignedCourses,
+        universityId: universitySelection.universityId,
+        college: universitySelection.college,
       });
       const previousUser = {
         ...users[idx],
@@ -33408,12 +34175,22 @@ function getLocalAdminQuestionExportRecords(courseName, topicName, statusMode) {
 }
 
 async function getCloudAdminQuestionExportRecords(courseName, topicName, statusMode, client) {
-  const coursesResult = await fetchRowsPaged((from, to) => client
-    .from("courses")
-    .select("id,course_name")
-    .eq("course_name", courseName)
-    .order("id", { ascending: true })
-    .range(from, to));
+  const { programId, unconfirmed } = await resolveWebsiteMcqProgramScope();
+  if (unconfirmed) {
+    return [];
+  }
+  const coursesResult = await fetchRowsPaged((from, to) => {
+    let query = client
+      .from("courses")
+      .select("id,course_name")
+      .eq("course_name", courseName);
+    if (programId) {
+      query = query.eq("program_id", programId);
+    }
+    return query
+      .order("id", { ascending: true })
+      .range(from, to);
+  });
   if (coursesResult.error) throw coursesResult.error;
   const courseRow = (coursesResult.data || [])[0];
   if (!courseRow?.id) return [];
@@ -34880,6 +35657,75 @@ function newAdminUniversityDraft() {
   return { id: "", name: "", name_ar: "", sort_order: 100, is_active: true, mcq_bank_available: false };
 }
 
+function newAdminCollegeDraft(universityId = "") {
+  return {
+    id: "",
+    university_id: String(universityId || ""),
+    college_key: "",
+    name: "",
+    name_ar: "",
+    years_count: 5,
+    semesters_per_year: 2,
+    sort_order: 100,
+    is_active: true,
+    mcq_bank_available: false,
+  };
+}
+
+let universityCollegesLoadPromise = null;
+
+async function loadUniversityCollegesAdmin(options = {}) {
+  if (universityCollegesLoadPromise && !options.force) {
+    return universityCollegesLoadPromise;
+  }
+  const client = typeof getRelationalClient === "function" ? getRelationalClient() : null;
+  if (!client) {
+    return false;
+  }
+  state.universityCollegesLoading = true;
+  state.universityCollegesError = "";
+  universityCollegesLoadPromise = (async () => {
+    try {
+      const rows = await runRelationalQueryWithTimeout(
+        client
+          .from("university_colleges")
+          .select("id,university_id,college_key,name,name_ar,years_count,semesters_per_year,mcq_bank_available,is_active,sort_order,created_at,updated_at")
+          .order("sort_order", { ascending: true })
+          .order("name", { ascending: true }),
+        "Colleges query timed out.",
+      );
+      const utils = getUniversitiesUtils();
+      state.universityColleges = utils?.sortUniversityColleges ? utils.sortUniversityColleges(rows || []) : (rows || []);
+      state.universityCollegesLoadedAt = Date.now();
+      state.universityCollegesMissing = false;
+      return true;
+    } catch (error) {
+      const code = String(error?.code || "").trim();
+      const missingTable = (typeof isMissingRelationError === "function" && isMissingRelationError(error))
+        || code === "42P01"
+        || code === "PGRST205"
+        || /does not exist|could not find the table/i.test(String(error?.message || ""));
+      if (missingTable) {
+        state.universityColleges = [];
+        state.universityCollegesLoadedAt = Date.now();
+        state.universityCollegesMissing = true;
+        state.universityCollegesError = "";
+        return true;
+      }
+      console.warn("Could not load university colleges.", error?.message || error);
+      const serverMessage = String(error?.message || "").trim();
+      state.universityCollegesError = serverMessage
+        || getUniversitiesUtils()?.describeUniversityError(error, "Colleges could not be loaded.")
+        || "Colleges could not be loaded.";
+      return false;
+    } finally {
+      state.universityCollegesLoading = false;
+      universityCollegesLoadPromise = null;
+    }
+  })();
+  return universityCollegesLoadPromise;
+}
+
 function refreshAdminUniversitiesView() {
   if (state.route === "admin" && state.adminPage === "universities") {
     state.skipNextRouteAnimation = true;
@@ -34894,20 +35740,100 @@ function countStudentsAtUniversity(universityId) {
 function confirmUniversityMcqChange(university, nextAvailable) {
   const name = String(university?.name || "this university");
   return window.confirm(nextAvailable
-    ? `Offer the MCQ Bank at ${name}?\n\nEvery Medicine student at ${name} gets MCQ Bank access straight away. Students in other colleges are not affected.`
+    ? `Offer the MCQ Bank at ${name}?\n\nStudents in MCQ-enabled colleges at ${name} get MCQ Bank access straight away.`
     : `Turn off the MCQ Bank at ${name}?\n\nEvery student at ${name} loses MCQ Bank access straight away. They keep Video Courses.`);
+}
+
+function confirmCollegeMcqChange(college, university, nextAvailable) {
+  const collegeName = String(college?.name || getCollegeLabel(college?.college_key) || "this college");
+  const universityName = String(university?.name || "this university");
+  return window.confirm(nextAvailable
+    ? `Offer the MCQ Bank for ${collegeName} – ${universityName}?\n\nStudents in ${collegeName} at ${universityName} get MCQ Bank access straight away (when ${universityName}'s MCQ Bank switch is on).`
+    : `Turn off the MCQ Bank for ${collegeName} – ${universityName}?\n\nStudents in ${collegeName} at ${universityName} lose MCQ Bank access straight away. They keep Video Courses.`);
+}
+
+function renderUniversityCollegesSubrow(university, colleges, busy) {
+  const missing = Boolean(state.universityCollegesMissing);
+  const collegesLoading = Boolean(state.universityCollegesLoading) && !colleges.length;
+  let emptyText = "No colleges yet. Add the first one.";
+  if (missing) {
+    emptyText = "Colleges management is not available on this backend yet.";
+  } else if (collegesLoading) {
+    emptyText = "Loading colleges…";
+  } else if (state.universityCollegesError) {
+    emptyText = String(state.universityCollegesError);
+  }
+  const itemsHtml = colleges.map((college) => {
+    const yearsCount = Number(college.years_count) || 5;
+    const semestersCount = Number(college.semesters_per_year) || 2;
+    const termSummary = `${yearsCount} year${yearsCount === 1 ? "" : "s"} · ${semestersCount} semester${semestersCount === 1 ? "" : "s"}`;
+    const toggleMcqLabel = college.mcq_bank_available ? "Turn off MCQ" : "Offer MCQ";
+    const toggleActiveLabel = college.is_active ? "Hide" : "Show";
+    return `<li class="admin-university-colleges-item" data-college-id="${escapeHtml(college.id)}">
+      <div class="admin-university-colleges-item-main">
+        <div class="admin-university-colleges-item-title">
+          <b>${escapeHtml(college.name)}</b>
+          ${college.name_ar ? `<span class="admin-college-name-ar" dir="rtl" lang="ar">${escapeHtml(college.name_ar)}</span>` : ""}
+          <code class="admin-college-key">${escapeHtml(college.college_key)}</code>
+        </div>
+        <div class="admin-university-colleges-item-meta">
+          <span>${escapeHtml(termSummary)}</span>
+          <span class="badge ${college.is_active ? "good" : "neutral"}">${college.is_active ? "Shown" : "Hidden"}</span>
+          <span class="badge ${college.mcq_bank_available ? "good" : "neutral"}">${college.mcq_bank_available ? "MCQ Bank" : "Video only"}</span>
+        </div>
+      </div>
+      <div class="admin-university-colleges-item-actions">
+        <button class="btn ghost admin-btn-sm" type="button" data-college-toggle-mcq="${escapeHtml(college.id)}" ${busy ? "disabled" : ""}>${escapeHtml(toggleMcqLabel)}</button>
+        <button class="btn ghost admin-btn-sm" type="button" data-college-toggle-active="${escapeHtml(college.id)}" ${busy ? "disabled" : ""}>${escapeHtml(toggleActiveLabel)}</button>
+        <button class="btn ghost admin-btn-sm" type="button" data-college-edit="${escapeHtml(college.id)}" ${busy ? "disabled" : ""}>Edit</button>
+      </div>
+    </li>`;
+  }).join("");
+
+  return `<tr class="admin-university-colleges-row" data-university-colleges-row="${escapeHtml(university.id)}">
+    <td colspan="6">
+      <div class="admin-university-colleges">
+        <div class="admin-university-colleges-head">
+          <span class="admin-university-colleges-title">Colleges (${escapeHtml(String(colleges.length))})</span>
+          <button class="btn ghost admin-btn-sm" type="button" data-college-new="${escapeHtml(university.id)}" ${busy || missing ? "disabled" : ""}>Add college</button>
+        </div>
+        ${colleges.length
+          ? `<ul class="admin-university-colleges-list">${itemsHtml}</ul>`
+          : `<p class="subtle admin-university-colleges-empty">${escapeHtml(emptyText)}</p>`}
+      </div>
+    </td>
+  </tr>`;
 }
 
 function renderAdminUniversitiesSection() {
   if (!state.universitiesLoadedAt && !state.universitiesLoading && !state.universitiesError) {
     loadUniversities().then(refreshAdminUniversitiesView);
   }
-  const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving);
-  const draft = state.adminUniversityDraft;
+  if (
+    !state.universityCollegesLoadedAt
+    && !state.universityCollegesLoading
+    && !state.universityCollegesError
+    && typeof getRelationalClient === "function"
+    && getRelationalClient()
+  ) {
+    loadUniversityCollegesAdmin().then(refreshAdminUniversitiesView);
+  }
+  const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving || state.adminCollegeSaving);
   const universities = getCachedUniversities();
+  const allColleges = Array.isArray(state.universityColleges) ? state.universityColleges : [];
+  const collegesByUniversity = new Map();
+  allColleges.forEach((college) => {
+    const uid = String(college?.university_id || "");
+    if (!uid) return;
+    if (!collegesByUniversity.has(uid)) {
+      collegesByUniversity.set(uid, []);
+    }
+    collegesByUniversity.get(uid).push(college);
+  });
   const rows = universities.map((university) => {
     const students = countStudentsAtUniversity(university.id);
-    return `<tr data-university-id="${escapeHtml(university.id)}">
+    const collegesForUniversity = collegesByUniversity.get(university.id) || [];
+    const universityRowHtml = `<tr data-university-id="${escapeHtml(university.id)}">
       <td><b>${escapeHtml(university.name)}</b>${university.name_ar ? `<br><small dir="rtl" lang="ar">${escapeHtml(university.name_ar)}</small>` : ""}</td>
       <td>${escapeHtml(String(university.sort_order))}</td>
       <td><span class="badge ${university.is_active ? "good" : "neutral"}">${university.is_active ? "Shown" : "Hidden"}</span></td>
@@ -34925,6 +35851,7 @@ function renderAdminUniversitiesSection() {
         ],
       })}</td>
     </tr>`;
+    return `${universityRowHtml}${renderUniversityCollegesSubrow(university, collegesForUniversity, busy)}`;
   }).join("");
   const emptyRow = state.universitiesLoading
     ? "Loading universities…"
@@ -34932,8 +35859,8 @@ function renderAdminUniversitiesSection() {
   const headerActions = `${renderAdminIconButton({
     icon: "refresh",
     label: "Reload universities",
-    attrs: `data-university-refresh${state.adminUniversitySaving ? " disabled" : ""}`,
-    busy: Boolean(state.universitiesLoading),
+    attrs: `data-university-refresh${state.adminUniversitySaving || state.adminCollegeSaving ? " disabled" : ""}`,
+    busy: Boolean(state.universitiesLoading || state.universityCollegesLoading),
   })}${renderAdminIconButton({
     icon: "plus",
     label: "Add university",
@@ -34946,9 +35873,9 @@ function renderAdminUniversitiesSection() {
     count: universities.length,
     actions: headerActions,
     notes: [
-      "Students pick their university from this list when they sign up.",
-      "The MCQ Bank is only for <b>Medicine</b> students at universities where it's turned on. Everyone else gets Video Courses. This is applied automatically.",
-      "Hiding a university removes it from sign-up but keeps its students. A university with students can't be deleted — hide it instead.",
+      "Students pick their university and college from this list when they sign up.",
+      "The MCQ Bank is available for programs where both the university and college offer it. Everyone else gets Video Courses. This is applied automatically.",
+      "Hiding a university or college removes it from sign-up but keeps its students. A university with students can't be deleted — hide it instead.",
     ],
   });
   return `<section class="card admin-section" id="admin-universities-section">
@@ -34959,16 +35886,63 @@ function renderAdminUniversitiesSection() {
   </section>`;
 }
 
+function renderAdminCollegeDialog() {
+  const draft = state.adminCollegeDraft;
+  if (!draft) return "";
+  const isNew = !draft.id;
+  const busy = Boolean(state.universityCollegesLoading || state.adminCollegeSaving);
+  const university = getCachedUniversities().find((entry) => entry.id === draft.university_id) || null;
+  const dialogTitle = isNew ? "Add college" : `Edit ${String(draft.name || "college")}`;
+  const dialogSubtitle = `<p class="admin-dialog-subtitle">
+    <span>${escapeHtml(university?.name || "University")}</span>
+    ${!isNew && draft.college_key ? `<code class="admin-college-key">${escapeHtml(draft.college_key)}</code>` : ""}
+  </p>`;
+  return `<div class="admin-dialog" data-admin-dialog="college">
+    <button type="button" class="admin-dialog-backdrop" data-college-cancel aria-label="Close college editor" ${state.adminCollegeSaving ? "disabled" : ""}></button>
+    <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="admin-college-dialog-title">
+      <div class="admin-dialog-head">
+        <div><h3 id="admin-college-dialog-title">${escapeHtml(dialogTitle)}</h3>${dialogSubtitle}</div>
+        <button type="button" class="admin-dialog-close" data-college-cancel aria-label="Close college editor" title="Close" ${state.adminCollegeSaving ? "disabled" : ""}>×</button>
+      </div>
+      <form id="admin-college-form" class="admin-university-editor">
+        <fieldset ${busy ? "disabled" : ""}>
+          ${isNew
+            ? `<label>College key<input name="college_key" required minlength="2" maxlength="40" pattern="^[a-z][a-z0-9_]{1,39}$" value="${escapeHtml(draft.college_key || "")}" placeholder="e.g. medicine" autocomplete="off" spellcheck="false" /></label>
+               <p class="subtle admin-university-sort-hint">Lowercase letters, numbers, and underscores only (2–40 chars, must start with a letter).</p>`
+            : ""}
+          <div class="form-row">
+            <label>Name<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name || "")}" /></label>
+            <label>Arabic name (optional)<input name="name_ar" dir="rtl" lang="ar" maxlength="160" value="${escapeHtml(draft.name_ar || "")}" /></label>
+          </div>
+          <div class="form-row">
+            <label>Years<input name="years_count" type="number" min="1" max="7" step="1" required value="${escapeHtml(String(draft.years_count ?? 5))}" /></label>
+            <label>Semesters per year<input name="semesters_per_year" type="number" min="1" max="3" step="1" required value="${escapeHtml(String(draft.semesters_per_year ?? 2))}" /></label>
+          </div>
+          <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
+          <p class="subtle admin-university-sort-hint">Lower numbers appear first.</p>
+          <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
+          <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available for this college</label>
+          <div class="admin-dialog-actions">
+            <button class="btn" type="submit">${state.adminCollegeSaving ? "Saving…" : "Save"}</button>
+            <button class="btn ghost" type="button" data-college-cancel>Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+  </div>`;
+}
+
 function renderAdminUniversityDialog() {
   const draft = state.adminUniversityDraft;
-  if (!draft) return "";
+  const collegeDialogHtml = renderAdminCollegeDialog();
+  if (!draft) return collegeDialogHtml;
   const busy = Boolean(state.universitiesLoading || state.adminUniversitySaving);
   const dialogTitle = draft.id ? `Edit ${String(draft.name || "university")}` : "Add university";
   const dialogSubtitle = draft.id ? `<p class="admin-dialog-subtitle">
     <span>${escapeHtml(draft.name || "University")}</span>
     ${draft.name_ar ? `<span dir="rtl" lang="ar">${escapeHtml(draft.name_ar)}</span>` : ""}
   </p>` : "";
-  return `<div class="admin-dialog" data-admin-dialog="university">
+  const universityDialogHtml = `<div class="admin-dialog" data-admin-dialog="university">
     <button type="button" class="admin-dialog-backdrop" data-university-cancel aria-label="Close university editor" ${state.adminUniversitySaving ? "disabled" : ""}></button>
     <section class="admin-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="admin-university-dialog-title">
       <div class="admin-dialog-head">
@@ -34984,7 +35958,7 @@ function renderAdminUniversityDialog() {
           <label>Sort order<input name="sort_order" type="number" step="1" value="${escapeHtml(String(draft.sort_order ?? 100))}" /></label>
           <p class="subtle admin-university-sort-hint">Lower numbers appear first.</p>
           <label><input name="is_active" type="checkbox" ${draft.is_active ? "checked" : ""} /> Shown at sign-up</label>
-          <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (Medicine students only)</label>
+          <label><input name="mcq_bank_available" type="checkbox" ${draft.mcq_bank_available ? "checked" : ""} /> MCQ Bank available (master switch for this university)</label>
           <div class="admin-dialog-actions">
             <button class="btn" type="submit">${state.adminUniversitySaving ? "Saving…" : "Save"}</button>
             <button class="btn ghost" type="button" data-university-cancel>Cancel</button>
@@ -34993,6 +35967,108 @@ function renderAdminUniversityDialog() {
       </form>
     </section>
   </div>`;
+  return `${universityDialogHtml}${collegeDialogHtml}`;
+}
+
+function captureAdminCollegeDraft(form) {
+  const draft = state.adminCollegeDraft;
+  if (!draft || !form) return;
+  if (form.elements.college_key) {
+    draft.college_key = form.elements.college_key.value;
+  }
+  draft.name = form.elements.name.value;
+  draft.name_ar = form.elements.name_ar.value;
+  draft.years_count = form.elements.years_count.value;
+  draft.semesters_per_year = form.elements.semesters_per_year.value;
+  draft.sort_order = form.elements.sort_order.value;
+  draft.is_active = form.elements.is_active.checked;
+  draft.mcq_bank_available = form.elements.mcq_bank_available.checked;
+  state.adminCollegeDraftDirty = getAdminCollegeDraftSnapshot(draft) !== state.adminCollegeDraftInitial;
+}
+
+function getAdminCollegeDraftSnapshot(draft) {
+  if (!draft) return "";
+  return JSON.stringify({
+    id: String(draft.id || ""),
+    university_id: String(draft.university_id || ""),
+    college_key: String(draft.college_key || ""),
+    name: String(draft.name || ""),
+    name_ar: String(draft.name_ar || ""),
+    years_count: String(draft.years_count ?? 5),
+    semesters_per_year: String(draft.semesters_per_year ?? 2),
+    sort_order: String(draft.sort_order ?? 100),
+    is_active: Boolean(draft.is_active),
+    mcq_bank_available: Boolean(draft.mcq_bank_available),
+  });
+}
+
+function beginAdminCollegeEditor(draft, returnFocusSelector) {
+  state.adminCollegeDraft = draft;
+  state.adminCollegeDraftInitial = getAdminCollegeDraftSnapshot(draft);
+  state.adminCollegeDraftDirty = false;
+  state.adminCollegeDialogReturnFocus = String(returnFocusSelector || "");
+  state.adminCollegeDialogNeedsFocus = true;
+  refreshAdminUniversitiesView();
+}
+
+function finishAdminCollegeEditorClose({ restoreFocus = true } = {}) {
+  const returnFocus = state.adminCollegeDialogReturnFocus;
+  state.adminCollegeDraft = null;
+  state.adminCollegeDraftInitial = "";
+  state.adminCollegeDraftDirty = false;
+  state.adminCollegeDialogNeedsFocus = false;
+  state.adminCollegeDialogReturnFocus = "";
+  refreshAdminUniversitiesView();
+  if (restoreFocus && returnFocus) {
+    window.setTimeout(() => {
+      appEl.querySelector(returnFocus)?.focus();
+    }, 0);
+  }
+}
+
+function requestAdminCollegeEditorClose(form, { restoreFocus = true } = {}) {
+  if (state.adminCollegeSaving) return false;
+  captureAdminCollegeDraft(form);
+  if (state.adminCollegeDraftDirty && !window.confirm("Discard your changes to this college?")) return false;
+  finishAdminCollegeEditorClose({ restoreFocus });
+  return true;
+}
+
+async function runAdminCollegeMutation(action, options = {}) {
+  if (state.adminCollegeSaving) return false;
+  const client = typeof getRelationalClient === "function" ? getRelationalClient() : null;
+  if (!client || getCurrentUser()?.role !== "admin") {
+    toast("An active admin session is required.");
+    return false;
+  }
+  state.adminCollegeSaving = true;
+  refreshAdminUniversitiesView();
+  let ok = false;
+  try {
+    await action(client);
+    ok = true;
+  } catch (error) {
+    console.warn("College change failed.", error?.message || error);
+    const serverMessage = String(error?.message || "").trim();
+    const fallback = getUniversitiesUtils()?.describeUniversityError(error, "Could not save the college.")
+      || "Could not save the college.";
+    toast(serverMessage || fallback);
+  } finally {
+    await loadUniversityCollegesAdmin({ force: true });
+    state.signupPrograms = [];
+    state.signupProgramsLoadedAt = 0;
+    if (typeof resetWebsiteMcqProgramIdCache === "function") {
+      resetWebsiteMcqProgramIdCache();
+    }
+    if (ok && options.refreshProfiles) {
+      await hydrateRelationalProfiles(getCurrentUser()).catch((error) => {
+        console.warn("Could not refresh profiles after a college MCQ availability change.", error?.message || error);
+      });
+    }
+    state.adminCollegeSaving = false;
+    refreshAdminUniversitiesView();
+  }
+  return ok;
 }
 
 function captureAdminUniversityDraft(form) {
@@ -35079,6 +36155,9 @@ async function runAdminUniversityMutation(action, options = {}) {
     toast(getUniversitiesUtils()?.describeUniversityError(error) || "Could not save the university.");
   } finally {
     await loadUniversities({ force: true });
+    await loadUniversityCollegesAdmin({ force: true });
+    state.signupPrograms = [];
+    state.signupProgramsLoadedAt = 0;
     if (ok && options.refreshProfiles) {
       await hydrateRelationalProfiles(getCurrentUser()).catch((error) => {
         console.warn("Could not refresh profiles after an MCQ availability change.", error?.message || error);
@@ -35095,13 +36174,23 @@ function wireAdminUniversities() {
   if (!section) return;
   const form = appEl.querySelector("#admin-university-form");
   const dialog = appEl.querySelector("[data-admin-dialog='university']");
+  const collegeForm = appEl.querySelector("#admin-college-form");
+  const collegeDialog = appEl.querySelector("[data-admin-dialog='college']");
   const capture = () => captureAdminUniversityDraft(form);
+  const captureCollege = () => captureAdminCollegeDraft(collegeForm);
   const findUniversity = (id) => getCachedUniversities().find((entry) => entry.id === id) || null;
+  const findCollege = (id) => (Array.isArray(state.universityColleges) ? state.universityColleges : []).find((entry) => entry.id === id) || null;
   form?.addEventListener("input", capture);
   form?.addEventListener("change", capture);
+  collegeForm?.addEventListener("input", captureCollege);
+  collegeForm?.addEventListener("change", captureCollege);
   if (dialog && state.adminUniversityDialogNeedsFocus) {
     state.adminUniversityDialogNeedsFocus = false;
     window.setTimeout(() => form?.elements.name?.focus(), 0);
+  }
+  if (collegeDialog && state.adminCollegeDialogNeedsFocus) {
+    state.adminCollegeDialogNeedsFocus = false;
+    window.setTimeout(() => (collegeForm?.elements.college_key || collegeForm?.elements.name)?.focus(), 0);
   }
   dialog?.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -35124,9 +36213,33 @@ function wireAdminUniversities() {
       first.focus();
     }
   });
+  collegeDialog?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      requestAdminCollegeEditorClose(collegeForm);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const panel = collegeDialog.querySelector(".admin-dialog-panel");
+    const focusable = [...(panel?.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])") || [])]
+      .filter((element) => !element.hidden);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
   section.querySelector("[data-university-refresh]")?.addEventListener("click", async () => {
     capture();
-    const loading = loadUniversities({ force: true });
+    const loading = Promise.all([
+      loadUniversities({ force: true }),
+      loadUniversityCollegesAdmin({ force: true }),
+    ]);
     refreshAdminUniversitiesView();
     await loading;
     refreshAdminUniversitiesView();
@@ -35138,6 +36251,61 @@ function wireAdminUniversities() {
   });
   appEl.querySelectorAll("[data-university-cancel]").forEach((button) => button.addEventListener("click", () => {
     requestAdminUniversityEditorClose(form);
+  }));
+  appEl.querySelectorAll("[data-college-cancel]").forEach((button) => button.addEventListener("click", () => {
+    requestAdminCollegeEditorClose(collegeForm);
+  }));
+  section.querySelectorAll("[data-college-new]").forEach((button) => button.addEventListener("click", () => {
+    const universityId = button.getAttribute("data-college-new");
+    if (!findUniversity(universityId)) return;
+    captureCollege();
+    if (state.adminCollegeDraftDirty && !window.confirm("Discard your changes to this college?")) return;
+    beginAdminCollegeEditor(newAdminCollegeDraft(universityId), `[data-college-new="${universityId}"]`);
+  }));
+  section.querySelectorAll("[data-college-edit]").forEach((button) => button.addEventListener("click", () => {
+    const college = findCollege(button.getAttribute("data-college-edit"));
+    if (!college) return;
+    captureCollege();
+    if (state.adminCollegeDraftDirty && !window.confirm("Discard your changes to this college?")) return;
+    beginAdminCollegeEditor({
+      id: college.id,
+      university_id: college.university_id,
+      college_key: college.college_key,
+      name: college.name,
+      name_ar: college.name_ar || "",
+      years_count: college.years_count,
+      semesters_per_year: college.semesters_per_year,
+      sort_order: college.sort_order,
+      is_active: college.is_active,
+      mcq_bank_available: college.mcq_bank_available,
+    }, `[data-college-edit="${college.id}"]`);
+  }));
+  section.querySelectorAll("[data-college-toggle-active]").forEach((button) => button.addEventListener("click", () => {
+    const college = findCollege(button.getAttribute("data-college-toggle-active"));
+    if (!college) return;
+    runAdminCollegeMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("university_colleges").update({ is_active: !college.is_active }).eq("id", college.id).select("id"),
+        "College update timed out.",
+      );
+      if (!rows?.length) throw new Error("College was not changed");
+      toast(college.is_active ? `${college.name} is hidden from sign-up.` : `${college.name} is shown at sign-up.`);
+    });
+  }));
+  section.querySelectorAll("[data-college-toggle-mcq]").forEach((button) => button.addEventListener("click", () => {
+    const college = findCollege(button.getAttribute("data-college-toggle-mcq"));
+    if (!college) return;
+    const university = findUniversity(college.university_id);
+    const nextAvailable = !college.mcq_bank_available;
+    if (!confirmCollegeMcqChange(college, university, nextAvailable)) return;
+    runAdminCollegeMutation(async (client) => {
+      const rows = await runRelationalQueryWithTimeout(
+        client.from("university_colleges").update({ mcq_bank_available: nextAvailable }).eq("id", college.id).select("id"),
+        "College update timed out.",
+      );
+      if (!rows?.length) throw new Error("College was not changed");
+      toast(nextAvailable ? `MCQ Bank offered for ${college.name}.` : `MCQ Bank turned off for ${college.name}.`);
+    }, { refreshProfiles: true });
   }));
   section.querySelectorAll("[data-university-edit]").forEach((button) => button.addEventListener("click", () => {
     const university = findUniversity(button.getAttribute("data-university-edit"));
@@ -35222,6 +36390,39 @@ function wireAdminUniversities() {
     }, { refreshProfiles: Boolean(existing && mcqChanged) });
     if (saved) {
       finishAdminUniversityEditorClose();
+    }
+  });
+  collegeForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    captureCollege();
+    const draft = state.adminCollegeDraft;
+    const utils = getUniversitiesUtils();
+    if (!draft || !utils || state.adminCollegeSaving) return;
+    const isNew = !draft.id;
+    const validation = utils.validateUniversityCollegeDraft(draft, { isNew });
+    if (!validation.ok) {
+      toast(validation.errors.join(" "));
+      return;
+    }
+    const existing = draft.id ? findCollege(draft.id) : null;
+    const university = findUniversity(draft.university_id);
+    const mcqChanged = existing
+      ? existing.mcq_bank_available !== validation.payload.mcq_bank_available
+      : false;
+    if (existing && mcqChanged && !confirmCollegeMcqChange(existing, university, validation.payload.mcq_bank_available)) return;
+    const saved = await runAdminCollegeMutation(async (client) => {
+      const query = existing
+        ? client.from("university_colleges").update(validation.payload).eq("id", existing.id)
+        : client.from("university_colleges").insert({
+          university_id: draft.university_id,
+          ...validation.payload,
+        });
+      const rows = await runRelationalQueryWithTimeout(query.select("id"), "College save timed out.");
+      if (!rows?.length) throw new Error("College was not saved");
+      toast(existing ? "College saved." : "College added.");
+    }, { refreshProfiles: Boolean(existing && mcqChanged) });
+    if (saved) {
+      finishAdminCollegeEditorClose();
     }
   });
 }
@@ -37971,7 +39172,7 @@ function renderAdmin() {
               <label>Year
                 <select id="admin-user-filter-year" name="academicYear">
                   <option value="" ${userFilterYear === null ? "selected" : ""}>All years</option>
-                  ${[1, 2, 3, 4, 5]
+                  ${[1, 2, 3, 4, 5, 6, 7]
           .map((entry) => `<option value="${entry}" ${userFilterYear === entry ? "selected" : ""}>Year ${entry}</option>`)
           .join("")}
                 </select>
@@ -37981,6 +39182,7 @@ function renderAdmin() {
                   <option value="" ${userFilterSemester === null ? "selected" : ""}>All semesters</option>
                   <option value="1" ${userFilterSemester === 1 ? "selected" : ""}>Semester 1</option>
                   <option value="2" ${userFilterSemester === 2 ? "selected" : ""}>Semester 2</option>
+                  <option value="3" ${userFilterSemester === 3 ? "selected" : ""}>Semester 3</option>
                 </select>
               </label>
               <label>Approval
@@ -38055,7 +39257,7 @@ function renderAdmin() {
             <div class="form-row" data-add-user-student-only ${addUserDraft.role === "student" ? "" : "hidden"}>
               <label>Year
                 <select name="academicYear">
-                  ${[1, 2, 3, 4, 5]
+                  ${[1, 2, 3, 4, 5, 6, 7]
           .map((entry) => `<option value="${entry}" ${addUserDraft.academicYear === String(entry) ? "selected" : ""}>Year ${entry}</option>`)
           .join("")}
                 </select>
@@ -38064,6 +39266,7 @@ function renderAdmin() {
                 <select name="academicSemester">
                   <option value="1" ${addUserDraft.academicSemester === "1" ? "selected" : ""}>Semester 1</option>
                   <option value="2" ${addUserDraft.academicSemester === "2" ? "selected" : ""}>Semester 2</option>
+                  <option value="3" ${addUserDraft.academicSemester === "3" ? "selected" : ""}>Semester 3</option>
                 </select>
               </label>
             </div>
@@ -38173,21 +39376,26 @@ function renderAdmin() {
             </label>`
         : ""}
           ${editIsStudent
-        ? `<div class="form-row">
+        ? (() => {
+          const editTermBounds = getTermBoundsForSelection(
+            editDisplay.universityId ?? editUserAccount.universityId,
+            editDisplay.college ?? editUserAccount.college,
+          );
+          const maxEditYears = Math.max(editTermBounds.yearsCount, editYear || 0);
+          const maxEditSemesters = Math.max(editTermBounds.semestersPerYear, editSemester || 0);
+          return `<div class="form-row">
               <label>Year
                 <select id="admin-user-edit-year" data-field="academicYear">
-                  <option value="" ${editYear === null ? "selected" : ""}>Select year</option>
-                  ${[1, 2, 3, 4, 5].map((entry) => `<option value="${entry}" ${editYear === entry ? "selected" : ""}>Year ${entry}</option>`).join("")}
+                  ${renderYearSelectOptions(editYear, maxEditYears)}
                 </select>
               </label>
               <label>Semester
                 <select id="admin-user-edit-semester" data-field="academicSemester">
-                  <option value="" ${editSemester === null ? "selected" : ""}>Select semester</option>
-                  <option value="1" ${editSemester === 1 ? "selected" : ""}>Semester 1</option>
-                  <option value="2" ${editSemester === 2 ? "selected" : ""}>Semester 2</option>
+                  ${renderSemesterSelectOptions(editSemester, maxEditSemesters)}
                 </select>
               </label>
-            </div>`
+            </div>`;
+        })()
         : ""}
           <label>Role
             <select id="admin-user-edit-role" class="admin-role-select" data-action="set-user-role" ${editIsSelf ? "disabled title=\"You cannot change your own role.\"" : ""}>
@@ -39819,12 +41027,17 @@ function getCourseTopicServerCounts(course, topic) {
 // yet. Course names are unique today; more than one match is refused rather
 // than guessed.
 async function fetchCourseTopicId(client, course, topic) {
+  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
+  let query = client
+    .from("course_topics")
+    .select(programId ? "id,courses!inner(course_name,program_id)" : "id,courses!inner(course_name)")
+    .eq("topic_name", topic)
+    .eq("courses.course_name", course);
+  if (programId) {
+    query = query.eq("courses.program_id", programId);
+  }
   const { data, error } = await runWithTimeoutResult(
-    client
-      .from("course_topics")
-      .select("id,courses!inner(course_name)")
-      .eq("topic_name", topic)
-      .eq("courses.course_name", course),
+    query,
     SUPABASE_QUERY_TIMEOUT_MS,
     "Topic lookup timed out.",
   );
@@ -51436,20 +52649,22 @@ function applyCourseTopicsUpdate(course, nextTopics, options = {}) {
 
 function normalizeAcademicYearOrNull(value) {
   const year = Number(value);
-  return [1, 2, 3, 4, 5].includes(year) ? year : null;
+  return Number.isInteger(year) && year >= 1 && year <= 7 ? year : null;
 }
 
 function normalizeAcademicSemesterOrNull(value) {
   const semester = Number(value);
-  return semester === 1 || semester === 2 ? semester : null;
+  return Number.isInteger(semester) && semester >= 1 && semester <= 3 ? semester : null;
 }
 
 function sanitizeAcademicYear(value) {
-  return normalizeAcademicYearOrNull(value) ?? 1;
+  const year = normalizeAcademicYearOrNull(value);
+  return year !== null && year <= 5 ? year : 1;
 }
 
 function sanitizeAcademicSemester(value) {
-  return normalizeAcademicSemesterOrNull(value) ?? 1;
+  const semester = normalizeAcademicSemesterOrNull(value);
+  return semester !== null && semester <= 2 ? semester : 1;
 }
 
 // The three roles that exist in `profiles.role` (see the `app_user_role` enum).
@@ -51479,11 +52694,32 @@ function getCurriculumCourses(year, semester) {
   return sanitizeCourseAssignments(courses);
 }
 
+const signupCourseCatalogByProgram = new Map();
+
+function getSignupCurriculumCourses(year, semester, selection = null) {
+  const normalizedYear = normalizeAcademicYearOrNull(year);
+  const normalizedSemester = normalizeAcademicSemesterOrNull(semester);
+  if (normalizedYear === null || normalizedSemester === null) {
+    return [];
+  }
+  const program = selection?.universityId && selection?.college
+    ? getProgramForSelection(selection.universityId, selection.college)
+    : null;
+  if (program?.id && signupCourseCatalogByProgram.has(program.id)) {
+    const courses = signupCourseCatalogByProgram.get(program.id)?.[normalizedYear]?.[normalizedSemester] || [];
+    return [...new Set((courses || []).map((entry) => String(entry || "").trim()).filter(Boolean))];
+  }
+  if (normalizedYear <= 5 && normalizedSemester <= 2) {
+    return getCurriculumCourses(normalizedYear, normalizedSemester);
+  }
+  return [];
+}
+
 // Signed-out visitors cannot read `courses` (RLS), so signup used to show the
 // hardcoded/cached curriculum with pre-rename names. This pulls the active
-// course names per term from `get_signup_course_catalog()` (2026-10-19).
-// Returns true when the curriculum changed.
-async function refreshSignupCourseCatalog() {
+// course names per term from `get_signup_course_catalog(p_program_id)`
+// (2026-10-19, program-scoped 2026-11-16). Returns true when the catalog changed.
+async function refreshSignupCourseCatalog(options = {}) {
   const client = getRelationalClient();
   if (!client || typeof client.rpc !== "function") {
     return false;
@@ -51493,16 +52729,33 @@ async function refreshSignupCourseCatalog() {
     || isRelationalStorageKeyBusy(STORAGE_KEYS.courseTopics)) {
     return false;
   }
-  const { data, error } = await client.rpc("get_signup_course_catalog");
-  if (error || !Array.isArray(data) || !data.length) {
+  const programId = normalizeUniversityIdValue(options?.programId);
+  const yearsCount = Math.min(7, Math.max(1, Number(options?.yearsCount) || 5));
+  const semestersPerYear = Math.min(3, Math.max(1, Number(options?.semestersPerYear) || 2));
+
+  let { data, error } = await client.rpc(
+    "get_signup_course_catalog",
+    programId ? { p_program_id: programId } : undefined,
+  );
+  if (error && programId && isMissingRpcFunctionError(error)) {
+    ({ data, error } = await client.rpc("get_signup_course_catalog"));
+  }
+  if (error || !Array.isArray(data)) {
     if (error) {
       console.warn("Could not load the signup course catalog.", error?.message || error);
     }
     return false;
   }
+  if (!data.length && !programId) {
+    return false;
+  }
+
   const curriculum = {};
-  for (let year = 1; year <= 5; year += 1) {
-    curriculum[year] = { 1: [], 2: [] };
+  for (let year = 1; year <= yearsCount; year += 1) {
+    curriculum[year] = {};
+    for (let semester = 1; semester <= semestersPerYear; semester += 1) {
+      curriculum[year][semester] = [];
+    }
   }
   data.forEach((row) => {
     const year = normalizeAcademicYearOrNull(row?.academic_year);
@@ -51511,10 +52764,26 @@ async function refreshSignupCourseCatalog() {
     if (year === null || semester === null || !courseName) {
       return;
     }
+    if (year > yearsCount || semester > semestersPerYear) {
+      return;
+    }
     if (!curriculum[year][semester].includes(courseName)) {
       curriculum[year][semester].push(courseName);
     }
   });
+
+  if (programId) {
+    const previous = signupCourseCatalogByProgram.get(programId);
+    const programChanged = JSON.stringify(curriculum) !== JSON.stringify(previous || null);
+    signupCourseCatalogByProgram.set(programId, curriculum);
+    if (!websiteMcqProgramIdCache || programId !== websiteMcqProgramIdCache) {
+      return programChanged;
+    }
+  }
+
+  if (!data.length) {
+    return false;
+  }
   const nextCurriculum = normalizeCurriculum(curriculum);
   if (JSON.stringify(nextCurriculum) === JSON.stringify(MEDBANK_CURRICULUM)) {
     return false;
@@ -51527,8 +52796,8 @@ async function refreshSignupCourseCatalog() {
 
 // Re-renders a signup-style course checklist after the live catalog loads,
 // keeping the student's picks; an untouched all-checked list stays all-checked.
-function refreshCourseOptionsFromSignupCatalog(courseOptionsEl, inputName, renderOptions) {
-  refreshSignupCourseCatalog()
+function refreshCourseOptionsFromSignupCatalog(courseOptionsEl, inputName, renderOptions, catalogOptions = {}) {
+  refreshSignupCourseCatalog(catalogOptions)
     .then((changed) => {
       if (!changed || !courseOptionsEl?.isConnected) {
         return;
@@ -62802,29 +64071,39 @@ function ensureAdminCourseLocksLoaded(force = false) {
     return Promise.resolve();
   }
   cache.loading = true;
-  return Promise.resolve(
-    client
-      .from("course_locks")
-      .select("course_id,note,courses(course_name,academic_year,academic_semester)"),
-  ).then(({ data, error }) => {
-    if (error) {
-      cache.error = isMissingRelationError(error)
-        ? "Module locks are not set up in the database yet (migration 20261013190634 is not applied)."
-        : (error.message || "Could not load module locks.");
+  return resolveWebsiteMcqProgramScope().then(({ programId, unconfirmed }) => {
+    if (unconfirmed) {
+      cache.error = "Could not confirm the MCQ college. Try again.";
       return;
     }
-    const byKey = {};
-    (Array.isArray(data) ? data : []).forEach((row) => {
-      if (!row?.courses) {
-        return;
-      }
-      byKey[getAdminCourseLockKey(row.courses.course_name, row.courses.academic_year, row.courses.academic_semester)] = {
-        courseId: String(row.course_id),
-        note: String(row?.note || "").trim(),
-      };
-    });
-    cache.byKey = byKey;
-    cache.error = "";
+    return client
+      .from("course_locks")
+      .select(programId
+        ? "course_id,note,courses(course_name,academic_year,academic_semester,program_id)"
+        : "course_id,note,courses(course_name,academic_year,academic_semester)")
+      .then(({ data, error }) => {
+        if (error) {
+          cache.error = isMissingRelationError(error)
+            ? "Module locks are not set up in the database yet (migration 20261013190634 is not applied)."
+            : (error.message || "Could not load module locks.");
+          return;
+        }
+        const byKey = {};
+        (Array.isArray(data) ? data : []).forEach((row) => {
+          if (!row?.courses) {
+            return;
+          }
+          if (programId && row.courses.program_id && String(row.courses.program_id).toLowerCase() !== programId) {
+            return;
+          }
+          byKey[getAdminCourseLockKey(row.courses.course_name, row.courses.academic_year, row.courses.academic_semester)] = {
+            courseId: String(row.course_id),
+            note: String(row?.note || "").trim(),
+          };
+        });
+        cache.byKey = byKey;
+        cache.error = "";
+      });
   }).catch((error) => {
     cache.error = error?.message || "Could not load module locks.";
   }).finally(() => {
@@ -62878,6 +64157,7 @@ async function toggleAdminCourseUniversalLock(courseName, year, semester) {
   state.skipNextRouteAnimation = true;
   render();
   try {
+    const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
     if (existing) {
       const { error } = await client.from("course_locks").delete().eq("course_id", existing.courseId);
       if (error) {
@@ -62885,13 +64165,17 @@ async function toggleAdminCourseUniversalLock(courseName, year, semester) {
       }
       toast(`${courseName} unlocked for all students.`);
     } else {
-      const { data: courseRow, error: courseError } = await client
+      let courseQuery = client
         .from("courses")
         .select("id")
         .eq("course_name", courseName)
         .eq("academic_year", year)
         .eq("academic_semester", semester)
-        .eq("is_active", true)
+        .eq("is_active", true);
+      if (programId) {
+        courseQuery = courseQuery.eq("program_id", programId);
+      }
+      const { data: courseRow, error: courseError } = await courseQuery
         .limit(1)
         .maybeSingle();
       if (courseError) {
@@ -63158,24 +64442,36 @@ function closeAdminUserUniversityDialog() {
   document.removeEventListener("keydown", handleAdminUserUniversityDialogKeydown);
 }
 
+function getAdminUserUniversityDialogPrograms() {
+  const adminColleges = getCachedUniversityColleges();
+  return adminColleges.length ? adminColleges : getKnownCollegePrograms();
+}
+
+function describeAdminUserUniversityEligibility(universityId, college, programsOverride = null) {
+  const utils = getUniversitiesUtils();
+  const programs = Array.isArray(programsOverride) ? programsOverride : getAdminUserUniversityDialogPrograms();
+  const eligibility = utils
+    ? utils.resolveMcqEligibility({ role: "student", universityId, college }, getCachedUniversities(), programs.length ? programs : null)
+    : null;
+  if (eligibility === true) return "Eligible for the MCQ Bank.";
+  if (eligibility === false) return "Not eligible for the MCQ Bank. Video Courses only.";
+  return "Eligibility could not be checked (the university list did not load).";
+}
+
 function renderAdminUserUniversityForm(profile) {
   const universityId = normalizeUniversityIdValue(profile?.university_id);
   const college = normalizeCollegeValue(profile?.college);
-  const eligibility = resolveUserMcqEligibility({ role: "student", universityId, college });
-  const eligibilityText = eligibility === true
-    ? "Eligible for the MCQ Bank."
-    : eligibility === false
-      ? "Not eligible for the MCQ Bank. Video Courses only."
-      : "Eligibility could not be checked (the university list did not load).";
+  const programs = getAdminUserUniversityDialogPrograms();
+  const eligibilityText = describeAdminUserUniversityEligibility(universityId, college, programs);
   return `
     <form class="admin-user-university-form" data-admin-user-university-form>
       <label>University
         <select name="universityId" required>${renderUniversitySelectOptions(universityId, { includeInactive: true })}</select>
       </label>
       <label>College
-        <select name="college" required>${renderCollegeSelectOptions(college)}</select>
+        <select name="college" required>${renderCollegeSelectOptions(college, { universityId, programs })}</select>
       </label>
-      <p class="admin-user-device-count">${escapeHtml(eligibilityText)}</p>
+      <p class="admin-user-device-count" data-admin-user-university-eligibility>${escapeHtml(eligibilityText)}</p>
       <p class="subtle">MCQ Bank access right now: <b>${profile?.mcq_access_enabled === true ? "on" : "off"}</b>. Moving a student to an eligible university and college turns it on; moving them out turns it off.</p>
       <div class="admin-user-device-release">
         <button class="btn admin-btn-sm" type="submit">Save</button>
@@ -63200,6 +64496,8 @@ async function loadAdminUserUniversityIntoDialog(context) {
     const [profileResult] = await Promise.all([
       client.from("profiles").select("id,role,university_id,college,mcq_access_enabled,mcq_access_held_at").eq("id", context.profileId).maybeSingle(),
       state.universitiesLoadedAt ? Promise.resolve(true) : loadUniversities(),
+      state.universityCollegesLoadedAt ? Promise.resolve(true) : loadUniversityCollegesAdmin(),
+      state.signupProgramsLoadedAt ? Promise.resolve(true) : loadSignupPrograms(),
     ]);
     if (profileResult.error) {
       errorMessage = profileResult.error.message || "Could not load this student's university.";
@@ -63227,6 +64525,26 @@ async function loadAdminUserUniversityIntoDialog(context) {
   refreshAdminUsersRowForProfile(context.profileId);
   body.innerHTML = renderAdminUserUniversityForm(profile);
   const form = body.querySelector("[data-admin-user-university-form]");
+  const universitySelect = form?.querySelector("select[name='universityId']");
+  const collegeSelect = form?.querySelector("select[name='college']");
+  const eligibilityEl = form?.querySelector("[data-admin-user-university-eligibility]");
+  const syncDialogEligibility = () => {
+    if (!form || !eligibilityEl) return;
+    const selection = readUniversityCollegeSelection(form);
+    eligibilityEl.textContent = describeAdminUserUniversityEligibility(selection.universityId, selection.college);
+  };
+  universitySelect?.addEventListener("change", () => {
+    if (collegeSelect) {
+      const selectedUniversityId = normalizeUniversityIdValue(universitySelect.value);
+      const currentCollege = normalizeCollegeValue(collegeSelect.value);
+      collegeSelect.innerHTML = renderCollegeSelectOptions(currentCollege, {
+        universityId: selectedUniversityId,
+        programs: getAdminUserUniversityDialogPrograms(),
+      });
+    }
+    syncDialogEligibility();
+  });
+  collegeSelect?.addEventListener("change", syncDialogEligibility);
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     saveAdminUserUniversity(context, profile, form);
@@ -66054,8 +67372,13 @@ async function fetchQuestionCourseName(questionDbId) {
   if (questionResult.error || !isUuidValue(courseId)) {
     return "";
   }
+  const programId = await getWebsiteMcqProgramId();
+  let courseQuery = client.from("courses").select("course_name").eq("id", courseId);
+  if (programId) {
+    courseQuery = courseQuery.eq("program_id", programId);
+  }
   const courseResult = await runWithTimeoutResult(
-    client.from("courses").select("course_name").eq("id", courseId).limit(1),
+    courseQuery.limit(1),
     SUPABASE_QUERY_TIMEOUT_MS,
     "Course lookup timed out.",
   );
@@ -66711,7 +68034,17 @@ function ensureAdminResultsCourseNames() {
     return;
   }
   results.courseNamesLoading = true;
-  runRelationalQueryWithTimeout(client.from("courses").select("id,course_name"), "Subjects took too long to load.")
+  resolveWebsiteMcqProgramScope()
+    .then(({ programId, unconfirmed }) => {
+      if (unconfirmed) {
+        return [];
+      }
+      let query = client.from("courses").select("id,course_name");
+      if (programId) {
+        query = query.eq("program_id", programId);
+      }
+      return runRelationalQueryWithTimeout(query, "Subjects took too long to load.");
+    })
     .then((rows) => {
       results.courseNames = new Map((rows || []).map((row) => [String(row.id), String(row.course_name || "")]));
     })

@@ -2,6 +2,40 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-16 — Multi-program MCQ eligibility (`university_colleges`) & O6U Medicine curriculum scoping
+- Backend migration `../Medbank-App/supabase/migrations/20261116090000_mcq_programs.sql`
+  introduces `public.university_colleges` (`university_id`, `college_key`, `name`,
+  `name_ar`, `years_count` 1..7, `semesters_per_year` 1..3, `mcq_bank_available`,
+  `is_active`, `sort_order`), scopes `public.courses` via `program_id` with new
+  unique key `(program_id, course_name, academic_year, academic_semester)`, and
+  adds RPCs `get_signup_programs()` and `get_signup_course_catalog(p_program_id)`.
+- Added cached `getWebsiteMcqProgramId()` in `main.js` to resolve the October 6
+  University + `medicine` program id and `resolveProgramIdForUniversityCollege()`
+  to resolve any student's `(university_id, college)` program id (both returning
+  `null` and marking `universityCollegesTableMissing` on `42P01`/`PGRST205` so
+  old backends continue working unchanged). Admin, curriculum sync, import,
+  analytics, universal locks, and admin result course-name lookups stay scoped
+  to O6U Medicine via `getWebsiteMcqProgramId()`. Student-side enrollment and
+  session-history sync (`syncUserCourseEnrollmentsToRelational`,
+  `syncSessionsToRelational`) resolve each student's own program via
+  `resolveProgramIdForUniversityCollege()` (and `user_course_enrollments`
+  fallback in `syncSessionsToRelational`) rather than pinning students to O6U
+  Medicine. `syncCoursesTopicsToRelational` attaches `program_id` and uses
+  `onConflict: "program_id,course_name,academic_year,academic_semester"` when
+  `programId` is resolved.
+- Updated `universities-utils.js` and onboarding/admin helpers (`normalizeCollege`
+  pattern `^[a-z][a-z0-9_]{1,39}$`, `getCollegeLabel`, program-level
+  `resolveMcqEligibility`, `formatMcqIneligibleNote`, `getProgramTermBounds`,
+  `validateUniversityCollegeDraft`).
+- Sign-up and Complete Profile now load programs via `get_signup_programs()`,
+  adapt Year (1..7) and Semester (1..3) pickers/validation to the chosen program,
+  clear out-of-range terms when switching colleges, and pass `p_program_id` +
+  bounds into `refreshSignupCourseCatalog`. Admin → Users filters, Add user, Edit
+  user, and the user University dialog use dynamic program terms and colleges.
+- Admin → Universities now renders a per-university Colleges list with Add, Edit,
+  Shown/Hidden toggle, and MCQ Bank toggle (showing server error text on failure;
+  no Delete action).
+
 ### 2026-11-14 — Migration files caught up with the hosted ledger
 - `20261027130000_shared_test_write_rpcs` and `20261027140000_server_side_grading`
   (+ their rollbacks) were live but only on the unmerged branches

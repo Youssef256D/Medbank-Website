@@ -25989,3 +25989,80 @@ body.theme-dark .admin-user-last-test-open { color: var(--ink); }
 }
 /* Keeps screen-reader-only header labels inside the scroll box. */
 .admin-results-table-wrap { position: relative; }
+
+/* Admin Universities -> Colleges sub-rows */
+.admin-university-colleges-row > td {
+  padding-top: 0;
+  padding-bottom: 14px;
+  border-top: none;
+}
+.admin-university-colleges {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--line) 16%, transparent);
+}
+.admin-university-colleges-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.admin-university-colleges-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.admin-university-colleges-empty {
+  margin: 0;
+  font-size: 0.85rem;
+}
+.admin-university-colleges-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.admin-university-colleges-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card, transparent);
+}
+.admin-university-colleges-item-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.admin-university-colleges-item-title,
+.admin-university-colleges-item-meta,
+.admin-university-colleges-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.admin-university-colleges-item-meta {
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+.admin-college-name-ar {
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+.admin-college-key {
+  font-size: 0.78rem;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+}

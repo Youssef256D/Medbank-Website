@@ -9,6 +9,15 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-16 — Colleges / programs management & multi-program onboarding
+- Sign-up and profile completion now load colleges per university dynamically,
+  adapt year (up to 7) and semester (up to 3) pickers to each program, and show
+  MCQ Bank availability per program instead of hardcoding Medicine only.
+- Admin → Universities now includes per-university college management (add, edit,
+  show/hide at sign-up, and toggle MCQ Bank availability).
+- Website curriculum and question administration remain scoped to October 6
+  University Medicine (`program_id`) while preserving backwards compatibility.
+
 ### 2026-11-14 — Weekly winners in the admin
 - Student results has a Weekly winners tab (also in the sidebar): the top 3
   students of every class for each finished week, and a switch to pause or
