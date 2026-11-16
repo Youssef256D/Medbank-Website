@@ -140,3 +140,43 @@ test('years go to 7 and semesters to 3, as the database allows', () => {
   assert.strictEqual(context.sanitizeAcademicSemester(3), 3);
   assert.strictEqual(context.sanitizeAcademicSemester(4), 1);
 });
+
+test('the college bar picks a university first, then one of its colleges', () => {
+  const colleges = [
+    { id: DEFAULT_ID, university_id: 'o6u', name: 'Medicine', college_key: 'medicine', years_count: 5, semesters_per_year: 2, mcq_bank_available: true },
+    { id: OTHER_ID, university_id: 'o6u', name: 'Dentistry', college_key: 'dentistry', years_count: 5, semesters_per_year: 2, mcq_bank_available: false },
+    { id: STUDENT_PROGRAM_ID, university_id: 'aast', name: 'Medicine', college_key: 'medicine', years_count: 6, semesters_per_year: 2, mcq_bank_available: true },
+  ];
+  const context = vm.createContext({
+    state: { universityCollegesLoading: false, universityCollegesMissing: false },
+    getAdminMcqColleges: () => colleges,
+    getAdminMcqCurrentProgramIdSync: () => DEFAULT_ID,
+    findAdminMcqCollege: (id) => colleges.find((entry) => entry.id === id) || null,
+    getCachedUniversities: () => [{ id: 'o6u', name: 'October 6 University' }, { id: 'aast', name: 'AASTMT' }],
+    getCollegeLabel: (key) => key,
+    escapeHtml: (value) => String(value),
+    Map,
+    Number,
+    String,
+    Boolean,
+  });
+  vm.runInContext('let adminMcqProgramSwitching = false;', context);
+  ['getAdminMcqCollegeLabel', 'getAdminMcqCollegeName', 'renderAdminMcqProgramBar']
+    .forEach((name) => vm.runInContext(topLevelFunction(name), context));
+  vm.runInContext('let adminMcqPickerUniversityId = null;', context);
+
+  const html = context.renderAdminMcqProgramBar();
+  const universitySelect = html.slice(html.indexOf('admin-mcq-university-select'), html.indexOf('admin-mcq-program-select'));
+  const collegeSelect = html.slice(html.indexOf('admin-mcq-program-select'));
+  assert.match(universitySelect, /value="o6u" selected>October 6 University/);
+  assert.match(universitySelect, /AASTMT/);
+  // Only the picked university's colleges, named without the university.
+  assert.match(collegeSelect, /selected>Medicine</);
+  assert.match(collegeSelect, />Dentistry · MCQ off</);
+  assert.doesNotMatch(collegeSelect, new RegExp(STUDENT_PROGRAM_ID));
+
+  vm.runInContext('adminMcqPickerUniversityId = "aast";', context);
+  const picking = context.renderAdminMcqProgramBar();
+  assert.match(picking, /selected disabled>Pick a college/);
+  assert.match(picking, /Still showing Medicine – October 6 University/);
+});

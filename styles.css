@@ -23122,6 +23122,12 @@ body.theme-dark {
   font-weight: 600;
   color: var(--ink);
 }
+.admin-mcq-program-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+}
 .admin-mcq-program-bar select {
   width: auto;
   min-width: 14rem;

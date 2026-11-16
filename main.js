@@ -35793,12 +35793,21 @@ function ensureAdminMcqProgramPickerData() {
   }
 }
 
+// The university picked in the bar before a college of it is chosen. Null
+// means "the current college's university".
+let adminMcqPickerUniversityId = null;
+
+function getAdminMcqCollegeName(college) {
+  return String(college?.name || "").trim() || getCollegeLabel(college?.college_key) || String(college?.college_key || "");
+}
+
 function renderAdminMcqProgramBar() {
   const colleges = getAdminMcqColleges();
   if (state.universityCollegesMissing || (!colleges.length && !state.universityCollegesLoading)) {
     return "";
   }
   const currentId = getAdminMcqCurrentProgramIdSync();
+  const current = findAdminMcqCollege(currentId);
   const universities = getCachedUniversities();
   const universityOrder = new Map(universities.map((entry, index) => [entry.id, index]));
   const byUniversity = new Map();
@@ -35807,40 +35816,48 @@ function renderAdminMcqProgramBar() {
     if (!byUniversity.has(key)) byUniversity.set(key, []);
     byUniversity.get(key).push(college);
   });
-  const groups = [...byUniversity.entries()].sort(([a], [b]) => (
+  const universityIds = [...byUniversity.keys()].sort((a, b) => (
     (universityOrder.has(a) ? universityOrder.get(a) : 9999) - (universityOrder.has(b) ? universityOrder.get(b) : 9999)
   ));
-  const optionsHtml = groups.map(([universityId, list]) => {
-    const university = universities.find((entry) => entry.id === universityId);
-    const options = list.map((college) => {
+  const pickedUniversityId = adminMcqPickerUniversityId && byUniversity.has(adminMcqPickerUniversityId)
+    ? adminMcqPickerUniversityId
+    : String(current?.university_id || "");
+  const loadingText = state.universityCollegesLoading || !currentId ? "Loading…" : "Pick a university";
+  const universityOptions = (pickedUniversityId ? "" : `<option value="" selected disabled>${escapeHtml(loadingText)}</option>`)
+    + universityIds.map((universityId) => {
+      const university = universities.find((entry) => entry.id === universityId);
+      return `<option value="${escapeHtml(universityId)}" ${universityId === pickedUniversityId ? "selected" : ""}>${escapeHtml(university?.name || "University")}</option>`;
+    }).join("");
+  const collegeList = byUniversity.get(pickedUniversityId) || [];
+  const currentInList = Boolean(current) && String(current.university_id || "") === pickedUniversityId;
+  const collegeOptions = (currentInList ? "" : `<option value="" selected disabled>${escapeHtml(pickedUniversityId ? "Pick a college" : "—")}</option>`)
+    + collegeList.map((college) => {
       const id = String(college.id || "").trim().toLowerCase();
-      // The university is in the label too: a closed select shows only the
-      // option, and "Medicine" alone could be any university's.
-      const name = getAdminMcqCollegeLabel(college);
       const flags = [
         college.mcq_bank_available ? "" : "MCQ off",
         college.is_active === false ? "hidden" : "",
       ].filter(Boolean);
-      return `<option value="${escapeHtml(id)}" ${id === currentId ? "selected" : ""}>${escapeHtml(name)}${flags.length ? ` · ${escapeHtml(flags.join(" · "))}` : ""}</option>`;
+      return `<option value="${escapeHtml(id)}" ${currentInList && id === currentId ? "selected" : ""}>${escapeHtml(getAdminMcqCollegeName(college))}${flags.length ? ` · ${escapeHtml(flags.join(" · "))}` : ""}</option>`;
     }).join("");
-    return `<optgroup label="${escapeHtml(university?.name || "University")}">${options}</optgroup>`;
-  }).join("");
-  const knownCurrent = currentId && colleges.some((entry) => String(entry?.id || "").trim().toLowerCase() === currentId);
-  const placeholder = knownCurrent
-    ? ""
-    : `<option value="" selected disabled>${escapeHtml(state.universityCollegesLoading || !currentId ? "Loading colleges…" : "Pick a college")}</option>`;
-  const current = findAdminMcqCollege(currentId);
-  const termNote = current
+  const termNote = current && currentInList
     ? `${Number(current.years_count) || 5} years · ${Number(current.semesters_per_year) || 2} semesters`
     : "";
+  const note = currentInList
+    ? (termNote ? `Subjects, topics and questions below belong to this college · ${termNote}` : "Subjects, topics and questions below belong to this college")
+    : `Pick a college to work on. Still showing ${getAdminMcqCollegeLabel(current) || "the previous college"}.`;
+  const disabled = adminMcqProgramSwitching ? "disabled" : "";
   return `
     <div class="admin-mcq-program-bar">
-      <label class="admin-mcq-program-label" for="admin-mcq-program-select">College</label>
-      <select id="admin-mcq-program-select" ${adminMcqProgramSwitching ? "disabled" : ""}>
-        ${placeholder}${optionsHtml}
-      </select>
+      <label class="admin-mcq-program-field">
+        <span class="admin-mcq-program-label">University</span>
+        <select id="admin-mcq-university-select" ${disabled}>${universityOptions}</select>
+      </label>
+      <label class="admin-mcq-program-field">
+        <span class="admin-mcq-program-label">College</span>
+        <select id="admin-mcq-program-select" ${disabled || (collegeList.length ? "" : "disabled")}>${collegeOptions}</select>
+      </label>
       ${adminMcqProgramSwitching ? `<span class="inline-loader" aria-hidden="true"></span><span class="subtle">Loading…</span>` : ""}
-      <span class="admin-mcq-program-note subtle">${escapeHtml(termNote ? `Subjects, topics and questions below belong to this college · ${termNote}` : "Subjects, topics and questions below belong to this college")}</span>
+      <span class="admin-mcq-program-note subtle">${escapeHtml(note)}</span>
     </div>
   `;
 }
@@ -36124,8 +36141,24 @@ async function activateAdminInactiveSubject(courseId) {
 }
 
 function wireAdminMcqPrograms() {
+  const universitySelect = appEl.querySelector("#admin-mcq-university-select");
+  universitySelect?.addEventListener("change", () => {
+    const universityId = universitySelect.value;
+    const list = getAdminMcqColleges().filter((college) => String(college?.university_id || "") === universityId);
+    // One college: nothing to choose, open it. Several: wait for the pick,
+    // so a university change never loads a college nobody asked for.
+    if (list.length === 1) {
+      adminMcqPickerUniversityId = null;
+      switchAdminMcqProgram(String(list[0].id || "").trim().toLowerCase());
+      return;
+    }
+    adminMcqPickerUniversityId = universityId;
+    state.skipNextRouteAnimation = true;
+    render();
+  });
   const select = appEl.querySelector("#admin-mcq-program-select");
   select?.addEventListener("change", () => {
+    adminMcqPickerUniversityId = null;
     switchAdminMcqProgram(select.value);
   });
   appEl.querySelectorAll("[data-action='course-copy-open']").forEach((button) => {
