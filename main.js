@@ -16903,8 +16903,13 @@ async function refreshAdminQuestionCountSnapshot(options = {}) {
   state.adminQuestionCountError = "";
   try {
     let snapshot = null;
+    // Subjects are kept by name, and two colleges can both have a
+    // "Cardiology": count only the college the admin is working on.
+    const programId = await getWebsiteMcqProgramId().catch(() => null);
     const rpcResult = await runWithTimeoutResult(
-      client.rpc("get_admin_question_count_summary"),
+      programId
+        ? client.rpc("get_admin_question_count_summary", { p_program_id: programId })
+        : client.rpc("get_admin_question_count_summary"),
       SUPABASE_QUERY_TIMEOUT_MS,
       "Question count summary timed out.",
     );
@@ -36524,7 +36529,7 @@ function confirmCollegeMcqChange(college, university, nextAvailable) {
   const collegeName = String(college?.name || getCollegeLabel(college?.college_key) || "this college");
   const universityName = String(university?.name || "this university");
   return window.confirm(nextAvailable
-    ? `Offer the MCQ Bank for ${collegeName} – ${universityName}?\n\nStudents in ${collegeName} at ${universityName} get MCQ Bank access straight away (when ${universityName}'s MCQ Bank switch is on).`
+    ? `Offer the MCQ Bank for ${collegeName} – ${universityName}?\n\nStudents in ${collegeName} at ${universityName} get MCQ Bank access straight away. If ${universityName} does not offer the MCQ Bank yet, it is turned on there too.`
     : `Turn off the MCQ Bank for ${collegeName} – ${universityName}?\n\nStudents in ${collegeName} at ${universityName} lose MCQ Bank access straight away. They keep Video Courses.`);
 }
 
@@ -36842,6 +36847,10 @@ async function runAdminCollegeMutation(action, options = {}) {
     toast(serverMessage || fallback);
   } finally {
     await loadUniversityCollegesAdmin({ force: true });
+    // Offering MCQ on a college turns its university on too (a trigger).
+    if (ok && options.refreshProfiles) {
+      await loadUniversities({ force: true }).catch(() => { });
+    }
     state.signupPrograms = [];
     state.signupProgramsLoadedAt = 0;
     if (typeof resetWebsiteMcqProgramIdCache === "function") {
@@ -36943,6 +36952,10 @@ async function runAdminUniversityMutation(action, options = {}) {
   } finally {
     await loadUniversities({ force: true });
     await loadUniversityCollegesAdmin({ force: true });
+    // Offering MCQ on a college turns its university on too (a trigger).
+    if (ok && options.refreshProfiles) {
+      await loadUniversities({ force: true }).catch(() => { });
+    }
     state.signupPrograms = [];
     state.signupProgramsLoadedAt = 0;
     if (ok && options.refreshProfiles) {
