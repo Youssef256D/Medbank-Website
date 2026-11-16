@@ -26068,6 +26068,35 @@ body.theme-dark .admin-user-last-test-open { color: var(--ink); }
   justify-content: space-between;
   gap: 8px;
 }
+.admin-university-colleges-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.admin-university-colleges-chevron {
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+[dir="rtl"] .admin-university-colleges-chevron {
+  transform: rotate(135deg);
+}
+.admin-university-colleges-toggle[aria-expanded="true"] .admin-university-colleges-chevron {
+  transform: rotate(45deg);
+}
+.admin-university-colleges-body[hidden] {
+  display: none;
+}
 .admin-university-colleges-title {
   font-size: 0.85rem;
   font-weight: 700;

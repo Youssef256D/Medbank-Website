@@ -36528,6 +36528,10 @@ function confirmCollegeMcqChange(college, university, nextAvailable) {
     : `Turn off the MCQ Bank for ${collegeName} – ${universityName}?\n\nStudents in ${collegeName} at ${universityName} lose MCQ Bank access straight away. They keep Video Courses.`);
 }
 
+// Universities whose college list is open on the Universities page. Closed by
+// default so the table stays short; kept across re-renders.
+const adminOpenCollegeLists = new Set();
+
 function renderUniversityCollegesSubrow(university, colleges, busy) {
   const missing = Boolean(state.universityCollegesMissing);
   const collegesLoading = Boolean(state.universityCollegesLoading) && !colleges.length;
@@ -36566,16 +36570,23 @@ function renderUniversityCollegesSubrow(university, colleges, busy) {
     </li>`;
   }).join("");
 
+  const open = adminOpenCollegeLists.has(String(university.id));
+  const bodyId = `admin-colleges-${String(university.id).replace(/[^a-zA-Z0-9_-]/g, "")}`;
   return `<tr class="admin-university-colleges-row" data-university-colleges-row="${escapeHtml(university.id)}">
     <td colspan="6">
       <div class="admin-university-colleges">
         <div class="admin-university-colleges-head">
-          <span class="admin-university-colleges-title">Colleges (${escapeHtml(String(colleges.length))})</span>
+          <button class="admin-university-colleges-toggle" type="button" data-colleges-toggle="${escapeHtml(university.id)}" aria-expanded="${open ? "true" : "false"}" aria-controls="${escapeHtml(bodyId)}">
+            <span class="admin-university-colleges-chevron" aria-hidden="true"></span>
+            <span class="admin-university-colleges-title">Colleges (${escapeHtml(String(colleges.length))})</span>
+          </button>
           <button class="btn ghost admin-btn-sm" type="button" data-college-new="${escapeHtml(university.id)}" ${busy || missing ? "disabled" : ""}>Add college</button>
         </div>
-        ${colleges.length
-          ? `<ul class="admin-university-colleges-list">${itemsHtml}</ul>`
-          : `<p class="subtle admin-university-colleges-empty">${escapeHtml(emptyText)}</p>`}
+        <div class="admin-university-colleges-body" id="${escapeHtml(bodyId)}" ${open ? "" : "hidden"}>
+          ${colleges.length
+            ? `<ul class="admin-university-colleges-list">${itemsHtml}</ul>`
+            : `<p class="subtle admin-university-colleges-empty">${escapeHtml(emptyText)}</p>`}
+        </div>
       </div>
     </td>
   </tr>`;
@@ -37031,11 +37042,21 @@ function wireAdminUniversities() {
   appEl.querySelectorAll("[data-college-cancel]").forEach((button) => button.addEventListener("click", () => {
     requestAdminCollegeEditorClose(collegeForm);
   }));
+  section.querySelectorAll("[data-colleges-toggle]").forEach((button) => button.addEventListener("click", () => {
+    const universityId = String(button.getAttribute("data-colleges-toggle") || "");
+    const body = document.getElementById(String(button.getAttribute("aria-controls") || ""));
+    const open = !adminOpenCollegeLists.has(universityId);
+    if (open) adminOpenCollegeLists.add(universityId);
+    else adminOpenCollegeLists.delete(universityId);
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    if (body) body.hidden = !open;
+  }));
   section.querySelectorAll("[data-college-new]").forEach((button) => button.addEventListener("click", () => {
     const universityId = button.getAttribute("data-college-new");
     if (!findUniversity(universityId)) return;
     captureCollege();
     if (state.adminCollegeDraftDirty && !window.confirm("Discard your changes to this college?")) return;
+    adminOpenCollegeLists.add(String(universityId));
     beginAdminCollegeEditor(newAdminCollegeDraft(universityId), `[data-college-new="${universityId}"]`);
   }));
   section.querySelectorAll("[data-college-edit]").forEach((button) => button.addEventListener("click", () => {
