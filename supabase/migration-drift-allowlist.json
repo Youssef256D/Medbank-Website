@@ -19,7 +19,9 @@
     "20261031170000": "Medbank-App: admin_mcq_leaderboard",
     "20261113015500": "Medbank-App: atomic_finish_test_block (second version)",
     "20261114200000": "Medbank-App: admin_leaderboard_weeks",
-    "20261115000000": "Medbank-App: mcq_weekly_winner_notifications"
+    "20261115000000": "Medbank-App: mcq_weekly_winner_notifications",
+    "20261115120000": "Medbank-App: archive_tests_on_term_transfer",
+    "20261115170000": "Medbank-App: archive_off_term_test_history"
   },
   "unappliedOnPurpose": {
     "20260909101500": "add_student_auto_approval_feature_flag: the app upserts the flag row itself (refactor log 2026-09-09)",
