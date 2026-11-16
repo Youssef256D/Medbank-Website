@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-16 — Fix "Could not confirm the MCQ college"
+
+- The MCQ college lookup passed `RELATIONAL_SYNC_TIMEOUT_MS`, a constant that
+  does not exist, so it threw before sending any request. Every admin MCQ load
+  and save then failed with "Could not confirm the MCQ college; nothing was
+  saved." It now uses `SUPABASE_QUERY_TIMEOUT_MS`. The test sandbox had stubbed
+  the missing name, which hid the bug.
+
 ### 2026-11-16 — Colleges / programs management & multi-program onboarding
 - Sign-up and profile completion now load colleges per university dynamically,
   adapt year (up to 7) and semester (up to 3) pickers to each program, and show

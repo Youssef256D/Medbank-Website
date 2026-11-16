@@ -396,7 +396,6 @@ function websiteProgramScopeHarness(handler) {
     Object,
     Number,
     Boolean,
-    RELATIONAL_SYNC_TIMEOUT_MS: 5000,
     SUPABASE_QUERY_TIMEOUT_MS: 5000,
     relationalSync: { enabled: true },
     getRelationalClient: () => client,

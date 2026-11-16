@@ -11250,7 +11250,7 @@ async function getWebsiteMcqProgramId() {
           .from("university_colleges")
           .select("id,college_key,universities!inner(name)")
           .eq("college_key", "medicine"),
-        RELATIONAL_SYNC_TIMEOUT_MS,
+        SUPABASE_QUERY_TIMEOUT_MS,
         "Website MCQ program lookup timed out.",
       );
       if (error) {
@@ -11347,7 +11347,7 @@ async function resolveProgramIdForUniversityCollege(universityId, college) {
           .eq("college_key", key)
           .limit(1)
           .maybeSingle(),
-        RELATIONAL_SYNC_TIMEOUT_MS,
+        SUPABASE_QUERY_TIMEOUT_MS,
         "Program lookup timed out.",
       );
       if (error) {
