@@ -7569,8 +7569,10 @@ function buildAdminDashboardUserSnapshot(users = [], nowMs = Date.now(), options
     }
     totalStudents += 1;
     const academicYear = normalizeYear(account?.academicYear);
-    if (academicYear !== null && Object.hasOwn(academicYearCounts, academicYear)) {
-      academicYearCounts[academicYear] += 1;
+    // Years 6 and 7 exist only in colleges that have them, so they get a row
+    // only when someone is in them.
+    if (academicYear !== null) {
+      academicYearCounts[academicYear] = (academicYearCounts[academicYear] || 0) + 1;
     }
     const createdAtMs = Number(createdAtFor(account));
     if (Number.isFinite(createdAtMs) && createdAtMs > 0 && createdAtMs >= weekStartMs && createdAtMs <= currentMs) {
@@ -7638,7 +7640,14 @@ function buildAdminDashboardYearUsage(users = [], activity = {}, options = {}) {
       return;
     }
     const year = normalizeYear(account?.academicYear);
-    const row = rows.find((entry) => entry.year === year) || unsetRow;
+    let row = rows.find((entry) => entry.year === year) || null;
+    if (!row && year !== null) {
+      // Year 6 or 7: only colleges that have them, so the row appears on demand.
+      row = createRow(year, `Year ${year}`);
+      rows.push(row);
+      rows.sort((a, b) => a.year - b.year);
+    }
+    row = row || unsetRow;
     const ids = (idsFor(account) || []).map((value) => String(value || "").trim()).filter(Boolean);
     const inSet = (set) => ids.some((id) => set.has(id));
     [row, totals].forEach((target) => {
@@ -11225,11 +11234,251 @@ function isMissingUniversityCollegesTableError(error) {
     || (/university_colleges/i.test(message) && (/does not exist/i.test(message) || /could not find the table/i.test(message)));
 }
 
-// Resolves the website's MCQ curriculum program (October 6 University · Medicine)
-// once per session so admin/curriculum/name-based `courses` queries stay scoped
-// to it after migration 20261116090000_mcq_programs. Returns null on the older
-// schema without `university_colleges`.
+// ---- MCQ college (program) scope -----------------------------------------
+// The site keeps MCQ subjects, topics and questions by NAME, one college at a
+// time. Which college that is:
+//   - an admin: the college picked on the MCQ pages (October 6 University ·
+//     Medicine until they pick another);
+//   - a student: their own university + college;
+//   - anyone else: October 6 University · Medicine.
+// Only a college other than the default is remembered, so "no selection"
+// always means the default college.
+const ADMIN_MCQ_PROGRAM_STORAGE_KEY = "medbank_admin_mcq_program";
+// Which college the subjects, topics and questions cached in this browser
+// belong to. A save is refused when it differs from the current college:
+// names are not unique across colleges, so one college's cached list written
+// into another would create or rename the wrong subjects.
+const MCQ_LOCAL_PROGRAM_STORAGE_KEY = "medbank_mcq_local_program_id";
+const WEBSITE_MCQ_PROGRAM_MISMATCH_ERROR_MESSAGE =
+  "The subjects on this page belong to another college, so nothing was saved. Reload the page and try again.";
+
+function readMcqScopeStorage(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeMcqScopeStorage(key, value) {
+  try {
+    if (value === null || value === undefined || value === "") {
+      window.localStorage.removeItem(key);
+    } else {
+      window.localStorage.setItem(key, String(value));
+    }
+  } catch {
+    // Storage blocked: the choice lasts for this page only.
+  }
+}
+
+function clampMcqTermCount(value, max, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 1 && number <= max ? number : fallback;
+}
+
+function normalizeAdminMcqProgramSelection(value) {
+  const id = String(value?.id || "").trim().toLowerCase();
+  if (!isUuidValue(id)) {
+    return null;
+  }
+  return {
+    id,
+    years: clampMcqTermCount(value?.years, 7, 5),
+    semesters: clampMcqTermCount(value?.semesters, 3, 2),
+  };
+}
+
+// undefined = not read from storage yet; null = the default college.
+let adminMcqProgramSelectionMemory;
+
+function readAdminMcqProgramSelection() {
+  if (adminMcqProgramSelectionMemory !== undefined) {
+    return adminMcqProgramSelectionMemory;
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readMcqScopeStorage(ADMIN_MCQ_PROGRAM_STORAGE_KEY) || "null");
+  } catch {
+    parsed = null;
+  }
+  adminMcqProgramSelectionMemory = normalizeAdminMcqProgramSelection(parsed);
+  return adminMcqProgramSelectionMemory;
+}
+
+function setAdminMcqProgramSelection(selection) {
+  adminMcqProgramSelectionMemory = normalizeAdminMcqProgramSelection(selection);
+  writeMcqScopeStorage(
+    ADMIN_MCQ_PROGRAM_STORAGE_KEY,
+    adminMcqProgramSelectionMemory ? JSON.stringify(adminMcqProgramSelectionMemory) : null,
+  );
+}
+
+// getCurrentUser() parses the stored users list (thousands of rows for an
+// admin), and the curriculum shape is read inside loops, so the answer is
+// kept for a second.
+let mcqScopeUserMemo = null;
+
+function getCurrentUserRoleForMcqScope() {
+  const now = Date.now();
+  if (mcqScopeUserMemo && now - mcqScopeUserMemo.at < 1000) {
+    return mcqScopeUserMemo.value;
+  }
+  let value;
+  try {
+    const user = typeof getCurrentUser === "function" ? getCurrentUser() : null;
+    value = user ? { user, role: String(user.role || "") } : { user: null, role: "" };
+  } catch {
+    value = { user: null, role: "" };
+  }
+  mcqScopeUserMemo = { at: now, value };
+  return value;
+}
+
+// The admin's picked college, or null (the default college / not an admin).
+function getAdminMcqProgramSelection() {
+  return getCurrentUserRoleForMcqScope().role === "admin" ? readAdminMcqProgramSelection() : null;
+}
+
+// A student's own college: its terms, and whether it is the default college.
+let studentMcqProgramShape = null;
+const mcqProgramTermCountCache = new Map();
+
+async function loadMcqProgramTermCounts(programId) {
+  if (mcqProgramTermCountCache.has(programId)) {
+    return mcqProgramTermCountCache.get(programId);
+  }
+  const known = (typeof getKnownCollegePrograms === "function" ? getKnownCollegePrograms() : [])
+    .find((entry) => String(entry?.program_id || entry?.id || "").trim().toLowerCase() === programId);
+  let row = known || null;
+  if (!row) {
+    const client = getRelationalClient();
+    if (client && typeof client.from === "function") {
+      const { data } = await runWithTimeoutResult(
+        client
+          .from("university_colleges")
+          .select("years_count,semesters_per_year")
+          .eq("id", programId)
+          .maybeSingle(),
+        SUPABASE_QUERY_TIMEOUT_MS,
+        "College lookup timed out.",
+      );
+      row = data || null;
+    }
+  }
+  if (!row) {
+    return { years: 5, semesters: 2 };
+  }
+  const counts = {
+    years: clampMcqTermCount(row.years_count, 7, 5),
+    semesters: clampMcqTermCount(row.semesters_per_year, 3, 2),
+  };
+  mcqProgramTermCountCache.set(programId, counts);
+  return counts;
+}
+
+async function rememberStudentMcqProgramShape(programId) {
+  if (studentMcqProgramShape?.id === programId) {
+    return;
+  }
+  const [defaultId, counts] = await Promise.all([
+    getDefaultWebsiteMcqProgramId(),
+    loadMcqProgramTermCounts(programId).catch(() => ({ years: 5, semesters: 2 })),
+  ]);
+  studentMcqProgramShape = {
+    id: programId,
+    years: counts.years,
+    semesters: counts.semesters,
+    isDefault: Boolean(defaultId) && defaultId === programId,
+  };
+}
+
+// How many years/semesters the local curriculum has, and whether empty terms
+// may fall back to the built-in October 6 University · Medicine subject list
+// (only for that college: any other college would get its subjects written
+// into it).
+function getMcqCurriculumShape() {
+  const selection = getAdminMcqProgramSelection();
+  if (selection) {
+    return { years: selection.years, semesters: selection.semesters, useDefaults: false };
+  }
+  const { role } = getCurrentUserRoleForMcqScope();
+  if (role === "student" && studentMcqProgramShape && !studentMcqProgramShape.isDefault) {
+    return { years: studentMcqProgramShape.years, semesters: studentMcqProgramShape.semesters, useDefaults: false };
+  }
+  return { years: 5, semesters: 2, useDefaults: true };
+}
+
+function isDefaultMcqCurriculumScope() {
+  return getMcqCurriculumShape().useDefaults;
+}
+
+function getLocalMcqProgramMarker() {
+  return String(readMcqScopeStorage(MCQ_LOCAL_PROGRAM_STORAGE_KEY) || "").trim().toLowerCase();
+}
+
+function setLocalMcqProgramMarker(programId) {
+  writeMcqScopeStorage(MCQ_LOCAL_PROGRAM_STORAGE_KEY, String(programId || "").trim().toLowerCase() || null);
+}
+
+// Throws when this browser's cached subjects belong to another college. With
+// no marker yet (first run after this change) the cache is the one the scope
+// already pointed at, so it is adopted.
+function assertLocalMcqProgramMatches(programId) {
+  const id = String(programId || "").trim().toLowerCase();
+  if (!id) {
+    return;
+  }
+  const marker = getLocalMcqProgramMarker();
+  if (!marker) {
+    setLocalMcqProgramMarker(id);
+    return;
+  }
+  if (marker !== id) {
+    throw new Error(WEBSITE_MCQ_PROGRAM_MISMATCH_ERROR_MESSAGE);
+  }
+}
+
+// Drops this browser's cached questions (they belong to another college).
+// Admins load questions one subject at a time, so nothing is lost: the next
+// subject opened is read from the database again.
+function clearLocalMcqQuestionCache() {
+  saveLocalOnly(STORAGE_KEYS.questions, [], { audit: false });
+  relationalSync.questionRowSignaturesByExternalId?.clear?.();
+  relationalSync.questionChoiceSignaturesByExternalId?.clear?.();
+  adminCourseQuestionLoads.clear();
+  adminCourseQuestionLoadPromises.clear();
+}
+
 async function getWebsiteMcqProgramId() {
+  if (universityCollegesTableMissing) {
+    return null;
+  }
+  const { user, role } = getCurrentUserRoleForMcqScope();
+  if (role === "admin") {
+    const selection = readAdminMcqProgramSelection();
+    if (selection) {
+      return selection.id;
+    }
+    return getDefaultWebsiteMcqProgramId();
+  }
+  if (role === "student") {
+    const universityId = normalizeUniversityIdValue(user?.universityId);
+    const college = normalizeCollegeValue(user?.college);
+    if (universityId && college) {
+      const ownId = await resolveProgramIdForUniversityCollege(universityId, college);
+      if (ownId) {
+        await rememberStudentMcqProgramShape(ownId).catch(() => { });
+      }
+      return ownId || null;
+    }
+  }
+  return getDefaultWebsiteMcqProgramId();
+}
+
+// October 6 University · Medicine, looked up once per session. Returns null on
+// the older schema without `university_colleges`.
+async function getDefaultWebsiteMcqProgramId() {
   if (universityCollegesTableMissing) {
     return null;
   }
@@ -11298,6 +11547,9 @@ function resetWebsiteMcqProgramIdCache() {
 async function resolveWebsiteMcqProgramScope(options = {}) {
   const programId = await getWebsiteMcqProgramId();
   if (programId || universityCollegesTableMissing) {
+    if (options.forWrite && programId) {
+      assertLocalMcqProgramMatches(programId);
+    }
     return { programId: programId || null, unconfirmed: false };
   }
   if (options.throwIfUnconfirmed) {
@@ -11423,9 +11675,13 @@ async function hydrateRelationalCoursesAndTopics() {
   }
   const topics = Array.isArray(topicsResult.data) ? topicsResult.data : [];
 
+  const curriculumShape = getMcqCurriculumShape();
   const curriculum = {};
-  for (let year = 1; year <= 5; year += 1) {
-    curriculum[year] = { 1: [], 2: [] };
+  for (let year = 1; year <= curriculumShape.years; year += 1) {
+    curriculum[year] = {};
+    for (let semester = 1; semester <= curriculumShape.semesters; semester += 1) {
+      curriculum[year][semester] = [];
+    }
   }
 
   const topicMapByCourseId = {};
@@ -11445,7 +11701,7 @@ async function hydrateRelationalCoursesAndTopics() {
     const year = sanitizeAcademicYear(course.academic_year || 1);
     const semester = sanitizeAcademicSemester(course.academic_semester || 1);
     const courseName = String(course.course_name || "").trim();
-    if (!courseName) {
+    if (!courseName || !curriculum[year]?.[semester]) {
       return;
     }
     if (!curriculum[year][semester].includes(courseName)) {
@@ -11470,6 +11726,18 @@ async function hydrateRelationalCoursesAndTopics() {
   // elsewhere; they are not pending additions (2026-10-15).
   const previousTopicSnapshot = getCourseTopicDbSnapshot();
   const topicsDeletedElsewhereKeys = [];
+  if (programId) {
+    const previousProgramId = getLocalMcqProgramMarker();
+    if (previousProgramId && previousProgramId !== programId) {
+      // The cached questions belong to the other college. Unsaved ones stay
+      // (and the save guard refuses them) rather than being dropped.
+      if (isRelationalStorageKeyBusy(STORAGE_KEYS.questions)) {
+        return false;
+      }
+      clearLocalMcqQuestionCache();
+    }
+    setLocalMcqProgramMarker(programId);
+  }
   MEDBANK_CURRICULUM = normalizeCurriculum(curriculum);
   COURSE_TOPIC_OVERRIDES = normalizeCourseTopicMap(courseTopicOverrides);
   if (pendingLocalTopics && typeof pendingLocalTopics === "object") {
@@ -15360,8 +15628,9 @@ function mergeCurriculumWithBackup(localCurriculum, backupCurriculum) {
   const local = normalizeCurriculum(localCurriculum || DEFAULT_MEDBANK_CURRICULUM);
   const backup = normalizeCurriculum(backupCurriculum || DEFAULT_MEDBANK_CURRICULUM);
   const merged = deepClone(local);
-  for (let year = 1; year <= 5; year += 1) {
-    for (let semester = 1; semester <= 2; semester += 1) {
+  const shape = getMcqCurriculumShape();
+  for (let year = 1; year <= shape.years; year += 1) {
+    for (let semester = 1; semester <= shape.semesters; semester += 1) {
       merged[year][semester] = sanitizeCurriculumCourseList([
         ...(backup?.[year]?.[semester] || []),
         ...(local?.[year]?.[semester] || []),
@@ -15389,8 +15658,9 @@ function mergeQuestionsWithBackup(localQuestions, backupQuestions) {
 function hasCurriculumAdditions(baseCurriculum, nextCurriculum) {
   const base = normalizeCurriculum(baseCurriculum || DEFAULT_MEDBANK_CURRICULUM);
   const next = normalizeCurriculum(nextCurriculum || DEFAULT_MEDBANK_CURRICULUM);
-  for (let year = 1; year <= 5; year += 1) {
-    for (let semester = 1; semester <= 2; semester += 1) {
+  const shape = getMcqCurriculumShape();
+  for (let year = 1; year <= shape.years; year += 1) {
+    for (let semester = 1; semester <= shape.semesters; semester += 1) {
       const baseKeys = new Set(
         sanitizeCurriculumCourseList(base?.[year]?.[semester] || []).map((course) => String(course || "").trim().toLowerCase()),
       );
@@ -15420,6 +15690,13 @@ function mergeCourseTopicMapWithBackup(localTopicMap, backupTopicMap) {
 }
 
 function mergeHydratedBackupPayloadWithLocal(storageKey, remotePayload) {
+  // The cloud backups are October 6 University · Medicine's. Merging them
+  // into another college's cache would save its subjects there.
+  if (!isDefaultMcqCurriculumScope()) {
+    if (storageKey === STORAGE_KEYS.questions) return getQuestions();
+    if (storageKey === STORAGE_KEYS.curriculum) return load(STORAGE_KEYS.curriculum, MEDBANK_CURRICULUM);
+    if (storageKey === STORAGE_KEYS.courseTopics) return load(STORAGE_KEYS.courseTopics, COURSE_TOPIC_OVERRIDES);
+  }
   if (storageKey === STORAGE_KEYS.questions) {
     return mergeQuestionsWithBackup(getQuestions(), remotePayload);
   }
@@ -15505,6 +15782,12 @@ function isRelationalContentConfirmedEmpty(relationalContentCounts, countKey) {
 async function restoreAdminContentFromSupabaseBackupIfNeeded(options = {}) {
   const currentUser = options?.user || getCurrentUser();
   if (!currentUser || currentUser.role !== "admin") {
+    return { restored: false, restoredKeys: [] };
+  }
+
+  // A new college has no subjects, which reads as "the database was wiped";
+  // restoring October 6 University · Medicine's backup into it would be wrong.
+  if (!isDefaultMcqCurriculumScope()) {
     return { restored: false, restoredKeys: [] };
   }
 
@@ -18481,13 +18764,14 @@ async function syncCoursesTopicsToRelational(curriculumPayload, topicPayload) {
     return;
   }
 
-  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
+  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true, forWrite: true });
   const curriculum = normalizeCurriculum(curriculumPayload || MEDBANK_CURRICULUM);
   const topicsByCourseName = normalizeCourseTopicMap(topicPayload || COURSE_TOPIC_OVERRIDES);
 
   const desiredCourses = [];
-  for (let year = 1; year <= 5; year += 1) {
-    for (let semester = 1; semester <= 2; semester += 1) {
+  const curriculumShape = getMcqCurriculumShape();
+  for (let year = 1; year <= curriculumShape.years; year += 1) {
+    for (let semester = 1; semester <= curriculumShape.semesters; semester += 1) {
       const entries = sanitizeCurriculumCourseList(curriculum?.[year]?.[semester] || []);
       entries.forEach((courseName) => {
         desiredCourses.push({
@@ -19001,7 +19285,7 @@ async function syncQuestionsToRelationalUnsafe(questionsPayload) {
     return;
   }
 
-  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
+  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true, forWrite: true });
   let questions = Array.isArray(questionsPayload) ? questionsPayload : [];
   const promotedInlineImages = await promoteInlineQuestionImagesToStorage(questions, {
     client,
@@ -35448,6 +35732,465 @@ function renderAdminIconButton({ icon, label, attrs = "", variant = "", busy = f
   </button>`;
 }
 
+// ---- Admin: which college the MCQ pages work on ---------------------------
+const ADMIN_MCQ_PROGRAM_PAGES = new Set(["mcq-subjects", "questions", "bulk-import"]);
+let adminMcqProgramSwitching = false;
+let adminMcqDefaultProgramRequested = false;
+
+function getAdminMcqColleges() {
+  return Array.isArray(state.universityColleges) ? state.universityColleges : [];
+}
+
+function findAdminMcqCollege(programId) {
+  const id = String(programId || "").trim().toLowerCase();
+  return getAdminMcqColleges().find((entry) => String(entry?.id || "").trim().toLowerCase() === id) || null;
+}
+
+// The college the MCQ pages show right now, without waiting: the picked one,
+// else the default college once its id is known ("" until then).
+function getAdminMcqCurrentProgramIdSync() {
+  const selection = getAdminMcqProgramSelection();
+  if (selection) {
+    return selection.id;
+  }
+  return typeof websiteMcqProgramIdCache === "string" ? websiteMcqProgramIdCache : "";
+}
+
+function getAdminMcqCollegeLabel(program) {
+  if (!program) {
+    return "";
+  }
+  const university = getCachedUniversities().find((entry) => entry?.id === program.university_id);
+  const collegeName = String(program.name || "").trim() || getCollegeLabel(program.college_key) || program.college_key;
+  return university?.name ? `${collegeName} – ${university.name}` : collegeName;
+}
+
+// Loads what the picker needs (colleges, universities, the default college's
+// id) and re-renders once each arrives.
+function ensureAdminMcqProgramPickerData() {
+  const rerender = () => {
+    if (state.route === "admin" && ADMIN_MCQ_PROGRAM_PAGES.has(String(state.adminPage || ""))) {
+      state.skipNextRouteAnimation = true;
+      render();
+    }
+  };
+  if (!state.universityCollegesLoadedAt && !state.universityCollegesLoading && !state.universityCollegesError) {
+    loadUniversityCollegesAdmin().then(rerender);
+  }
+  ensureUniversitiesLoaded(rerender);
+  if (!adminMcqDefaultProgramRequested) {
+    adminMcqDefaultProgramRequested = true;
+    getDefaultWebsiteMcqProgramId().then((id) => {
+      if (id) rerender();
+    });
+  }
+  // Keep the remembered term counts in step with the college (an admin may
+  // have changed its years or semesters since picking it).
+  const selection = getAdminMcqProgramSelection();
+  const selected = selection ? findAdminMcqCollege(selection.id) : null;
+  if (selected && (Number(selected.years_count) !== selection.years || Number(selected.semesters_per_year) !== selection.semesters)) {
+    setAdminMcqProgramSelection({ id: selection.id, years: selected.years_count, semesters: selected.semesters_per_year });
+  }
+}
+
+function renderAdminMcqProgramBar() {
+  const colleges = getAdminMcqColleges();
+  if (state.universityCollegesMissing || (!colleges.length && !state.universityCollegesLoading)) {
+    return "";
+  }
+  const currentId = getAdminMcqCurrentProgramIdSync();
+  const universities = getCachedUniversities();
+  const universityOrder = new Map(universities.map((entry, index) => [entry.id, index]));
+  const byUniversity = new Map();
+  colleges.forEach((college) => {
+    const key = String(college?.university_id || "");
+    if (!byUniversity.has(key)) byUniversity.set(key, []);
+    byUniversity.get(key).push(college);
+  });
+  const groups = [...byUniversity.entries()].sort(([a], [b]) => (
+    (universityOrder.has(a) ? universityOrder.get(a) : 9999) - (universityOrder.has(b) ? universityOrder.get(b) : 9999)
+  ));
+  const optionsHtml = groups.map(([universityId, list]) => {
+    const university = universities.find((entry) => entry.id === universityId);
+    const options = list.map((college) => {
+      const id = String(college.id || "").trim().toLowerCase();
+      // The university is in the label too: a closed select shows only the
+      // option, and "Medicine" alone could be any university's.
+      const name = getAdminMcqCollegeLabel(college);
+      const flags = [
+        college.mcq_bank_available ? "" : "MCQ off",
+        college.is_active === false ? "hidden" : "",
+      ].filter(Boolean);
+      return `<option value="${escapeHtml(id)}" ${id === currentId ? "selected" : ""}>${escapeHtml(name)}${flags.length ? ` · ${escapeHtml(flags.join(" · "))}` : ""}</option>`;
+    }).join("");
+    return `<optgroup label="${escapeHtml(university?.name || "University")}">${options}</optgroup>`;
+  }).join("");
+  const knownCurrent = currentId && colleges.some((entry) => String(entry?.id || "").trim().toLowerCase() === currentId);
+  const placeholder = knownCurrent
+    ? ""
+    : `<option value="" selected disabled>${escapeHtml(state.universityCollegesLoading || !currentId ? "Loading colleges…" : "Pick a college")}</option>`;
+  const current = findAdminMcqCollege(currentId);
+  const termNote = current
+    ? `${Number(current.years_count) || 5} years · ${Number(current.semesters_per_year) || 2} semesters`
+    : "";
+  return `
+    <div class="admin-mcq-program-bar">
+      <label class="admin-mcq-program-label" for="admin-mcq-program-select">College</label>
+      <select id="admin-mcq-program-select" ${adminMcqProgramSwitching ? "disabled" : ""}>
+        ${placeholder}${optionsHtml}
+      </select>
+      ${adminMcqProgramSwitching ? `<span class="inline-loader" aria-hidden="true"></span><span class="subtle">Loading…</span>` : ""}
+      <span class="admin-mcq-program-note subtle">${escapeHtml(termNote ? `Subjects, topics and questions below belong to this college · ${termNote}` : "Subjects, topics and questions below belong to this college")}</span>
+    </div>
+  `;
+}
+
+// Saves what is pending for the current college, then reloads every MCQ page
+// from the chosen one. Nothing of the old college is written to the new one:
+// its cached questions are dropped and its subject list is replaced.
+async function switchAdminMcqProgram(programId) {
+  const id = String(programId || "").trim().toLowerCase();
+  const program = findAdminMcqCollege(id);
+  if (!program || adminMcqProgramSwitching) {
+    return;
+  }
+  const currentId = await getWebsiteMcqProgramId();
+  if (currentId === id) {
+    return;
+  }
+  const previousSelection = readAdminMcqProgramSelection();
+  adminMcqProgramSwitching = true;
+  state.skipNextRouteAnimation = true;
+  render();
+  try {
+    await flushPendingSyncNow({ throwOnRelationalFailure: true, flushSupabaseBackups: false });
+    if (
+      isRelationalStorageKeyBusy(STORAGE_KEYS.curriculum)
+      || isRelationalStorageKeyBusy(STORAGE_KEYS.courseTopics)
+      || isRelationalStorageKeyBusy(STORAGE_KEYS.questions)
+    ) {
+      throw new Error("Some changes are still saving. Wait a moment, then switch college.");
+    }
+    const defaultId = await getDefaultWebsiteMcqProgramId();
+    setAdminMcqProgramSelection(defaultId && id === defaultId
+      ? null
+      : { id, years: program.years_count, semesters: program.semesters_per_year });
+    clearLocalMcqQuestionCache();
+    markAdminQuestionCountsStale();
+    state.adminCourseLocks.loadedAt = 0;
+    state.adminCourseLocks.error = "";
+    state.adminCurriculumYear = 1;
+    state.adminCurriculumSemester = 1;
+    state.adminCourseFocus = "";
+    state.adminCourseSearch = "";
+    state.adminCourseTopicModalCourse = "";
+    state.adminCourseTopicGroupCreateModalOpen = false;
+    state.adminCourseTopicInlineCreateOpen = false;
+    state.adminCourseAddDialogOpen = false;
+    state.adminFilters.course = "";
+    state.adminFilters.topic = "";
+    state.adminInactiveSubjects = null;
+    state.adminCourseCopyDialog = null;
+    const loaded = await hydrateRelationalCoursesAndTopics();
+    if (!loaded) {
+      // Go back: the page still holds the old college's subjects.
+      setAdminMcqProgramSelection(previousSelection);
+      throw new Error("Couldn't load that college's subjects. Try again.");
+    }
+    toast(`Now working on ${getAdminMcqCollegeLabel(program)}.`);
+  } catch (error) {
+    toast(getErrorMessage(error, "Couldn't switch college. Try again."));
+  } finally {
+    adminMcqProgramSwitching = false;
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+// Subjects of the current college and term that are switched off: a copy
+// made with "Copy to another college" starts here, and so does a deleted one.
+async function loadAdminInactiveSubjects(year, semester) {
+  const client = getRelationalClient();
+  const programId = await getWebsiteMcqProgramId();
+  const key = `${programId || ""}|${year}|${semester}`;
+  if (!client || !programId) {
+    state.adminInactiveSubjects = { key, rows: [], error: "" };
+    return;
+  }
+  state.adminInactiveSubjects = { key, rows: [], loading: true, error: "" };
+  const { data, error } = await runWithTimeoutResult(
+    client
+      .from("courses")
+      .select("id,course_name")
+      .eq("program_id", programId)
+      .eq("academic_year", year)
+      .eq("academic_semester", semester)
+      .eq("is_active", false)
+      .order("course_name", { ascending: true }),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    "Inactive subjects lookup timed out.",
+  );
+  const activeNames = new Set((MEDBANK_CURRICULUM[year]?.[semester] || []).map((name) => String(name).trim().toLowerCase()));
+  state.adminInactiveSubjects = {
+    key,
+    loading: false,
+    error: error ? getErrorMessage(error, "Couldn't load switched-off subjects.") : "",
+    rows: (Array.isArray(data) ? data : [])
+      .filter((row) => !activeNames.has(String(row?.course_name || "").trim().toLowerCase())),
+  };
+}
+
+function renderAdminInactiveSubjects(year, semester) {
+  const programId = getAdminMcqCurrentProgramIdSync();
+  const key = `${programId || ""}|${year}|${semester}`;
+  const entry = state.adminInactiveSubjects;
+  if (!programId) {
+    return "";
+  }
+  if (!entry || entry.key !== key) {
+    if (!entry?.loading) {
+      loadAdminInactiveSubjects(year, semester).then(() => {
+        if (state.route === "admin" && state.adminPage === "mcq-subjects") {
+          state.skipNextRouteAnimation = true;
+          render();
+        }
+      });
+    }
+    return "";
+  }
+  if (entry.error) {
+    return `<p class="admin-flat-empty">${escapeHtml(entry.error)}</p>`;
+  }
+  if (!entry.rows.length) {
+    return "";
+  }
+  const rows = entry.rows.map((row) => `
+    <li class="admin-inactive-subject-row">
+      <span>${escapeHtml(row.course_name)}</span>
+      <button class="btn ghost admin-btn-sm" type="button" data-action="course-activate" data-course-id="${escapeHtml(row.id)}">Turn on</button>
+    </li>
+  `).join("");
+  return `
+    <details class="admin-inactive-subjects">
+      <summary>Switched-off subjects (${entry.rows.length})</summary>
+      <p class="subtle">Students don't see these. Copies from another college start here: check them, then turn them on.</p>
+      <ul>${rows}</ul>
+    </details>
+  `;
+}
+
+function renderAdminCourseCopyDialog() {
+  const draft = state.adminCourseCopyDialog;
+  if (!draft) {
+    return "";
+  }
+  const colleges = getAdminMcqColleges();
+  const target = findAdminMcqCollege(draft.targetId) || null;
+  const years = Number(target?.years_count) || 5;
+  const semesters = Number(target?.semesters_per_year) || 2;
+  const collegeOptions = colleges.map((college) => {
+    const id = String(college.id || "").trim().toLowerCase();
+    return `<option value="${escapeHtml(id)}" ${id === draft.targetId ? "selected" : ""}>${escapeHtml(getAdminMcqCollegeLabel(college))}</option>`;
+  }).join("");
+  const yearOptions = Array.from({ length: years }, (_, i) => i + 1)
+    .map((y) => `<option value="${y}" ${y === draft.year ? "selected" : ""}>Year ${y}</option>`).join("");
+  const semesterOptions = Array.from({ length: semesters }, (_, i) => i + 1)
+    .map((v) => `<option value="${v}" ${v === draft.semester ? "selected" : ""}>Semester ${v}</option>`).join("");
+  return renderAdminDialog({
+    id: "mcq-subject-copy",
+    title: "Copy to another college",
+    subtitle: `Copies "${draft.course}" with its topics and questions. The copy starts switched off.`,
+    closeAction: "course-copy-close",
+    body: `
+      <form id="admin-course-copy-form" autocomplete="off">
+        <label>College
+          <select name="targetId" required>
+            <option value="" ${draft.targetId ? "" : "selected"} disabled>Pick a college</option>
+            ${collegeOptions}
+          </select>
+        </label>
+        <label>Year<select name="year">${yearOptions}</select></label>
+        <label>Semester<select name="semester">${semesterOptions}</select></label>
+        <label>Name in that college
+          <input name="name" value="${escapeHtml(draft.name)}" required />
+        </label>
+      </form>
+    `,
+    actions: `
+      <button class="btn ghost admin-btn-sm" type="button" data-action="course-copy-close" ${draft.busy ? "disabled" : ""}>Cancel</button>
+      <button class="btn admin-btn-sm ${draft.busy ? "is-loading" : ""}" type="submit" form="admin-course-copy-form" ${draft.busy || !draft.targetId ? "disabled" : ""}>${draft.busy ? "Copying…" : "Copy"}</button>
+    `,
+  });
+}
+
+function describeCourseCopyError(error) {
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "");
+  if (code === "23505" || /SUBJECT_EXISTS/i.test(message)) {
+    return "That college already has a subject with this name in that year and semester.";
+  }
+  if (code === "42501") {
+    return "Your admin account can't add MCQ subjects.";
+  }
+  if (/TERM_OUTSIDE_PROGRAM/i.test(message)) {
+    return "That college doesn't have this year or semester.";
+  }
+  return getErrorMessage(error, "Couldn't copy the subject.");
+}
+
+async function submitAdminCourseCopy() {
+  const draft = state.adminCourseCopyDialog;
+  const client = getRelationalClient();
+  if (!draft || draft.busy || !client) {
+    return;
+  }
+  const name = String(draft.name || "").trim();
+  if (!draft.targetId || !name) {
+    toast("Pick a college and enter a name.");
+    return;
+  }
+  draft.busy = true;
+  state.skipNextRouteAnimation = true;
+  render();
+  try {
+    const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
+    const { data: sourceRows, error: sourceError } = await runWithTimeoutResult(
+      client
+        .from("courses")
+        .select("id")
+        .eq("program_id", programId)
+        .eq("course_name", draft.course)
+        .eq("academic_year", draft.sourceYear)
+        .eq("academic_semester", draft.sourceSemester)
+        .eq("is_active", true),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Subject lookup timed out.",
+    );
+    if (sourceError) throw sourceError;
+    const sourceId = Array.isArray(sourceRows) && sourceRows.length === 1 ? sourceRows[0].id : "";
+    if (!isUuidValue(sourceId)) {
+      throw new Error("This subject isn't saved in the database yet. Wait for it to save, then try again.");
+    }
+    const { error } = await runWithTimeoutResult(
+      client.rpc("admin_copy_mcq_subject", {
+        p_course_id: sourceId,
+        p_target_program_id: draft.targetId,
+        p_academic_year: draft.year,
+        p_academic_semester: draft.semester,
+        p_new_name: name === draft.course ? null : name,
+      }),
+      COURSE_PLATFORM_WRITE_TIMEOUT_MS,
+      "Copying the subject timed out. It may still finish; check that college in a minute.",
+    );
+    if (error) throw error;
+    const target = findAdminMcqCollege(draft.targetId);
+    state.adminCourseCopyDialog = null;
+    toast(`Copied to ${getAdminMcqCollegeLabel(target)}. It's switched off until you turn it on there.`);
+  } catch (error) {
+    if (state.adminCourseCopyDialog) state.adminCourseCopyDialog.busy = false;
+    toast(describeCourseCopyError(error));
+  } finally {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+async function activateAdminInactiveSubject(courseId) {
+  const client = getRelationalClient();
+  if (!client || !isUuidValue(courseId)) {
+    return;
+  }
+  try {
+    const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true, forWrite: true });
+    const { error } = await runWithTimeoutResult(
+      client.from("courses").update({ is_active: true }).eq("id", courseId).eq("program_id", programId).select("id"),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Turning the subject on timed out.",
+    );
+    if (error) throw error;
+    state.adminInactiveSubjects = null;
+    markAdminQuestionCountsStale({ refresh: true });
+    await hydrateRelationalCoursesAndTopics();
+    toast("Subject turned on. Students in this college's year and semester can see it now.");
+  } catch (error) {
+    const code = String(error?.code || "");
+    toast(code === "23505"
+      ? "A subject with this name is already on in this term. Rename one of them first."
+      : getErrorMessage(error, "Couldn't turn the subject on."));
+  } finally {
+    state.skipNextRouteAnimation = true;
+    render();
+  }
+}
+
+function wireAdminMcqPrograms() {
+  const select = appEl.querySelector("#admin-mcq-program-select");
+  select?.addEventListener("change", () => {
+    switchAdminMcqProgram(select.value);
+  });
+  appEl.querySelectorAll("[data-action='course-copy-open']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const course = String(button.getAttribute("data-course-name") || "").trim();
+      if (!course) return;
+      ensureAdminMcqProgramPickerData();
+      // The subject's details sheet would sit on top of the dialog.
+      state.adminCourseTopicModalCourse = "";
+      state.adminCourseCopyDialog = {
+        course,
+        name: course,
+        sourceYear: sanitizeAcademicYear(state.adminCurriculumYear || 1),
+        sourceSemester: sanitizeAcademicSemester(state.adminCurriculumSemester || 1),
+        targetId: "",
+        year: sanitizeAcademicYear(state.adminCurriculumYear || 1),
+        semester: sanitizeAcademicSemester(state.adminCurriculumSemester || 1),
+        busy: false,
+      };
+      state.skipNextRouteAnimation = true;
+      render();
+      focusIntoAdminDialog("mcq-subject-copy");
+    });
+  });
+  appEl.querySelectorAll("[data-action='course-copy-close']").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (state.adminCourseCopyDialog?.busy) return;
+      state.adminCourseCopyDialog = null;
+      state.skipNextRouteAnimation = true;
+      render();
+    });
+  });
+  const copyForm = appEl.querySelector("#admin-course-copy-form");
+  copyForm?.addEventListener("change", () => {
+    const draft = state.adminCourseCopyDialog;
+    if (!draft) return;
+    const data = new FormData(copyForm);
+    const nextTarget = String(data.get("targetId") || "").trim().toLowerCase();
+    const target = findAdminMcqCollege(nextTarget);
+    const years = Number(target?.years_count) || 5;
+    const semesters = Number(target?.semesters_per_year) || 2;
+    draft.targetId = nextTarget;
+    draft.year = Math.min(Number(data.get("year")) || 1, years);
+    draft.semester = Math.min(Number(data.get("semester")) || 1, semesters);
+    draft.name = String(data.get("name") ?? draft.name);
+    state.skipNextRouteAnimation = true;
+    render();
+  });
+  copyForm?.addEventListener("input", (event) => {
+    if (event.target?.name === "name" && state.adminCourseCopyDialog) {
+      state.adminCourseCopyDialog.name = String(event.target.value || "");
+    }
+  });
+  copyForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitAdminCourseCopy();
+  });
+  appEl.querySelectorAll("[data-action='course-activate']").forEach((button) => {
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      activateAdminInactiveSubject(String(button.getAttribute("data-course-id") || ""));
+    });
+  });
+}
+
 function renderAdminPageHeader({ id, title, count = null, actions = "", notes = [] } = {}) {
   const pageId = String(id || "").trim();
   const helpNotes = Array.isArray(notes) ? notes.filter(Boolean) : [];
@@ -36626,7 +37369,7 @@ function renderAdminPopupsSection() {
       <label>Video course<select name="target_video_course_id">${popupSelectOptions(courses, draft.target_video_course_id, "Video Courses list")}</select></label>
       <small class="subtle">${state.adminNotificationVideoCoursesError ? "Course choices could not load. Refresh to retry." : "Course year/semester describes a course; it does not grant access."}</small></div>
     <div class="form-row"><label>Audience role<select name="audience_role">${popupSelectOptions(utils?.POPUP_AUDIENCE_ROLES || [], draft.audience_role)}</select></label>
-    <label>Academic year<select name="audience_academic_year">${popupSelectOptions([1, 2, 3, 4, 5], draft.audience_academic_year, "Any year")}</select></label></div>
+    <label>Academic year<select name="audience_academic_year">${popupSelectOptions([1, 2, 3, 4, 5, 6, 7], draft.audience_academic_year, "Any year")}</select></label></div>
     <p class="subtle">Academic year here is real audience targeting. Only accounts in the selected year are eligible.</p>
     <div class="form-row"><label>Organization<select name="popup_organization">${popupSelectOptions(organizationOptions, organizationValue)}</select></label>
     <label>University<select name="popup_university">${popupSelectOptions(universityOptions, universityValue, "Any university")}</select></label></div>
@@ -38406,6 +39149,9 @@ function renderAdmin() {
   if (activeAdminPage === "users" || activeAdminPage === "mcq-subjects" || activeAdminPage === "notifications") {
     syncUsersWithCurriculum();
   }
+  if (ADMIN_MCQ_PROGRAM_PAGES.has(activeAdminPage)) {
+    ensureAdminMcqProgramPickerData();
+  }
   if (activeAdminPage === "users") {
     ensureUniversitiesLoaded(() => {
       if (state.route === "admin" && state.adminPage === "users") {
@@ -38577,7 +39323,7 @@ function renderAdmin() {
         </button>`
       : "";
     const maxAcademicYearCount = Math.max(0, ...Object.values(dashboardUsers.academicYearCounts));
-    const studentYearRows = [1, 2, 3, 4, 5].map((year) => {
+    const studentYearRows = Object.keys(dashboardUsers.academicYearCounts).map(Number).sort((a, b) => a - b).map((year) => {
       const count = dashboardUsers.academicYearCounts[year] || 0;
       const width = maxAcademicYearCount
         ? Math.max((count / maxAcademicYearCount) * 100, count ? 6 : 0)
@@ -39490,8 +40236,12 @@ function renderAdmin() {
   }
 
   if (activeAdminPage === "mcq-subjects") {
-    const curriculumYear = sanitizeAcademicYear(state.adminCurriculumYear || 1);
-    const curriculumSemester = sanitizeAcademicSemester(state.adminCurriculumSemester || 1);
+    // Years and semesters of the college being worked on.
+    const curriculumShape = getMcqCurriculumShape();
+    const curriculumYear = Math.min(sanitizeAcademicYear(state.adminCurriculumYear || 1), curriculumShape.years);
+    const curriculumSemester = Math.min(sanitizeAcademicSemester(state.adminCurriculumSemester || 1), curriculumShape.semesters);
+    state.adminCurriculumYear = curriculumYear;
+    state.adminCurriculumSemester = curriculumSemester;
     const selectedSemesterCourses = MEDBANK_CURRICULUM[curriculumYear]?.[curriculumSemester] || [];
     if (state.adminCourseTopicModalCourse && !selectedSemesterCourses.includes(state.adminCourseTopicModalCourse)) {
       state.adminCourseTopicModalCourse = "";
@@ -39611,6 +40361,10 @@ function renderAdmin() {
                     </div>
                   </label>
                   ${renderAdminCourseUniversalLockTool(focusedCourse, curriculumYear, curriculumSemester)}
+                  <div class="admin-course-tool-field">
+                    <span>Other colleges</span>
+                    <button class="btn ghost admin-btn-sm" type="button" data-action="course-copy-open" data-course-name="${escapeHtml(focusedCourse)}">Copy to another college</button>
+                  </div>
                 </section>
 
                 <section class="admin-course-workspace-panel admin-course-workspace-panel-danger">
@@ -39684,11 +40438,10 @@ function renderAdmin() {
 
         <form id="admin-curriculum-filter-form" class="admin-flat-toolbar" autocomplete="off">
           <select name="curriculumYear" aria-label="Year">
-            ${[1, 2, 3, 4, 5].map((year) => `<option value="${year}" ${curriculumYear === year ? "selected" : ""}>Year ${year}</option>`).join("")}
+            ${Array.from({ length: curriculumShape.years }, (_, i) => i + 1).map((year) => `<option value="${year}" ${curriculumYear === year ? "selected" : ""}>Year ${year}</option>`).join("")}
           </select>
           <select name="curriculumSemester" aria-label="Semester">
-            <option value="1" ${curriculumSemester === 1 ? "selected" : ""}>Semester 1</option>
-            <option value="2" ${curriculumSemester === 2 ? "selected" : ""}>Semester 2</option>
+            ${Array.from({ length: curriculumShape.semesters }, (_, i) => i + 1).map((semester) => `<option value="${semester}" ${curriculumSemester === semester ? "selected" : ""}>Semester ${semester}</option>`).join("")}
           </select>
           <label class="admin-users-toolbar-search admin-flat-toolbar-search">
             <span class="sr-only">Search subjects</span>
@@ -39700,7 +40453,9 @@ function renderAdmin() {
         ${courseCards
     ? `<ul class="admin-flat-list admin-course-picker-list">${courseCards}</ul>`
     : `<p class="admin-flat-empty">No matching subjects. Try a different search or switch the year or semester.</p>`}
+        ${renderAdminInactiveSubjects(curriculumYear, curriculumSemester)}
       </section>
+      ${renderAdminCourseCopyDialog()}
     `;
 
     const courseDetailsModalHtml = focusedCourseWorkspace && state.adminCourseTopicModalCourse
@@ -40203,7 +40958,7 @@ function renderAdmin() {
             </label>
             <label class="admin-notification-target-year-field" id="admin-notification-target-year-field" ${targetType === "year" ? "" : "hidden"}>Target year
               <select name="targetYear" id="admin-notification-target-year" ${targetType === "year" ? "" : "disabled"} ${notificationSending ? "disabled" : ""}>
-                ${[1, 2, 3, 4, 5]
+                ${[1, 2, 3, 4, 5, 6, 7]
         .map((yearValue) => `<option value="${yearValue}" ${targetYear === yearValue ? "selected" : ""}>${escapeHtml(formatAcademicYearAudienceLabel(yearValue))}</option>`)
         .join("")}
               </select>
@@ -40809,7 +41564,7 @@ function renderAdmin() {
         </div>
       </aside>
 
-      <div class="admin-main">${pageContent}</div>
+      <div class="admin-main">${ADMIN_MCQ_PROGRAM_PAGES.has(activeAdminPage) ? renderAdminMcqProgramBar() : ""}${pageContent}</div>
     </section>
     ${adminGlobalOverlay}
   `;
@@ -41027,7 +41782,7 @@ function getCourseTopicServerCounts(course, topic) {
 // yet. Course names are unique today; more than one match is refused rather
 // than guessed.
 async function fetchCourseTopicId(client, course, topic) {
-  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
+  const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true, forWrite: true });
   let query = client
     .from("course_topics")
     .select(programId ? "id,courses!inner(course_name,program_id)" : "id,courses!inner(course_name)")
@@ -41449,6 +42204,7 @@ function wireAdmin() {
   document.body.classList.toggle("is-admin-dialog-open", Boolean(appEl.querySelector(".admin-dialog")));
   wireAdminPopups();
   wireAdminUniversities();
+  wireAdminMcqPrograms();
   wireAdminQuestionReports();
   wireAdminResults();
   wireAdminSupportNumber();
@@ -51742,12 +52498,19 @@ function deepClone(value) {
   try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
 }
 
+// Shaped to the current college's years and semesters. Only the default
+// college (October 6 University · Medicine) falls back to the built-in
+// subject list for an empty term; any other college keeps the term empty, or
+// the next save would write October 6's subjects into it.
 function normalizeCurriculum(raw) {
   const normalized = {};
-  for (let year = 1; year <= 5; year += 1) {
+  const shape = getMcqCurriculumShape();
+  for (let year = 1; year <= shape.years; year += 1) {
     normalized[year] = {};
-    for (let semester = 1; semester <= 2; semester += 1) {
-      const fallback = sanitizeCurriculumCourseList(DEFAULT_MEDBANK_CURRICULUM[year]?.[semester] || []);
+    for (let semester = 1; semester <= shape.semesters; semester += 1) {
+      const fallback = shape.useDefaults
+        ? sanitizeCurriculumCourseList(DEFAULT_MEDBANK_CURRICULUM[year]?.[semester] || [])
+        : [];
       const incoming = Array.isArray(raw?.[year]?.[semester]) ? raw[year][semester] : fallback;
       const deduped = sanitizeCurriculumCourseList(incoming);
       normalized[year][semester] = deduped.length ? deduped : [...fallback];
@@ -52657,14 +53420,17 @@ function normalizeAcademicSemesterOrNull(value) {
   return Number.isInteger(semester) && semester >= 1 && semester <= 3 ? semester : null;
 }
 
+// 1..7 and 1..3: what the database allows (a college may have up to seven
+// years and three semesters). The old 5/2 caps silently turned a year-6
+// student into year 1.
 function sanitizeAcademicYear(value) {
   const year = normalizeAcademicYearOrNull(value);
-  return year !== null && year <= 5 ? year : 1;
+  return year !== null && year <= 7 ? year : 1;
 }
 
 function sanitizeAcademicSemester(value) {
   const semester = normalizeAcademicSemesterOrNull(value);
-  return semester !== null && semester <= 2 ? semester : 1;
+  return semester !== null && semester <= 3 ? semester : 1;
 }
 
 // The three roles that exist in `profiles.role` (see the `app_user_role` enum).
@@ -52818,8 +53584,9 @@ function inferAcademicTermFromCourses(courses) {
     return { year: null, semester: null };
   }
   const matches = [];
-  for (let year = 1; year <= 5; year += 1) {
-    for (let semester = 1; semester <= 2; semester += 1) {
+  const shape = getMcqCurriculumShape();
+  for (let year = 1; year <= shape.years; year += 1) {
+    for (let semester = 1; semester <= shape.semesters; semester += 1) {
       const termCourses = getCurriculumCourses(year, semester);
       if (!termCourses.length) {
         continue;
@@ -52859,8 +53626,9 @@ function inferAcademicTermFromCourses(courses) {
 }
 
 function getFallbackEnrollmentTerm() {
-  for (let year = 1; year <= 5; year += 1) {
-    for (let semester = 1; semester <= 2; semester += 1) {
+  const shape = getMcqCurriculumShape();
+  for (let year = 1; year <= shape.years; year += 1) {
+    for (let semester = 1; semester <= shape.semesters; semester += 1) {
       if (getCurriculumCourses(year, semester).length) {
         return { year, semester };
       }
@@ -64157,7 +64925,7 @@ async function toggleAdminCourseUniversalLock(courseName, year, semester) {
   state.skipNextRouteAnimation = true;
   render();
   try {
-    const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true });
+    const { programId } = await resolveWebsiteMcqProgramScope({ throwIfUnconfirmed: true, forWrite: true });
     if (existing) {
       const { error } = await client.from("course_locks").delete().eq("course_id", existing.courseId);
       if (error) {

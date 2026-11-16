@@ -2,6 +2,37 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-16 — MCQ admin works on any college (college picker)
+- `getWebsiteMcqProgramId()` is now role-aware: an admin gets the college picked
+  on MCQ Subjects / Questions / Bulk Import (`medbank_admin_mcq_program` in
+  localStorage, stored only for a non-default college), a student gets their
+  own university + college, anyone else gets October 6 University · Medicine
+  (`getDefaultWebsiteMcqProgramId()`, the old lookup).
+- **Do not** let one college's cached name-based data reach another:
+  `medbank_mcq_local_program_id` records which college the local curriculum,
+  topics and questions belong to. Every MCQ write path calls
+  `resolveWebsiteMcqProgramScope({ forWrite: true })`, which throws when it
+  differs. `hydrateRelationalCoursesAndTopics` drops cached questions when the
+  college changed. `switchAdminMcqProgram` flushes pending writes first and
+  reverts the pick if the new college fails to load.
+- **Do not** fill an empty term with `DEFAULT_MEDBANK_CURRICULUM` outside the
+  default college: `normalizeCurriculum` reads `getMcqCurriculumShape()` (the
+  college's years/semesters, `useDefaults` only for the default college). The
+  admin backup restore and the app_state backup merge are skipped for any
+  other college — an empty new college looks exactly like a wiped database.
+- `sanitizeAcademicYear`/`Semester` allow 1..7 / 1..3 (the DB's range).
+- MCQ Subjects: year/semester lists follow the college, "Copy to another
+  college" (`admin_copy_mcq_subject`), and a "Switched-off subjects" list with
+  Turn on (copies start switched off).
+- Tests: `tests/admin-mcq-program.test.js`; `tests/admin-backup-restore.test.js`
+  covers the non-default college.
+
+### 2026-11-16 — Fix: undefined `RELATIONAL_SYNC_TIMEOUT_MS`
+- The college lookup threw a ReferenceError before sending a request, so every
+  admin MCQ load/save failed with "Could not confirm the MCQ college". Test
+  sandboxes must not define names main.js lacks; run eslint with `no-undef`
+  when adding globals.
+
 ### 2026-11-16 — Multi-program MCQ eligibility (`university_colleges`) & O6U Medicine curriculum scoping
 - Backend migration `../Medbank-App/supabase/migrations/20261116090000_mcq_programs.sql`
   introduces `public.university_colleges` (`university_id`, `college_key`, `name`,

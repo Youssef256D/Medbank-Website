@@ -24,7 +24,7 @@ const topLevelFunction = (name) => {
 const STALE_BACKUP = { 2: { 1: ['CVS', 'RES', 'MSS'] } };
 const CURRENT = { 2: { 1: ['MSS'] } };
 
-function harness(counts) {
+function harness(counts, { defaultCollege = true } = {}) {
   const store = { curriculum: CURRENT, topics: {}, questions: [] };
   const saved = [];
   const context = vm.createContext({
@@ -35,6 +35,7 @@ function harness(counts) {
     ADMIN_BACKUP_RESTORE_CHECK_COOLDOWN_MS: 0,
     Date,
     getCurrentUser: () => ({ role: 'admin' }),
+    isDefaultMcqCurriculumScope: () => defaultCollege,
     fetchSupabaseBackupPayloads: async () => ({
       curriculum: STALE_BACKUP,
       topics: { CVS: ['Heart'] },
@@ -80,4 +81,17 @@ test('an empty DB is still recovered from the backup', async () => {
   const result = await context.restoreAdminContentFromSupabaseBackupIfNeeded({ force: true });
   assert.strictEqual(result.restored, true);
   assert.deepStrictEqual([...store.curriculum[2][1]], ['CVS', 'RES', 'MSS']);
+});
+
+test('a college other than the default is never filled from the backup', async () => {
+  // A new college has no subjects, which looks exactly like a wiped database;
+  // the backup is October 6 University · Medicine's and must not land there.
+  const { context, store, saved } = harness(
+    { courseCount: 0, topicCount: 0, questionCount: 0 },
+    { defaultCollege: false },
+  );
+  const result = await context.restoreAdminContentFromSupabaseBackupIfNeeded({ force: true });
+  assert.strictEqual(result.restored, false);
+  assert.deepStrictEqual(store.curriculum, CURRENT);
+  assert.deepStrictEqual(saved, []);
 });

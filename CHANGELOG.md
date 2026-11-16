@@ -9,6 +9,17 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-16 — The website admin manages any college's MCQ Bank
+
+- A **College** picker on MCQ Subjects, Questions and Bulk Import: subjects,
+  topics, questions and imports go to the college picked there. Its years and
+  semesters follow that college.
+- **Copy to another college** on a subject copies it with its topics and
+  questions; the copy starts switched off. **Switched-off subjects** lists them
+  per term with a Turn on button.
+- Website students see their own college's subjects.
+- Years 6–7 and a third semester are kept instead of being reset to 1.
+
 ### 2026-11-16 — Fix "Could not confirm the MCQ college"
 
 - The MCQ college lookup passed `RELATIONAL_SYNC_TIMEOUT_MS`, a constant that
