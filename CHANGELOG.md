@@ -9,6 +9,16 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-17 — Reported questions are hidden at once; reports grouped by course
+
+- A question a student reports turns into a draft immediately, so no other
+  student sees it until an admin marks it **fixed** or **correct**, which
+  publishes it again. A student withdrawing the only report also brings it
+  back. Questions with open reports were hidden when this shipped.
+- Admin **Question reports** is grouped by course: one folding row per course
+  (loudest first, with question and report counts) and one line per question.
+  Hidden questions are tagged **Hidden**.
+
 ### 2026-11-16 — The website admin manages any college's MCQ Bank
 
 - A **College** picker on MCQ Subjects, Questions and Bulk Import: subjects,

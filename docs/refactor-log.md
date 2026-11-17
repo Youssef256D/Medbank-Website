@@ -2,6 +2,18 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-17 — Reported questions hidden until reviewed
+- Migration `20261117130000_hide_reported_questions`: `report_question` drafts a
+  published question on report and records it in `private.question_report_holds`;
+  `admin_close_question_reports` republishes held drafts and drops the hold;
+  trigger `trg_question_reports_release_hold` does the same when the last open
+  report is withdrawn. **Do not** republish drafts that have no hold — those
+  were drafted by an admin on purpose.
+- `report_question` still lets a student edit their own open report on a held
+  (draft) question.
+- Admin list: `renderAdminQuestionReportGroups` / `renderAdminQuestionReportRow`
+  replace the card list; queue loads 200 rows (the RPC max).
+
 ### 2026-11-16 — MCQ admin works on any college (college picker)
 - `getWebsiteMcqProgramId()` is now role-aware: an admin gets the college picked
   on MCQ Subjects / Questions / Bulk Import (`medbank_admin_mcq_program` in

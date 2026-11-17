@@ -67919,7 +67919,7 @@ function loadAdminQuestionReports(options = {}) {
     client.rpc("admin_question_report_queue", {
       p_status: reports.closed ? "closed" : "open",
       p_level: reports.closed ? null : (reports.level || null),
-      p_limit: 50,
+      p_limit: 200,
       p_offset: 0,
     }),
     "Question reports timed out.",
@@ -67982,36 +67982,69 @@ function renderQuestionReportShare(item) {
   </div>`;
 }
 
-function renderAdminQuestionReportCard(item, index, closed) {
+const QUESTION_REPORT_LEVEL_RANK = { urgent: 4, high: 3, watch: 2, low: 1 };
+
+// One compact line per reported question: level, stem, topic, the top
+// reason and how many students reported it. The full story is in the detail.
+function renderAdminQuestionReportRow(item, closed) {
   const level = QUESTION_REPORT_LEVELS.some((entry) => entry.id === item.level) ? item.level : "low";
   const levelLabel = QUESTION_REPORT_LEVELS.find((entry) => entry.id === level)?.label || "Low";
-  const reasons = Object.entries(item.reasons || {})
-    .sort((a, b) => Number(b[1]) - Number(a[1]))
-    .map(([reason, count]) => `<span class="question-report-chip">${escapeHtml(getQuestionReportReasonLabel(reason))} · ${escapeHtml(String(count))}</span>`)
-    .join("");
-  const location = [item.course_name, item.topic_name].filter(Boolean).map((part) => escapeHtml(part)).join(" · ");
-  const statusPill = closed
-    ? `<span class="badge ${item.closed_status === "resolved" ? "good" : "neutral"}">${item.closed_status === "resolved" ? "Fixed" : "Checked · correct"}</span>`
-    : `<span class="question-report-level is-${level}">${levelLabel}</span>`;
-  const questionState = item.question_status && item.question_status !== "published"
-    ? `<span class="badge neutral">${item.question_status === "draft" ? "Now a draft" : "Deleted"}</span>`
-    : "";
+  const topReason = Object.entries(item.reasons || {}).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
   const reporters = Number(item.reporters) || 0;
-  const when = closed && item.closed_at
-    ? `Closed ${formatQuestionReportDate(item.closed_at)}`
-    : `Last report ${formatQuestionReportDate(item.last_reported_at)}`;
-  return `<button type="button" class="question-report-card ${closed ? "is-closed" : `is-${level}`}" data-question-report-open="${escapeHtml(item.question_id)}" data-question-report-closed="${closed ? "1" : ""}">
-    <span class="question-report-card-top">
-      <span class="question-report-card-pills">${statusPill}${questionState}${!closed && index < 3 ? `<span class="question-report-rank">#${index + 1}</span>` : ""}</span>
-      <span class="question-report-count"><b>${escapeHtml(String(reporters))}</b><small>${reporters === 1 ? "student" : "students"}</small></span>
+  const suggestion = getQuestionReportLeadingSuggestion(item);
+  const statusPill = closed
+    ? `<span class="question-report-level ${item.closed_status === "resolved" ? "is-fixed" : ""}">${item.closed_status === "resolved" ? "Fixed" : "Correct"}</span>`
+    : `<span class="question-report-level is-${level}">${levelLabel}</span>`;
+  const hidden = !closed && item.question_status === "draft"
+    ? `<span class="question-report-hidden" title="Students can't see this question until you mark it fixed or correct">Hidden</span>`
+    : "";
+  const meta = [
+    item.topic_name ? escapeHtml(item.topic_name) : "",
+    topReason ? escapeHtml(getQuestionReportReasonLabel(topReason[0])) : "",
+    suggestion && suggestion.count >= 2 ? `<b>${escapeHtml(String(suggestion.count))} say ${escapeHtml(suggestion.label)}</b>` : "",
+    escapeHtml(formatQuestionReportDate(closed && item.closed_at ? item.closed_at : item.last_reported_at)),
+  ].filter(Boolean).join(" · ");
+  return `<li><button type="button" class="question-report-row ${closed ? "is-closed" : `is-${level}`}" data-question-report-open="${escapeHtml(item.question_id)}" data-question-report-closed="${closed ? "1" : ""}">
+    <span class="question-report-row-pills">${statusPill}${hidden}</span>
+    <span class="question-report-row-main">
+      <span class="question-report-row-stem">${escapeHtml(item.stem || "")}</span>
+      <small class="question-report-row-meta">${meta}</small>
     </span>
-    ${location ? `<span class="question-report-location">${location}</span>` : ""}
-    <span class="question-report-stem">${escapeHtml(item.stem || "")}</span>
-    ${renderQuestionReportShare(item)}
-    ${reasons ? `<span class="question-report-chips">${reasons}</span>` : ""}
-    ${renderQuestionReportAgreement(item)}
-    <span class="question-report-when">${escapeHtml(when)}</span>
-  </button>`;
+    <span class="question-report-row-count" title="${reporters === 1 ? "1 student" : `${reporters} students`}">${escapeHtml(String(reporters))}</span>
+  </button></li>`;
+}
+
+// Reports grouped by course, loudest course first. Each course folds; the
+// open/closed state is remembered while the admin stays on the page.
+function renderAdminQuestionReportGroups(items, closed, reports) {
+  const groups = new Map();
+  items.forEach((item) => {
+    const name = String(item.course_name || "").trim() || "No course";
+    if (!groups.has(name)) {
+      groups.set(name, []);
+    }
+    groups.get(name).push(item);
+  });
+  const sorted = [...groups.entries()].map(([name, list]) => ({
+    name,
+    list,
+    top: Math.max(...list.map((item) => QUESTION_REPORT_LEVEL_RANK[item.level] || 1)),
+    reporters: list.reduce((sum, item) => sum + (Number(item.reporters) || 0), 0),
+  })).sort((a, b) => (closed ? 0 : b.top - a.top) || b.list.length - a.list.length || a.name.localeCompare(b.name));
+  const openSet = reports.openCourses || (reports.openCourses = new Set(sorted.length === 1 ? [sorted[0].name] : []));
+  return `<div class="question-report-groups">${sorted.map((group) => {
+    const topLevel = Object.keys(QUESTION_REPORT_LEVEL_RANK).find((key) => QUESTION_REPORT_LEVEL_RANK[key] === group.top) || "low";
+    const isOpen = openSet.has(group.name);
+    return `<details class="question-report-group ${closed ? "" : `is-${topLevel}`}" data-question-report-course="${escapeHtml(group.name)}" ${isOpen ? "open" : ""}>
+      <summary>
+        <span class="question-report-group-name">${escapeHtml(group.name)}</span>
+        ${!closed && group.top > 1 ? `<span class="question-report-level is-${topLevel}">${escapeHtml(QUESTION_REPORT_LEVELS.find((entry) => entry.id === topLevel)?.label || "")}</span>` : ""}
+        <span class="question-report-group-count">${escapeHtml(String(group.list.length))} ${group.list.length === 1 ? "question" : "questions"} · ${escapeHtml(String(group.reporters))} ${group.reporters === 1 ? "report" : "reports"}</span>
+        <span class="question-report-group-chevron" aria-hidden="true">›</span>
+      </summary>
+      <ul class="question-report-rows">${group.list.map((item) => renderAdminQuestionReportRow(item, closed)).join("")}</ul>
+    </details>`;
+  }).join("")}</div>`;
 }
 
 function renderAdminQuestionReportsSection() {
@@ -68043,7 +68076,7 @@ function renderAdminQuestionReportsSection() {
     </div>`;
   } else {
     const total = Number(reports.page?.total) || items.length;
-    body = `<div class="question-report-list">${items.map((item, index) => renderAdminQuestionReportCard(item, index, reports.closed)).join("")}</div>
+    body = `${renderAdminQuestionReportGroups(items, reports.closed, reports)}
       ${total > items.length ? `<p class="subtle question-report-more">Showing ${items.length} of ${total}</p>` : ""}`;
   }
   const pageHeader = renderAdminPageHeader({
@@ -68060,6 +68093,7 @@ function renderAdminQuestionReportsSection() {
       "Students report questions they think are wrong, from the app and the website.",
       "The more students agree, the higher a question goes: <b>Urgent</b> is 10 or more students, or 10% of the students who answered it (with at least 3).",
       "Each student counts once per question. Marking a question fixed or correct closes its reports and tells every student who reported it.",
+      "A reported question is <b>hidden</b> from students (made a draft) the moment it is reported. Marking it fixed or correct publishes it again.",
     ],
   });
   return `<section class="card admin-section" id="admin-question-reports-section">
@@ -68091,6 +68125,15 @@ function wireAdminQuestionReports() {
     reports.level = reports.level === level ? "" : level;
     reports.page = null;
     refreshAdminQuestionReportsView();
+  }));
+  section.querySelectorAll("[data-question-report-course]").forEach((group) => group.addEventListener("toggle", () => {
+    const name = String(group.getAttribute("data-question-report-course") || "");
+    reports.openCourses = reports.openCourses || new Set();
+    if (group.open) {
+      reports.openCourses.add(name);
+    } else {
+      reports.openCourses.delete(name);
+    }
   }));
   section.querySelectorAll("[data-question-report-open]").forEach((card) => card.addEventListener("click", () => {
     const questionId = String(card.getAttribute("data-question-report-open") || "");
