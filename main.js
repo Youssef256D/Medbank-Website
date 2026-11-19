@@ -4781,7 +4781,7 @@ async function bootstrapRelationalProfileFromAuth(authUser, fallbackUser = null)
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,training_stage,mcq_access_held_at,created_at,updated_at")
       .eq("id", profileRow.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -4878,7 +4878,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
   const profileResult = await runWithTimeoutResult(
     client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,training_stage,mcq_access_held_at,created_at,updated_at")
       .eq("id", authUser.id)
       .maybeSingle(),
     PROFILE_LOOKUP_TIMEOUT_MS,
@@ -5093,6 +5093,7 @@ async function refreshLocalUserFromRelationalProfile(authUser, fallbackUser = nu
     coursesAccessEnabled: role === "admin" ? true : profile.courses_access_enabled !== false,
     ...readProfileUniversityFields(profile),
     ...readProfileMcqHoldFields(profile),
+    ...readProfileTrainingStageFields(profile),
     approvedAt: resolvedApproval ? localUser?.approvedAt || profile.created_at || nowISO() : null,
     approvedBy: resolvedApproval ? localUser?.approvedBy || "admin" : null,
     authProvider,
@@ -5384,6 +5385,33 @@ function readProfileMcqHoldFields(profile) {
     heldAt = new Date(raw).toISOString();
   }
   return { mcqAccessHeldAt: heldAt };
+}
+
+// `profiles.training_stage` (app migration 20261120090000_er_shift_graduates):
+// a medicine graduate's stage — Intern year 1/2 (Imtiyaz) or Junior/Senior
+// resident — or null while studying. It alone opens ER Shift in the app. The
+// database keeps it for medicine only and moves a graduate to the last term.
+const TRAINING_STAGES = [
+  { value: "intern_1", label: "Intern year 1 (Imtiyaz)" },
+  { value: "intern_2", label: "Intern year 2 (Imtiyaz)" },
+  { value: "junior_resident", label: "Junior resident" },
+  { value: "senior_resident", label: "Senior resident" },
+];
+
+function normalizeTrainingStage(value) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  return TRAINING_STAGES.some((entry) => entry.value === raw) ? raw : null;
+}
+
+function getTrainingStageLabel(value) {
+  return TRAINING_STAGES.find((entry) => entry.value === value)?.label || "";
+}
+
+function readProfileTrainingStageFields(profile) {
+  if (!profile || !Object.prototype.hasOwnProperty.call(profile, "training_stage")) {
+    return {};
+  }
+  return { trainingStage: normalizeTrainingStage(profile.training_stage) };
 }
 
 function isUserMcqAccessHeld(account) {
@@ -5744,7 +5772,7 @@ async function saveOwnUniversityCollege(user, { universityId, college }) {
         .from("profiles")
         .update({ university_id: universityId, college })
         .eq("id", profileId)
-        .select("id,university_id,college,mcq_access_enabled,mcq_access_held_at"),
+        .select("id,university_id,college,training_stage,mcq_access_enabled,mcq_access_held_at"),
       "Saving your university timed out.",
     );
     const row = Array.isArray(rows) ? rows[0] : null;
@@ -5783,6 +5811,7 @@ function applyServerUniversityFieldsToLocalUser(profileId, row) {
     ...users[idx],
     ...readProfileUniversityFields(row),
     ...readProfileMcqHoldFields(row),
+    ...readProfileTrainingStageFields(row),
     ...(users[idx].role === "admin" || typeof row?.mcq_access_enabled !== "boolean"
       ? {}
       : { mcqAccessEnabled: row.mcq_access_enabled }),
@@ -6269,7 +6298,7 @@ async function revalidateApprovedStudentAccess(user = null, options = {}) {
     const { data, error } = await runWithTimeoutResult(
       client
         .from("profiles")
-        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,training_stage,mcq_access_held_at,created_at,updated_at")
         .eq("id", profileId)
         .maybeSingle(),
       PROFILE_LOOKUP_TIMEOUT_MS,
@@ -6316,6 +6345,7 @@ async function revalidateApprovedStudentAccess(user = null, options = {}) {
         coursesAccessEnabled: data.courses_access_enabled !== false,
         ...readProfileUniversityFields(data),
         ...readProfileMcqHoldFields(data),
+        ...readProfileTrainingStageFields(data),
         approvedAt: existing?.approvedAt || data.created_at || nowISO(),
         approvedBy: existing?.approvedBy || "admin",
         academicYear: normalizedEnrollment.academicYear,
@@ -11993,7 +12023,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
     const profilesResult = await fetchRowsPaged((from, to) => (
       client
         .from("profiles")
-        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
+        .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,training_stage,mcq_access_held_at,created_at,updated_at")
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to)
@@ -12012,7 +12042,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
   } else {
     const { data: profile, error } = await client
       .from("profiles")
-      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,mcq_access_held_at,created_at,updated_at")
+      .select("id,public_user_id,full_name,email,phone,role,approved,mcq_access_enabled,courses_access_enabled,academic_year,academic_semester,auth_provider,university_id,college,training_stage,mcq_access_held_at,created_at,updated_at")
       .eq("id", currentUser.supabaseAuthId)
       .maybeSingle();
     if (error) {
@@ -12263,6 +12293,7 @@ async function hydrateRelationalProfiles(currentUser, options = {}) {
       // to profiles (never through the local-cache sync), so the read wins.
       ...readProfileUniversityFields(profile),
       ...readProfileMcqHoldFields(profile),
+      ...readProfileTrainingStageFields(profile),
       approvedAt: resolvedApprovedAt,
       approvedBy: resolvedApprovedBy,
       assignedCourses,
@@ -14686,6 +14717,9 @@ function overlayConcurrentAdminUserWrites(nextUsers, hydrationStartedAt) {
     const freshSemester = normalizeAcademicSemesterOrNull(fresh.academicSemester);
     if (freshSemester !== null) {
       overlay.academicSemester = freshSemester;
+    }
+    if (Object.prototype.hasOwnProperty.call(fresh, "trainingStage")) {
+      overlay.trainingStage = normalizeTrainingStage(fresh.trainingStage);
     }
     return overlay;
   });
@@ -40210,6 +40244,12 @@ function renderAdmin() {
             </div>`;
         })()
         : ""}
+          ${renderAdminUserTrainingStageField({
+            isStudent: editIsStudent,
+            college: editDisplay.college ?? editUserAccount.college,
+            trainingStage: editUserAccount.trainingStage,
+            canEdit: usersCan.edit,
+          })}
           <label>Role
             <select id="admin-user-edit-role" class="admin-role-select" data-action="set-user-role" ${editIsSelf ? "disabled title=\"You cannot change your own role.\"" : ""}>
               ${renderAdminUserRoleOptions(editUserAccount.role)}
@@ -42247,6 +42287,124 @@ function closeAdminUserEditDialog({ discardDraft = true } = {}) {
     ? [...appEl.querySelectorAll("tr[data-user-id]")].find((row) => row.getAttribute("data-user-id") === returnId)
     : null;
   returnRow?.querySelector("[data-action='admin-row-menu-toggle']")?.focus({ preventScroll: true });
+}
+
+function renderAdminUserTrainingStageField({
+  isStudent = false,
+  college = "",
+  trainingStage = null,
+  canEdit = false,
+} = {}) {
+  if (!isStudent || String(college ?? "").trim().toLowerCase() !== "medicine") {
+    return "";
+  }
+  const editStage = normalizeTrainingStage(trainingStage);
+  return `<label>Stage
+              <select id="admin-user-edit-stage" data-action="set-user-training-stage" ${canEdit ? "" : "disabled"}>
+                <option value="" ${editStage ? "" : "selected"}>Studying (year and semester)</option>
+                ${TRAINING_STAGES.map((entry) => `<option value="${entry.value}" ${editStage === entry.value ? "selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}
+              </select>
+              <small class="subtle">Interns and residents get ER Shift in the app. A stage moves the student to the last term. Saved as soon as you pick it.</small>
+            </label>`;
+}
+
+async function saveAdminUserTrainingStage(userId, rawStage) {
+  const normalizedUserId = String(userId || "").trim();
+  const account = getUsers().find((entry) => String(entry?.id || "").trim() === normalizedUserId);
+  const previousStage = normalizeTrainingStage(account?.trainingStage);
+  const profileId = getUserProfileId(account);
+  const client = getRelationalClient();
+  if (!client || !isUuidValue(profileId)) {
+    toast("Stage not saved: this account is not on the server.");
+    return { ok: false, stage: previousStage };
+  }
+  const nextStage = normalizeTrainingStage(rawStage);
+  beginAdminUserMutation();
+  try {
+    const { data, error } = await runWithTimeoutResult(
+      client
+        .from("profiles")
+        .update({ training_stage: nextStage })
+        .eq("id", profileId)
+        .select("id,training_stage,academic_year,academic_semester,updated_at")
+        .maybeSingle(),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      "Saving stage timed out.",
+    );
+    if (error || !data) {
+      toast(`Stage not saved: ${error?.message || "no permission"}`);
+      return { ok: false, stage: previousStage };
+    }
+    const savedStage = normalizeTrainingStage(data.training_stage);
+    const savedYear = normalizeAcademicYearOrNull(data.academic_year);
+    const savedSemester = normalizeAcademicSemesterOrNull(data.academic_semester);
+    const previousYear = normalizeAcademicYearOrNull(account?.academicYear);
+    const previousSemester = normalizeAcademicSemesterOrNull(account?.academicSemester);
+    const termChanged = previousYear !== savedYear || previousSemester !== savedSemester;
+    let refreshedCourses = null;
+    if (termChanged) {
+      const enrollmentResult = await runWithTimeoutResult(
+        client
+          .from("user_course_enrollments")
+          .select("course_id,courses(course_name,is_active)")
+          .eq("user_id", profileId),
+        SUPABASE_QUERY_TIMEOUT_MS,
+        "Refreshing student subjects timed out.",
+      );
+      if (!enrollmentResult?.error && Array.isArray(enrollmentResult?.data)) {
+        refreshedCourses = sanitizeCourseAssignments(
+          enrollmentResult.data
+            .map((row) => (Array.isArray(row?.courses) ? row.courses[0] : row?.courses))
+            .filter((course) => course && course.is_active !== false)
+            .map((course) => course.course_name),
+        );
+      }
+    }
+    const users = getUsers();
+    const idx = users.findIndex((entry) => String(entry?.id || "").trim() === normalizedUserId);
+    if (idx !== -1) {
+      users[idx].trainingStage = savedStage;
+      users[idx].academicYear = savedYear;
+      users[idx].academicSemester = savedSemester;
+      if (data.updated_at) {
+        users[idx].profileUpdatedAt = maxIsoTimestamp(users[idx].profileUpdatedAt, data.updated_at);
+      }
+      if (termChanged) {
+        const nextCourses = refreshedCourses !== null
+          ? [...refreshedCourses]
+          : (savedYear !== null && savedSemester !== null ? getCurriculumCourses(savedYear, savedSemester) : []);
+        users[idx].enrolledCourses = nextCourses;
+        users[idx].assignedCourses = [...nextCourses];
+        clearPendingEnrollmentScopeOverride(users[idx]);
+      }
+      saveLocalOnly(STORAGE_KEYS.users, users);
+      relationalSync.lastUserLocalWriteAt = Date.now();
+      if (termChanged) {
+        const existingDraft = getAdminUserEnrollmentDraft(normalizedUserId);
+        if (existingDraft) {
+          setAdminUserEnrollmentDraft(
+            normalizedUserId,
+            {
+              ...existingDraft,
+              academicYear: savedYear,
+              academicSemester: savedSemester,
+            },
+            users[idx],
+          );
+        }
+      }
+    }
+    appendSystemLog("admin.user_training_stage_changed", "Changed a student's stage.", {
+      userId: normalizedUserId,
+      stage: savedStage,
+    });
+    toast(savedStage ? `Stage set: ${getTrainingStageLabel(savedStage)}` : "Stage cleared");
+    state.skipNextRouteAnimation = true;
+    render();
+    return { ok: true, stage: savedStage };
+  } finally {
+    endAdminUserMutation();
+  }
 }
 
 function restoreAdminDialogFocusAfterRender() {
@@ -45372,6 +45530,32 @@ function wireAdmin() {
       const saved = await saveUserEnrollmentFromRow(row, { mode: "manual", syncNow: true });
       if (saved && row?.hasAttribute("data-user-edit-root")) {
         closeAdminUserEditDialog({ discardDraft: false });
+      }
+    });
+  });
+
+  // Stage (intern / resident) in the "Edit details" dialog: written straight
+  // to profiles.training_stage, outside the enrollment draft, so it never
+  // rides along with — or waits for — a year/semester save.
+  appEl.querySelectorAll("[data-action='set-user-training-stage']").forEach((select) => {
+    select.addEventListener("change", async () => {
+      if (select.dataset.busy === "1") {
+        return;
+      }
+      const root = select.closest("[data-user-edit-root][data-user-id]");
+      const userId = String(root?.getAttribute("data-user-id") || "").trim();
+      select.dataset.busy = "1";
+      select.disabled = true;
+      try {
+        const result = await saveAdminUserTrainingStage(userId, select.value);
+        if (!result?.ok && select.isConnected) {
+          select.value = result?.stage || "";
+        }
+      } finally {
+        select.dataset.busy = "0";
+        if (select.isConnected) {
+          select.disabled = false;
+        }
       }
     });
   });
@@ -65329,7 +65513,7 @@ async function loadAdminUserUniversityIntoDialog(context) {
   let errorMessage = "";
   try {
     const [profileResult] = await Promise.all([
-      client.from("profiles").select("id,role,university_id,college,mcq_access_enabled,mcq_access_held_at").eq("id", context.profileId).maybeSingle(),
+      client.from("profiles").select("id,role,university_id,college,training_stage,mcq_access_enabled,mcq_access_held_at").eq("id", context.profileId).maybeSingle(),
       state.universitiesLoadedAt ? Promise.resolve(true) : loadUniversities(),
       state.universityCollegesLoadedAt ? Promise.resolve(true) : loadUniversityCollegesAdmin(),
       state.signupProgramsLoadedAt ? Promise.resolve(true) : loadSignupPrograms(),

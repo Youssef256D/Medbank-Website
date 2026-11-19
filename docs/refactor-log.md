@@ -2,6 +2,29 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-19 — Admin Stage picker for medicine graduates (`profiles.training_stage`)
+- Added `TRAINING_STAGES`, `normalizeTrainingStage`, `getTrainingStageLabel`,
+  `readProfileTrainingStageFields`, `renderAdminUserTrainingStageField`, and
+  `saveAdminUserTrainingStage` in `main.js`.
+- Admin **Users → Edit details** renders `#admin-user-edit-stage`
+  (`data-action="set-user-training-stage"`, intentionally without `data-field` so
+  it stays outside the enrollment draft) for `student` accounts with
+  `college === "medicine"`.
+- Picking a stage writes directly to `profiles.training_stage` with
+  `runWithTimeoutResult` and `beginAdminUserMutation`/`endAdminUserMutation`;
+  when the DB trigger (`trg_profiles_ab_training_stage`) moves the graduate to
+  the program's last term, `saveAdminUserTrainingStage` refreshes
+  `user_course_enrollments`, updates the local cache via `saveLocalOnly` (plus
+  `clearPendingEnrollmentScopeOverride` and `lastUserLocalWriteAt`), and syncs
+  any open enrollment draft's `academicYear`/`academicSemester` so edited
+  name/phone fields are kept without snapping the term back on Save.
+- Added `training_stage` to all full `profiles` selects,
+  `loadAdminUserUniversityIntoDialog`, `saveOwnUniversityCollege`, and
+  `overlayConcurrentAdminUserWrites`.
+- Allowlisted `20261119120000` (`er_shift`) and `20261120090000`
+  (`er_shift_graduates`) in `supabase/migration-drift-allowlist.json`.
+- Tests: `tests/admin-training-stage.test.js` and `tests/auto-mcq-access.test.js`.
+
 ### 2026-11-17 — Reported questions hidden until reviewed
 - Migration `20261117130000_hide_reported_questions`: `report_question` drafts a
   published question on report and records it in `private.question_report_holds`;

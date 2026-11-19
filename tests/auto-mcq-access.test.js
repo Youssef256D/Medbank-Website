@@ -59,6 +59,7 @@ const slice = (from, to) => {
 };
 const topLevelFunction = (name) => slice(`\nfunction ${name}(`, '\n}\n') + '\n}\n';
 const autoMcqSource = slice('// Auto MCQ access for new students. Migration', '// University administration.');
+const trainingStageSource = slice('// `profiles.training_stage`', '\nfunction isUserMcqAccessHeld(');
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 const ADMIN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -147,6 +148,7 @@ function harness({ server = fakeServer(), confirm = () => true, users = [] } = {
   });
   vm.runInContext(
     autoMcqSource
+      + trainingStageSource
       + topLevelFunction('getUniversitiesUtils')
       + topLevelFunction('readProfileUniversityFields')
       + topLevelFunction('readProfileMcqHoldFields')

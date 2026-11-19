@@ -9,6 +9,14 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-19 — Stage picker for medicine graduates in the admin
+
+- Admin **Users → Edit details** now shows a **Stage** picker for medicine
+  students (Studying, Intern year 1/2 (Imtiyaz), Junior resident, Senior
+  resident).
+- Picking a stage saves immediately, moves the student to their program's last
+  term (refreshing their subjects), and opens ER Shift in the app.
+
 ### 2026-11-17 — Reported questions are hidden at once; reports grouped by course
 
 - A question a student reports turns into a draft immediately, so no other
