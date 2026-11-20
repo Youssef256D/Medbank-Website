@@ -2,6 +2,19 @@
 
 Moved from `AGENTS.md` §7 on 2026-10-03 so it is no longer loaded into every agent session. Add new entries at the top. Before editing an area, search this file for the function, table, or file you are touching — many entries hold load-bearing "do not" warnings.
 
+### 2026-11-20 — Admin ER Shift cases page (`er_cases`)
+- `renderAdminErCasesSection` / `wireAdminErCases` and the `adminErCasesPage`
+  object in `main.js`; page id `er-cases`, super-admin only
+  (`ADMIN_SUPER_ONLY_PAGES`), sidebar group "ER Shift". Writes go straight to
+  `public.er_cases` (RLS: admins write). Same flow and rules as the app's
+  Admin → ER Shift cases.
+- `validateErCase` must stay in step with the app's `ErCaseValidator`
+  (Medbank-App `lib/features/er_shift/domain/er_case_validator.dart`), and
+  `ER_CASE_PATIENT_IMAGES` with the app's `ErArtwork` patient pictures.
+  `tests/admin-er-cases.test.js` runs it on a copy of the app's guided case.
+- The prompt's example is read live from the guided case row, so it never
+  goes stale.
+
 ### 2026-11-19 — Admin Stage picker for medicine graduates (`profiles.training_stage`)
 - Added `TRAINING_STAGES`, `normalizeTrainingStage`, `getTrainingStageLabel`,
   `readProfileTrainingStageFields`, `renderAdminUserTrainingStageField`, and

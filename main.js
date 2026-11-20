@@ -203,7 +203,7 @@ function syncNativeAppBodyClass() {
 }
 
 syncNativeAppBodyClass();
-const ADMIN_DATA_PAGES = ["dashboard", "users", "results", "universities", "organizations", "device-limit", "mcq-subjects", "questions", "question-reports", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
+const ADMIN_DATA_PAGES = ["dashboard", "users", "results", "universities", "organizations", "device-limit", "er-cases", "mcq-subjects", "questions", "question-reports", "bulk-import", "notifications", "popups", "site-access", "activity", "logs", "admin-access"];
 const ADMIN_COURSES_PLATFORM_PAGE = "video-courses";
 const ADMIN_COURSES_PLATFORM_SECTIONS = new Set(["overview", "builder", "approvals", "enrollments", "coupons", "suggestions", "announcements", "requests", "availability"]);
 const KNOWN_ADMIN_PAGES = new Set([...ADMIN_DATA_PAGES, ADMIN_COURSES_PLATFORM_PAGE]);
@@ -256,6 +256,11 @@ const ADMIN_NAV_GROUPS = [
       { section: "suggestions", label: "Suggestions" },
       { section: "availability", label: "Open / pause" },
     ],
+  },
+  {
+    id: "er-shift",
+    label: "ER Shift",
+    items: [{ page: "er-cases", label: "Cases" }],
   },
   {
     id: "messaging",
@@ -38802,7 +38807,7 @@ const ADMIN_PERMISSIONS = [
 ];
 const ADMIN_PERMISSION_IDS = ADMIN_PERMISSIONS.map((permission) => permission.id);
 // Super admins only, whatever areas an admin has.
-const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "admin-access"]);
+const ADMIN_SUPER_ONLY_PAGES = new Set(["site-access", "admin-access", "er-cases"]);
 const ADMIN_PAGE_AREAS = {
   users: "people",
   results: "people",
@@ -41513,6 +41518,10 @@ function renderAdmin() {
     pageContent = renderAdminDeviceLimitSection();
   }
 
+  if (activeAdminPage === "er-cases") {
+    pageContent = renderAdminErCasesSection();
+  }
+
   if (activeAdminPage === "logs") {
     const allLogs = getSystemLogs();
     const totalLogsCount = allLogs.length;
@@ -42546,6 +42555,7 @@ function wireAdmin() {
   wireAdminOrganizations();
   wireAdminAccess();
   wireAdminDeviceLimit();
+  wireAdminErCases();
 
   // In the phone/tablet rail, bring the current page into view. scrollLeft,
   // not scrollIntoView, so the page itself never jumps.
@@ -65168,6 +65178,609 @@ function wireAdminDeviceLimit() {
   // seconds keeps what it has.
   if (!adminDeviceLimitPage.loading && Date.now() - adminDeviceLimitPage.loadedAt > 5000) {
     loadAdminDeviceLimit();
+  }
+}
+
+// ER Shift cases page (mirrors the MedBank app's Admin → ER Shift cases).
+// ER Shift is played in the app only; this page adds and manages its cases in
+// `public.er_cases` (RLS: admins write). New cases come from the copied AI
+// prompt as JSON, are checked by validateErCase (the same rules as the app's
+// ErCaseValidator) and saved as drafts; turning the switch on shows a case
+// to players at once, no app update. Every case must test doctor skills too:
+// two or more steps with a `skill` (communication, consent, teamwork, safety,
+// ethics, priorities, documentation), never critical. Format:
+// Medbank-App docs/er-shift-case-format.md. Like the device-limit page, the
+// data is re-read from Supabase and painted into the section body.
+const ER_TUTORIAL_CASE_ID = "tutorial-anterior-stemi";
+const ER_CASE_LEVELS = ["easy", "medium", "hard"];
+const ER_CASE_REGIONS = ["general", "heart", "lungs", "abdomen", "legs", "neuro", "skin"];
+const ER_CASE_LEADS = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"];
+const ER_CASE_RHYTHMS = ["sinus", "af", "chb"];
+const ER_CASE_STEP_KINDS = ["critical", "must", "acceptable", "trap"];
+const ER_CASE_SKILLS = ["communication", "consent", "teamwork", "safety", "ethics", "priorities", "documentation"];
+const ER_CASE_SKILL_LABELS = {
+  communication: "Communication",
+  consent: "Consent & capacity",
+  teamwork: "Teamwork & handover",
+  safety: "Patient safety",
+  ethics: "Ethics & law",
+  priorities: "Priorities",
+  documentation: "Documentation",
+};
+const ER_CASE_DECOY_TESTS = ["cbc", "ue", "cxr", "ddimer", "ct_head", "glucose"];
+const ER_CASE_DUPLICATE_TEST_IDS = ["rbs", "bg", "bgl", "fingerstick", "capillary_glucose", "chest_xray", "chest_x_ray", "xray_chest", "ct_brain", "brain_ct", "head_ct", "d_dimer", "electrolytes", "kft", "bmp", "chem7", "renal_panel", "full_blood_count", "fbc"];
+// The patient pictures the app ships (ErArtwork in the app). A newer app
+// picture must be added here too.
+const ER_CASE_PATIENT_IMAGES = ["patient_belly_pain", "patient_breathless", "patient_chest_pain", "patient_farmer", "patient_feverish", "patient_generic", "patient_headache", "patient_injured_worker", "patient_old_man", "patient_old_woman", "patient_pregnant", "patient_teen_boy", "patient_young_man", "patient_young_woman"];
+
+const adminErCasesPage = {
+  cases: null,
+  error: "",
+  loading: false,
+  loadedAt: 0,
+  busyId: "",
+  importOpen: false,
+  importText: "",
+  importChecked: null,
+  importError: "",
+  saving: false,
+};
+
+// Reads pasted text: one case, a list, or {"cases": [...]}, with or without
+// a ```json fence. Throws an Error with a readable message.
+function parseErCasesJson(raw) {
+  const text = String(raw || "").trim().replace(/^```(json)?\s*/, "").replace(/\s*```$/, "");
+  let decoded;
+  try {
+    decoded = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Not valid JSON: ${error.message}`);
+  }
+  const list = Array.isArray(decoded)
+    ? decoded
+    : decoded && Array.isArray(decoded.cases)
+      ? decoded.cases
+      : decoded && typeof decoded === "object"
+        ? [decoded]
+        : null;
+  if (!list) {
+    throw new Error("Expected a case or a list of cases.");
+  }
+  if (list.some((c) => !c || typeof c !== "object" || Array.isArray(c))) {
+    throw new Error("Every case must be a JSON object.");
+  }
+  return list;
+}
+
+// Everything wrong with a case; empty when it can be saved. Same rules as
+// the app's ErCaseValidator.problems.
+function validateErCase(c) {
+  const out = [];
+  const need = (ok, message) => {
+    if (!ok) {
+      out.push(message);
+    }
+  };
+  const isArabic = (v) => typeof v === "string" && /[؀-ۿ]/.test(v);
+  const str = (v) => (typeof v === "string" ? v.trim() : "");
+  const maps = (v) => (Array.isArray(v) ? v.filter((e) => e && typeof e === "object" && !Array.isArray(e)) : []);
+  const strings = (v) => (Array.isArray(v) ? v.filter((e) => typeof e === "string") : []);
+  const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+  const unique = (ids) => new Set(ids).size === ids.length;
+  const asMap = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+
+  const id = str(c.id);
+  need(/^[a-z0-9-]{3,80}$/.test(id), "id: lowercase letters, digits and -, 3–80");
+  need(c.tutorial !== true, "tutorial: only the built-in guided case");
+  need(id !== ER_TUTORIAL_CASE_ID, "id: the guided case is built into the app");
+
+  const title = str(c.title);
+  need(title.length >= 3 && title.length <= 64, "title: 3–64 characters");
+  need(title.split(/\s+/).every((w) => w.length <= 24), "title: a word longer than 24 letters will not fit a phone");
+  need(ER_CASE_LEVELS.includes(c.level), "level: easy, medium or hard");
+  need(["day", "night"].includes(c.shift ?? "day"), "shift: day or night");
+
+  const patient = asMap(c.patient);
+  need(isArabic(patient.name), "patient.name: in Arabic");
+  need(isNum(patient.age) && patient.age >= 1 && patient.age <= 100, "patient.age: 1–100");
+  need(["M", "F"].includes(patient.sex), "patient.sex: M or F");
+  need(ER_CASE_PATIENT_IMAGES.includes(patient.image), `patient.image: one of ${ER_CASE_PATIENT_IMAGES.join(", ")}`);
+  need(isArabic(patient.hook), "patient.hook: in Arabic");
+  need(isArabic(c.complaint), "complaint: in Arabic");
+  need(isArabic(c.arrival), "arrival: in Arabic");
+
+  const vitals = asMap(c.vitals);
+  need(["hr", "sbp", "dbp", "rr", "spo2"].every((k) => isNum(vitals[k])), "vitals: hr, sbp, dbp, rr and spo2 as numbers");
+
+  const history = maps(c.history);
+  need(history.length >= 4, "history: at least 4 questions");
+  need(unique(history.map((q) => q.id)), "history: every id must be different");
+  need(history.every((q) => isArabic(q.q) && isArabic(q.a)), "history: every q and a in Arabic");
+  need(history.filter((q) => q.key === true).length >= 2, 'history: at least 2 with "key": true');
+
+  const exam = maps(c.exam);
+  need(exam.length >= 3, "exam: at least 3 items");
+  need(unique(exam.map((e) => e.id)), "exam: every id must be different");
+  exam.forEach((e) => {
+    need(ER_CASE_REGIONS.includes(e.region), `exam ${e.id}: region one of ${ER_CASE_REGIONS.join(", ")}`);
+    need(str(e.label) && str(e.finding), `exam ${e.id}: label and finding`);
+  });
+  need(exam.some((e) => e.key === true), 'exam: at least 1 with "key": true');
+
+  const tests = asMap(c.tests);
+  let hasEcg = false;
+  Object.entries(tests).forEach(([key, value]) => {
+    const t = asMap(value);
+    need(!ER_CASE_DUPLICATE_TEST_IDS.includes(key), `tests.${key}: use the built-in id (cbc, ue, cxr, ddimer, ct_head, glucose) instead`);
+    need(str(t.name) && str(t.result) && isNum(t.minutes) && t.minutes >= 1, `tests.${key}: name, result and minutes (1 or more)`);
+    if (t.ecg && typeof t.ecg === "object") {
+      hasEcg = true;
+      const ecg = t.ecg;
+      const rate = ecg.rate ?? 75;
+      need(isNum(rate) && rate >= 20 && rate <= 250, "ECG rate: 20–250");
+      need(ER_CASE_RHYTHMS.includes(ecg.rhythm ?? "sinus"), `ECG rhythm: ${ER_CASE_RHYTHMS.join(", ")}`);
+      need(ecg.stMm == null || Object.keys(asMap(ecg.stMm)).every((l) => ER_CASE_LEADS.includes(l)), `ECG stMm: lead names only (${ER_CASE_LEADS.join(", ")})`);
+      ["tInverted", "qWaves"].forEach((k) => need(strings(ecg[k]).every((l) => ER_CASE_LEADS.includes(l)), `ECG ${k}: lead names only`));
+    }
+  });
+
+  if (c.ecgTask && typeof c.ecgTask === "object") {
+    const task = c.ecgTask;
+    need(asMap(tests[task.testId]).ecg && typeof tests[task.testId].ecg === "object", 'ecgTask.testId: a test in "tests" with an "ecg"');
+    const taskLeads = strings(task.leads);
+    need(taskLeads.length >= 1 && taskLeads.length <= 6 && taskLeads.every((l) => ER_CASE_LEADS.includes(l)), "ecgTask.leads: 1–6 lead names");
+    need(strings(task.meaningOptions).includes(task.meaning), "ecgTask.meaning: must be one of meaningOptions");
+  }
+  if (hasEcg) {
+    need(str(c.ecgGuide).length >= 20, "ecgGuide: explain the ECG");
+  }
+
+  const dxOptions = strings(c.diagnosisOptions);
+  need(dxOptions.length >= 3 && dxOptions.includes(c.diagnosis), "diagnosis: must be one of diagnosisOptions (3 or more)");
+  const dispoOptions = strings(c.dispositionOptions);
+  need(dispoOptions.length >= 2 && dispoOptions.includes(c.disposition), "disposition: must be one of dispositionOptions (2 or more)");
+
+  const steps = maps(c.steps);
+  const stepIds = new Set(steps.map((s) => s.id));
+  need(stepIds.size === steps.length, "steps: every id must be different");
+  const kinds = {};
+  const skillKinds = [];
+  steps.forEach((s) => {
+    need(ER_CASE_STEP_KINDS.includes(s.kind), `step ${s.id}: kind one of ${ER_CASE_STEP_KINDS.join(", ")}`);
+    kinds[s.kind] = (kinds[s.kind] || 0) + 1;
+    if (s.skill != null && s.skill !== "clinical") {
+      need(ER_CASE_SKILLS.includes(s.skill), `step ${s.id}: skill one of ${ER_CASE_SKILLS.join(", ")}`);
+      need(s.kind !== "critical", `step ${s.id}: a skill step is must, acceptable or trap, never critical`);
+      skillKinds.push(s.kind);
+    }
+    need(str(s.label), `step ${s.id}: label`);
+    need(str(s.why).length >= 20, `step ${s.id}: a "why" to teach`);
+    (Array.isArray(s.needs) ? s.needs : []).forEach((alt) => {
+      (Array.isArray(alt) ? alt : []).forEach((req) => {
+        need(Object.prototype.hasOwnProperty.call(tests, req) || ER_CASE_DECOY_TESTS.includes(req), `step ${s.id}: needs unknown test ${req}`);
+      });
+    });
+    if (s.dose && typeof s.dose === "object") {
+      const options = strings(s.dose.options);
+      need(options.length >= 2 && options.includes(s.dose.correct), `step ${s.id}: dose.correct must be one of dose.options`);
+    }
+  });
+  need((kinds.critical || 0) >= 1, "steps: at least 1 critical");
+  need((kinds.must || 0) >= 1, "steps: at least 1 must");
+  need((kinds.trap || 0) >= 1, "steps: at least 1 trap");
+  need(skillKinds.length >= 2 && skillKinds.includes("must"), 'steps: at least 2 doctor-skill steps (a "skill" other than clinical), one of them must');
+
+  maps(c.timeTargets).forEach((t) => {
+    const action = str(t.action);
+    const [kind, target, ...rest] = action.split(":");
+    const ok = rest.length === 0 && target !== undefined && (
+      (kind === "test" && (Object.prototype.hasOwnProperty.call(tests, target) || ER_CASE_DECOY_TESTS.includes(target)))
+      || (kind === "step" && stepIds.has(target))
+    );
+    need(ok, `timeTargets: "${action}" must be test:<id> or step:<id>`);
+    need(isNum(t.maxMinutes), `timeTargets "${action}": maxMinutes`);
+  });
+  maps(c.deterioration).forEach((d) => {
+    need(stepIds.has(d.unlessStep), "deterioration: unlessStep must be a step id");
+    need(isNum(d.byMinute), "deterioration: byMinute");
+    if (d.arrest === true) {
+      const rescue = steps.find((s) => s.id === d.rescueStep);
+      need(rescue && rescue.kind === "must", 'deterioration: an arrest needs a rescueStep of kind "must"');
+    }
+  });
+
+  const outcomes = asMap(c.outcomes);
+  ["best", "delay", "missed", "trap", "death"].forEach((k) => need(isArabic(outcomes[k]), `outcomes.${k}: in Arabic`));
+  need(str(c.teaching).length >= 20, "teaching: the take-home message");
+  need(str(c.source).length >= 5, "source: the guideline it follows");
+  return out;
+}
+
+function buildErCasePrompt(example) {
+  return `You write emergency-medicine cases for "ER Shift", a game for young doctors in Egypt (interns and residents). Write NEW cases on the topics I give you below, in EXACTLY the JSON format of the example at the end.
+
+Answer with ONE JSON array of case objects and nothing else: no comments, no markdown, no text before or after.
+
+Rules for every case:
+- id: unique, lowercase English words joined by "-", e.g. "acute-asthma-exacerbation".
+- title: short English title, 3 to 64 characters, no word longer than 24 letters.
+- level: "easy", "medium" or "hard". shift: "day" or "night".
+- Do not set "tutorial".
+- Language: everything the patient or family SAYS is Egyptian Arabic (patient.name, patient.hook, complaint, arrival, every history "q" and "a", and all five outcomes). Exam findings, tests, drugs, steps, diagnoses, "why", "teaching", "ecgGuide" and "source" are in English.
+- patient: Egyptian name in Arabic, age, sex "M" or "F", weightKg, hook (one line about who they are), and image = the picture that fits best, one of: ${ER_CASE_PATIENT_IMAGES.join(", ")}.
+- vitals: hr, sbp, dbp, rr, spo2, tempC as numbers.
+- history: 6 to 9 questions with unique ids; at least 3 have "key": true (the ones a good doctor must ask).
+- exam: 5 to 7 items with unique ids; region is one of: ${ER_CASE_REGIONS.join(", ")}; at least 2 have "key": true.
+- tests: an object of the case's own tests ({name, minutes, result}, plus "necessary": false for tests that do not help). The game already adds these decoy tests by itself; do NOT redefine them under another id, but you may use their ids in "needs" and "timeTargets": ${ER_CASE_DECOY_TESTS.join(", ")}.
+- An ECG test carries "ecg": {rate, rhythm (${ER_CASE_RHYTHMS.join(", ")}), stMm: {lead: millimetres, + is elevation, - is depression}, tInverted: [leads], qWaves: [leads]}. Leads are: ${ER_CASE_LEADS.join(", ")}. A case with an ECG also has "ecgTask" (the test id, a prompt, the 1 to 6 leads to tap, meaningOptions and the correct meaning) and an "ecgGuide".
+- diagnosisOptions: at least 4, and "diagnosis" is exactly one of them. dispositionOptions: at least 3, and "disposition" is exactly one of them.
+- steps: the treatment choices, unique ids. kind is "critical" (must be done, early), "must", "acceptable" (fine either way) or "trap" (harmful; explain why in "why"). Have at least 1 critical, 2 must, 2 trap steps, and at least 2 steps with a "dose": {options: [...], correct: one of them}. Every step has a drugClass and a teaching "why" of at least 20 characters. "phase" (1, 2, ...) orders steps; "needs": [["testId"]] means the step waits for that test's result.
+- Doctor skills: a case also tests what a doctor needs besides medicine. Add 2 or 3 steps with "skill" set to one of: ${ER_CASE_SKILLS.join(", ")} (every other step is medicine and has no "skill"). At least one is "must" (what a good doctor does: explain in plain words, get consent from the right person, call a senior with SBAR, double-check a high-risk drug, report a medico-legal case, put the sickest patient first, write the times down) and ideally one is a "trap" (a believable mistake: breaking confidentiality, a relative signing for an adult with capacity, false reassurance, an unlabelled sample, skipping gloves). A skill step is never "critical"; its drugClass names the skill (e.g. "Consent & capacity") and its "why" teaches it. Pick the skills that fit the story, and vary them between cases. Graded skill steps go in the case's last phase so they never delay the emergency treatment.
+- timeTargets: [{label, action: "test:<id>" or "step:<id>", maxMinutes}].
+- deterioration: [{unlessStep, byMinute, event, and optionally "arrest": true with a rescueStep whose kind is "must"}].
+- outcomes: best, delay, missed, trap, death — one or two sentences each, in Egyptian Arabic.
+- teaching: the take-home message. source: the guideline it follows (e.g. "ESC 2023", "NICE", "AHA 2020").
+- Medicine must be correct and follow current guidelines. Doses must be real adult doses.
+
+Topics: [WRITE THE TOPICS HERE, e.g. "3 cases: hypertensive emergency (medium), heat stroke (easy), GBS (hard)"]
+
+Example case (follow this format exactly):
+${example}
+`;
+}
+
+function countErCaseSkills(body) {
+  const steps = Array.isArray(body?.steps) ? body.steps : [];
+  return [...new Set(steps.map((s) => s?.skill).filter((s) => s && s !== "clinical"))];
+}
+
+function renderAdminErCasesSection() {
+  const page = adminErCasesPage;
+  const header = renderAdminPageHeader({
+    id: "er-cases",
+    title: "ER Shift cases",
+    count: Array.isArray(page.cases) ? page.cases.length : null,
+    actions: `
+      <button class="btn ghost admin-btn-sm" type="button" data-action="er-cases-copy-prompt">Copy the AI prompt</button>
+      <button class="btn primary admin-btn-sm" type="button" data-action="er-cases-add">Add cases</button>
+    `,
+    notes: [
+      "ER Shift is played in the app. Cases added here reach players without an app update.",
+      "To add cases: copy the AI prompt, paste it into ChatGPT, Gemini or Claude with your topics, then paste the JSON answer under Add cases, check it and save.",
+      "Every case tests doctor skills besides medicine (communication, consent, teamwork, safety, ethics, priorities, documentation). A case without at least two skill steps is refused.",
+      "New cases are drafts. Turn a case's switch on to show it to players. A case with the same id is replaced and keeps its switch.",
+      "Deleting a case also deletes every player's tries at it.",
+    ],
+  });
+  return `
+    <section class="card admin-section" id="admin-er-cases-section">
+      ${header}
+      <div class="admin-er-cases-body" data-er-cases-body aria-live="polite">
+        ${renderAdminErCasesBody()}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminErCasesImport() {
+  const page = adminErCasesPage;
+  if (!page.importOpen) {
+    return "";
+  }
+  const checked = page.importChecked;
+  const existing = new Set((page.cases || []).map((c) => c.id));
+  const allGood = Array.isArray(checked) && checked.length > 0 && checked.every((c) => c.problems.length === 0);
+  const results = Array.isArray(checked)
+    ? `<ul class="admin-er-cases-check">${checked.map((c) => `
+        <li class="admin-er-cases-check-row${c.problems.length ? " has-problems" : ""}">
+          <p class="admin-er-cases-check-title">${c.problems.length ? "✗" : "✓"} ${escapeHtml(String(c.body.title || c.body.id || "?"))}
+            ${existing.has(c.body.id) ? '<span class="admin-device-limit-pill is-off">Replaces the saved case</span>' : ""}
+          </p>
+          ${c.problems.length ? `<ul class="admin-er-cases-problems">${c.problems.map((p) => `<li>${escapeHtml(p)}</li>`).join("")}</ul>` : ""}
+        </li>`).join("")}</ul>`
+    : "";
+  return `
+    <section class="admin-device-limit-card admin-er-cases-import">
+      <h4 class="admin-settings-section-title">Add cases</h4>
+      <textarea class="admin-er-cases-json" data-er-cases-json rows="10" spellcheck="false" placeholder="Paste the JSON the AI wrote (one case or a list)">${escapeHtml(page.importText)}</textarea>
+      <div class="admin-er-cases-import-actions">
+        <label class="btn ghost admin-btn-sm admin-er-cases-file">Upload a .json file
+          <input type="file" accept=".json,.txt,application/json,text/plain" data-er-cases-file hidden>
+        </label>
+        <button class="btn ghost admin-btn-sm" type="button" data-action="er-cases-check">Check</button>
+        <button class="btn primary admin-btn-sm" type="button" data-action="er-cases-save" ${allGood && !page.saving ? "" : "disabled"}>${page.saving ? "Saving..." : `Save ${Array.isArray(checked) ? checked.length : 0} as drafts`}</button>
+        <button class="btn ghost admin-btn-sm" type="button" data-action="er-cases-close">Close</button>
+      </div>
+      ${page.importError ? `<p class="admin-er-cases-error">${escapeHtml(page.importError)}</p>` : ""}
+      ${results}
+    </section>
+  `;
+}
+
+function renderAdminErCasesBody() {
+  const page = adminErCasesPage;
+  if (page.error && !page.cases) {
+    return `
+      <p class="subtle">${escapeHtml(page.error)}</p>
+      <div><button class="btn ghost admin-btn-sm" type="button" data-action="er-cases-retry">Try again</button></div>
+    `;
+  }
+  if (!page.cases) {
+    return `<p class="subtle">Loading...</p>`;
+  }
+  const rows = page.cases.map((c) => {
+    const busy = page.busyId === c.id ? "disabled" : "";
+    const skills = countErCaseSkills(c.body);
+    const tags = [
+      `<span class="admin-device-limit-pill">${escapeHtml(c.level)}</span>`,
+      c.id === ER_TUTORIAL_CASE_ID ? '<span class="admin-device-limit-pill">Guided case</span>' : "",
+      c.challenge_on ? `<span class="admin-device-limit-pill">Challenge ${escapeHtml(c.challenge_on)}</span>` : "",
+      skills.length
+        ? `<span class="admin-er-cases-skills" title="${escapeHtml(skills.map((s) => ER_CASE_SKILL_LABELS[s] || s).join(", "))}">${skills.length} doctor skill${skills.length === 1 ? "" : "s"}</span>`
+        : '<span class="admin-device-limit-pill is-off">No doctor skills</span>',
+    ].join(" ");
+    return `
+      <li class="admin-er-cases-row" data-er-case-id="${escapeHtml(c.id)}">
+        <div class="admin-er-cases-row-text">
+          <p class="admin-er-cases-row-title">${escapeHtml(c.title)}</p>
+          <p class="subtle admin-er-cases-row-meta">${escapeHtml(c.id)} · #${escapeHtml(String(c.sort_order))} ${tags}</p>
+        </div>
+        <div class="admin-er-cases-row-actions">
+          <button class="btn ghost admin-btn-sm" type="button" data-action="er-cases-copy-json" ${busy}>Copy JSON</button>
+          ${c.id === ER_TUTORIAL_CASE_ID ? "" : `<button class="btn ghost admin-btn-sm admin-er-cases-delete" type="button" data-action="er-cases-delete" ${busy}>Delete</button>`}
+          <label class="toggle-switch-label" title="${c.is_published ? "Shown to players" : "Draft"}">
+            <input type="checkbox" class="toggle-switch-input" data-er-case-published aria-label="Show ${escapeHtml(c.title)} to players" ${c.is_published ? "checked" : ""} ${busy}>
+            <span class="toggle-switch-track" aria-hidden="true"><span class="toggle-switch-thumb"></span></span>
+          </label>
+        </div>
+      </li>
+    `;
+  }).join("");
+  return `
+    ${renderAdminErCasesImport()}
+    ${page.cases.length ? `<ul class="admin-er-cases-list">${rows}</ul>` : '<p class="subtle">No cases yet.</p>'}
+  `;
+}
+
+function paintAdminErCases() {
+  const body = appEl.querySelector("[data-er-cases-body]");
+  if (!body) {
+    return;
+  }
+  body.innerHTML = renderAdminErCasesBody();
+  bindAdminErCasesBody(body);
+  const count = appEl.querySelector("#admin-er-cases-section .admin-page-header-count");
+  if (count && Array.isArray(adminErCasesPage.cases)) {
+    count.textContent = `· ${adminErCasesPage.cases.length}`;
+  }
+}
+
+async function loadAdminErCases() {
+  const page = adminErCasesPage;
+  const client = getSupabaseAuthClient();
+  if (page.loading) {
+    return;
+  }
+  if (!client) {
+    page.error = "Supabase is not connected.";
+    paintAdminErCases();
+    return;
+  }
+  page.loading = true;
+  try {
+    const { data, error } = await client
+      .from("er_cases")
+      .select("id, title, level, is_published, sort_order, challenge_on, updated_at, body")
+      .order("sort_order")
+      .order("id");
+    if (error) {
+      throw error;
+    }
+    page.cases = data || [];
+    page.error = "";
+    page.loadedAt = Date.now();
+  } catch (error) {
+    page.error = error?.message || "Could not load the ER Shift cases.";
+  } finally {
+    page.loading = false;
+  }
+  paintAdminErCases();
+}
+
+async function runAdminErCaseWrite(id, write, doneMessage) {
+  const page = adminErCasesPage;
+  const client = getSupabaseAuthClient();
+  if (!client || page.busyId) {
+    return;
+  }
+  page.busyId = id;
+  paintAdminErCases();
+  let message = doneMessage;
+  try {
+    const { error } = await write(client);
+    if (error) {
+      message = error.message || "Could not save the change.";
+    }
+  } catch (error) {
+    message = error?.message || "Could not save the change.";
+  }
+  page.busyId = "";
+  toast(message);
+  await loadAdminErCases();
+}
+
+function checkAdminErCasesImport() {
+  const page = adminErCasesPage;
+  try {
+    const cases = parseErCasesJson(page.importText);
+    const seen = new Set();
+    page.importChecked = cases.map((body) => {
+      const problems = validateErCase(body);
+      if (seen.has(body.id)) {
+        problems.push("id: twice in this file");
+      }
+      seen.add(body.id);
+      return { body, problems };
+    });
+    page.importError = page.importChecked.some((c) => c.problems.length)
+      ? "Fix the cases with problems (or ask the AI to), then check again."
+      : "";
+  } catch (error) {
+    page.importChecked = null;
+    page.importError = error.message;
+  }
+  paintAdminErCases();
+}
+
+// New ids are inserted as drafts at the end; an existing id is replaced and
+// keeps whether it was published (the app's ErAdminRepository.saveCases).
+async function saveAdminErCasesImport() {
+  const page = adminErCasesPage;
+  const client = getSupabaseAuthClient();
+  const checked = page.importChecked;
+  if (!client || page.saving || !Array.isArray(checked) || !checked.length || checked.some((c) => c.problems.length)) {
+    return;
+  }
+  page.saving = true;
+  paintAdminErCases();
+  const existing = new Set((page.cases || []).map((c) => c.id));
+  let order = Math.max(0, ...(page.cases || []).map((c) => Number(c.sort_order) || 0)) + 1;
+  try {
+    const fresh = [];
+    const replaced = [];
+    checked.forEach(({ body: raw }) => {
+      const body = { ...raw };
+      const sort = Number.isFinite(body.sortOrder) ? body.sortOrder : null;
+      delete body.sortOrder;
+      const row = { id: body.id, title: String(body.title).trim(), level: body.level, body };
+      if (existing.has(body.id)) {
+        replaced.push(sort === null ? row : { ...row, sort_order: sort });
+      } else {
+        fresh.push({ ...row, is_published: false, sort_order: sort ?? order });
+        if (sort === null) {
+          order += 1;
+        }
+      }
+    });
+    if (fresh.length) {
+      const { error } = await client.from("er_cases").insert(fresh);
+      if (error) {
+        throw error;
+      }
+    }
+    for (const row of replaced) {
+      const { error } = await client.from("er_cases").update(row).eq("id", row.id);
+      if (error) {
+        throw error;
+      }
+    }
+    toast(`${checked.length} case${checked.length === 1 ? "" : "s"} saved. New ones are drafts until you switch them on.`);
+    page.importOpen = false;
+    page.importText = "";
+    page.importChecked = null;
+    page.importError = "";
+  } catch (error) {
+    page.importError = error?.message || "Could not save the cases.";
+  } finally {
+    page.saving = false;
+  }
+  await loadAdminErCases();
+}
+
+async function copyAdminErCasePrompt() {
+  const client = getSupabaseAuthClient();
+  let example = "";
+  try {
+    const { data } = await client.from("er_cases").select("body").eq("id", ER_TUTORIAL_CASE_ID).maybeSingle();
+    if (data?.body) {
+      example = JSON.stringify(data.body, null, 2);
+    }
+  } catch {
+    example = "";
+  }
+  const ok = await copyTextToClipboard(buildErCasePrompt(example));
+  toast(ok ? "Prompt copied. Paste it into ChatGPT, Gemini or Claude and write your topics." : "Could not copy the prompt.");
+}
+
+function bindAdminErCasesBody(body) {
+  const page = adminErCasesPage;
+  body.querySelector("[data-action='er-cases-retry']")?.addEventListener("click", () => loadAdminErCases());
+  const json = body.querySelector("[data-er-cases-json]");
+  json?.addEventListener("input", (event) => {
+    page.importText = event.currentTarget.value;
+    if (page.importChecked || page.importError) {
+      page.importChecked = null;
+      page.importError = "";
+      const save = body.querySelector("[data-action='er-cases-save']");
+      if (save) {
+        save.disabled = true;
+        save.textContent = "Save 0 as drafts";
+      }
+      body.querySelector(".admin-er-cases-check")?.remove();
+      body.querySelector(".admin-er-cases-error")?.remove();
+    }
+  });
+  body.querySelector("[data-er-cases-file]")?.addEventListener("change", async (event) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) {
+      return;
+    }
+    try {
+      page.importText = (await file.text()).replace(/^\uFEFF/, "");
+      checkAdminErCasesImport();
+    } catch (error) {
+      page.importError = error?.message || "Could not read the file.";
+      paintAdminErCases();
+    }
+  });
+  body.querySelector("[data-action='er-cases-check']")?.addEventListener("click", () => checkAdminErCasesImport());
+  body.querySelector("[data-action='er-cases-save']")?.addEventListener("click", () => saveAdminErCasesImport());
+  body.querySelector("[data-action='er-cases-close']")?.addEventListener("click", () => {
+    page.importOpen = false;
+    paintAdminErCases();
+  });
+  body.querySelectorAll("[data-er-case-id]").forEach((row) => {
+    const id = row.getAttribute("data-er-case-id");
+    const entry = (page.cases || []).find((c) => c.id === id);
+    if (!entry) {
+      return;
+    }
+    row.querySelector("[data-er-case-published]")?.addEventListener("change", (event) => {
+      const published = event.currentTarget.checked;
+      runAdminErCaseWrite(
+        id,
+        (client) => client.from("er_cases").update({ is_published: published }).eq("id", id),
+        published ? `"${entry.title}" is now shown to players.` : `"${entry.title}" is now a draft.`
+      );
+    });
+    row.querySelector("[data-action='er-cases-copy-json']")?.addEventListener("click", async () => {
+      const ok = await copyTextToClipboard(JSON.stringify({ ...entry.body, sortOrder: entry.sort_order }, null, 2));
+      toast(ok ? "Case JSON copied. Edit it and paste it back under Add cases to replace the case." : "Could not copy the case.");
+    });
+    row.querySelector("[data-action='er-cases-delete']")?.addEventListener("click", () => {
+      if (!window.confirm(`Delete "${entry.title}"?\n\nThis also deletes every player's tries at it. It cannot be undone.`)) {
+        return;
+      }
+      runAdminErCaseWrite(id, (client) => client.from("er_cases").delete().eq("id", id), `"${entry.title}" deleted.`);
+    });
+  });
+}
+
+function wireAdminErCases() {
+  const section = appEl.querySelector("#admin-er-cases-section");
+  const body = appEl.querySelector("[data-er-cases-body]");
+  if (!section || !body) {
+    return;
+  }
+  section.querySelector("[data-action='er-cases-copy-prompt']")?.addEventListener("click", () => copyAdminErCasePrompt());
+  section.querySelector("[data-action='er-cases-add']")?.addEventListener("click", () => {
+    adminErCasesPage.importOpen = true;
+    paintAdminErCases();
+    appEl.querySelector("[data-er-cases-json]")?.focus();
+  });
+  bindAdminErCasesBody(body);
+  if (!adminErCasesPage.loading && Date.now() - adminErCasesPage.loadedAt > 5000) {
+    loadAdminErCases();
   }
 }
 

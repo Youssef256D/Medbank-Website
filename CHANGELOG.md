@@ -9,6 +9,13 @@ hosted Supabase is the source of truth.
 
 ## [Unreleased]
 
+### 2026-11-20 — Admin → ER Shift → Cases
+- New super-admin page `#/admin/er-cases` to add and manage the app's ER Shift
+  cases: copy the AI prompt, paste or upload the JSON, check it, save as
+  drafts, switch a case on for players, copy a case's JSON, delete.
+- Every case must also test doctor skills (communication, consent, teamwork,
+  safety, ethics, priorities, documentation): at least two skill steps.
+
 ### 2026-11-19 — Stage picker for medicine graduates in the admin
 
 - Admin **Users → Edit details** now shows a **Stage** picker for medicine

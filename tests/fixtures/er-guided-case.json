@@ -1,0 +1,191 @@
+{
+  "id": "tutorial-anterior-stemi",
+  "title": "Chest pain at the microbus stand",
+  "level": "easy",
+  "shift": "day",
+  "tutorial": true,
+  "patient": {
+    "name": "عم سيد",
+    "age": 56,
+    "sex": "M",
+    "weightKg": 88,
+    "image": "patient_chest_pain",
+    "hook": "سواق ميكروباص، بيشرب سجاير من وهو عنده ١٥ سنة"
+  },
+  "vitals": { "hr": 96, "sbp": 142, "dbp": 88, "rr": 20, "spo2": 97, "tempC": 36.9 },
+  "complaint": "صدري تقيل أوي، كأن فيه طوبة عليه، من ساعة",
+  "arrival": "زمايله في الموقف جابوه على الطوارئ بالعربية",
+  "history": [
+    { "id": "onset", "q": "الوجع بدأ إمتى وإنت بتعمل إيه؟", "a": "من حوالي ساعة، وأنا بنزّل الركاب. ماوقفش من ساعتها", "key": true },
+    { "id": "radiation", "q": "الوجع بيروح فين؟", "a": "بيمسك في دراعي الشمال وفكّي", "key": true },
+    { "id": "sweat", "q": "عرقت أو رجّعت؟", "a": "عرقت جامد، وحاسس إني عايز أرجّع", "key": true },
+    { "id": "risk", "q": "عندك سكر أو ضغط؟", "a": "الضغط عالي، والسكر بقالي سنتين ومش منتظم على العلاج", "key": true },
+    { "id": "before", "q": "حصلك كده قبل كده؟", "a": "لأ، أول مرة" },
+    { "id": "meds", "q": "بتاخد أدوية إيه؟", "a": "حباية ضغط وحباية سكر، ساعات بنساهم" },
+    { "id": "allergy", "q": "عندك حساسية من أي دوا؟", "a": "لأ، على حد علمي" },
+    { "id": "food", "q": "أكلت إيه النهارده؟", "a": "فول وطعمية الصبح، زي كل يوم" }
+  ],
+  "exam": [
+    { "id": "look", "region": "general", "label": "General look", "finding": "Anxious, sweaty, pale, clutching his chest", "key": true },
+    { "id": "pulse", "region": "general", "label": "Radial pulses", "finding": "Equal on both sides, regular", "key": true },
+    { "id": "heart", "region": "heart", "label": "Heart sounds", "finding": "S1 and S2 normal, no murmur, no rub" },
+    { "id": "lungs", "region": "lungs", "label": "Lung bases", "finding": "Clear, no crackles" },
+    { "id": "abdomen", "region": "abdomen", "label": "Abdomen", "finding": "Soft, not tender" },
+    { "id": "legs", "region": "legs", "label": "Legs", "finding": "No swelling, calves soft" }
+  ],
+  "tests": {
+    "ecg": {
+      "name": "12-lead ECG",
+      "minutes": 5,
+      "result": "Sinus rhythm 96/min",
+      "ecg": {
+        "rate": 96,
+        "stMm": { "V1": 2, "V2": 4, "V3": 4, "V4": 3, "II": -1, "III": -1.5, "aVF": -1 },
+        "qWaves": []
+      }
+    },
+    "trop": {
+      "name": "hs-Troponin T",
+      "minutes": 60,
+      "result": "0h: 31 ng/L",
+      "necessary": false
+    }
+  },
+  "ecgTask": {
+    "testId": "ecg",
+    "prompt": "Tap the leads with ST elevation",
+    "leads": ["V1", "V2", "V3", "V4"],
+    "meaningOptions": ["Anterior STEMI", "Inferior STEMI", "Pericarditis", "Normal ECG"],
+    "meaning": "Anterior STEMI"
+  },
+  "diagnosisOptions": ["Anterior STEMI", "NSTEMI", "Acute pericarditis", "Aortic dissection", "GERD"],
+  "diagnosis": "Anterior STEMI",
+  "steps": [
+    {
+      "id": "aspirin",
+      "label": "Aspirin loading dose",
+      "kind": "critical",
+      "phase": 1,
+      "drugClass": "Antiplatelet · COX-1 inhibitor",
+      "why": "Irreversibly inhibits platelet COX-1/thromboxane A2 to halt thrombus propagation; give non-enteric chewed aspirin immediately in every suspected ACS.",
+      "dose": { "options": ["75 mg", "150–300 mg chewed", "1 g"], "correct": "150–300 mg chewed" }
+    },
+    {
+      "id": "cath",
+      "label": "Call the cath lab for primary PCI",
+      "kind": "critical",
+      "phase": 1,
+      "needs": [["ecg"]],
+      "drugClass": "Reperfusion · Primary PCI",
+      "why": "ST elevation in V1–V4 is an anterior STEMI: mechanical reperfusion via primary PCI within 120 min of diagnosis saves myocardium and lowers mortality."
+    },
+    {
+      "id": "p2y12",
+      "label": "P2Y12 loading",
+      "kind": "must",
+      "phase": 2,
+      "drugClass": "Antiplatelet · P2Y12 receptor inhibitor",
+      "why": "Potent dual antiplatelet therapy with aspirin prevents acute stent thrombosis and reinfarction; ticagrelor 180 mg load acts rapidly.",
+      "dose": { "options": ["Ticagrelor 90 mg", "Ticagrelor 180 mg", "Clopidogrel 75 mg"], "correct": "Ticagrelor 180 mg" }
+    },
+    {
+      "id": "heparin",
+      "label": "Unfractionated heparin at PCI",
+      "kind": "must",
+      "phase": 2,
+      "drugClass": "Anticoagulant · Indirect thrombin inhibitor",
+      "why": "Parenteral anticoagulation (70–100 U/kg IV bolus without GP IIb/IIIa) prevents catheter-related thrombosis during primary PCI.",
+      "dose": { "options": ["70–100 U/kg IV bolus", "5,000 U SC", "Enoxaparin 40 mg SC"], "correct": "70–100 U/kg IV bolus" }
+    },
+    {
+      "id": "statin",
+      "label": "High-intensity statin",
+      "kind": "must",
+      "phase": 2,
+      "drugClass": "Statin · HMG-CoA reductase inhibitor",
+      "why": "High-intensity atorvastatin 80 mg started early stabilizes vulnerable coronary plaques and reduces recurrent ischemic events regardless of baseline LDL.",
+      "dose": { "options": ["Atorvastatin 10 mg", "Atorvastatin 80 mg"], "correct": "Atorvastatin 80 mg" }
+    },
+    {
+      "id": "morphine",
+      "label": "Morphine 2–4 mg IV if the pain goes on",
+      "kind": "acceptable",
+      "drugClass": "Opioid analgesic",
+      "why": "Relieves refractory ischemic pain and sympathetic surge, though it may delay oral P2Y12 absorption and does not treat the occlusion."
+    },
+    {
+      "id": "oxygen",
+      "label": "Oxygen by face mask",
+      "kind": "trap",
+      "drugClass": "Supplemental oxygen",
+      "why": "His SpO2 is 97%. In normoxic ACS (SpO2 ≥90%), routine oxygen causes hyperoxia-induced coronary vasoconstriction without benefit."
+    },
+    {
+      "id": "wait_trop",
+      "label": "Wait for the troponin before calling cardiology",
+      "kind": "trap",
+      "drugClass": "Diagnostic delay",
+      "why": "STEMI is an ECG diagnosis. Waiting for troponin adds avoidable ischemia time and costs salvageable anterior myocardium."
+    },
+    {
+      "id": "lysis",
+      "label": "Give tenecteplase now",
+      "kind": "trap",
+      "drugClass": "Fibrinolytic",
+      "why": "Primary PCI is preferred over fibrinolysis whenever wire-crossing is achievable within 120 minutes, giving higher patency and less ICH."
+    },
+    {
+      "id": "shock",
+      "label": "DC shock 200 J",
+      "kind": "must",
+      "drugClass": "Defibrillation",
+      "why": "Ventricular fibrillation requires immediate unsynchronized biphasic defibrillation to restore perfusing sinus rhythm."
+    },
+    {
+      "id": "sk_explain_family",
+      "label": "Explain to him and his family what is happening and what comes next",
+      "kind": "must",
+      "phase": 2,
+      "skill": "communication",
+      "drugClass": "Communication",
+      "why": "A heart attack is terrifying. A few calm, plain words about the cath lab plan lower fear and help him cooperate."
+    },
+    {
+      "id": "sk_consent_pci",
+      "label": "Get his consent for primary PCI after explaining the benefit and main risks",
+      "kind": "must",
+      "phase": 2,
+      "skill": "consent",
+      "drugClass": "Consent & capacity",
+      "why": "He is awake and has capacity, so he decides. An emergency shortens the talk; it does not remove it."
+    },
+    {
+      "id": "sk_whatsapp_ecg",
+      "label": "Post his ECG with his name in a doctors' WhatsApp group to ask for opinions",
+      "kind": "trap",
+      "phase": 1,
+      "skill": "ethics",
+      "drugClass": "Ethics & law",
+      "why": "Sharing identifiable patient data in a group breaks confidentiality. Ask your senior or cardiology directly, or remove every identifier."
+    }
+  ],
+  "dispositionOptions": ["Cath lab", "CCU", "Medical ward", "Home"],
+  "disposition": "Cath lab",
+  "timeTargets": [
+    { "label": "ECG within 10 minutes of arrival", "action": "test:ecg", "maxMinutes": 10 },
+    { "label": "Cath lab called within 30 minutes", "action": "step:cath", "maxMinutes": 30 }
+  ],
+  "deterioration": [
+    { "unlessStep": "cath", "byMinute": 40, "event": "VF on the monitor — he is not responding", "arrest": true, "rescueStep": "shock" }
+  ],
+  "outcomes": {
+    "best": "الشريان اتفتح في القسطرة بعد ٤٠ دقيقة. عم سيد رجع الموقف بعد شهر، وبطّل السجاير.",
+    "delay": "اتفتح الشريان، بس متأخر. القلب بقى أضعف، وبينهج على السلم.",
+    "missed": "التشخيص اتأخر، وجزء كبير من عضلة القلب راح.",
+    "trap": "الغلطة دي أخرت العلاج، والعضلة اللي ماتت مش هترجع.",
+    "death": "ماتلحقش. زمايله لسه مستنيينه في الموقف."
+  },
+  "ecgGuide": "ST elevation ≥2 mm in precordial leads V1–V4 localizes acute anterior wall myocardial infarction from proximal LAD occlusion, with reciprocal ST depression in inferior leads II, III, and aVF.",
+  "source": "ESC 2023 ACS Guidelines · AHA/ACC STEMI",
+  "teaching": "STEMI is diagnosed on the ECG. Aspirin and the cath lab come first; the troponin does not change the decision."
+}

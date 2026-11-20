@@ -21584,6 +21584,128 @@ small.admin-account-approval-gap {
   color: var(--ink);
 }
 
+/* ER Shift cases (Admin → ER Shift → Cases). */
+.admin-er-cases-body {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-er-cases-list,
+.admin-er-cases-check,
+.admin-er-cases-problems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.admin-er-cases-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.admin-er-cases-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.admin-er-cases-row-text {
+  min-width: 0;
+  flex: 1 1 18rem;
+}
+
+.admin-er-cases-row-title {
+  margin: 0;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.admin-er-cases-row-meta {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-er-cases-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-er-cases-delete {
+  color: var(--danger);
+}
+
+.admin-er-cases-skills {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: var(--brand-soft, var(--surface));
+  color: var(--brand);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.admin-er-cases-json {
+  width: 100%;
+  min-height: 12rem;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  resize: vertical;
+}
+
+.admin-er-cases-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.admin-er-cases-file {
+  cursor: pointer;
+}
+
+.admin-er-cases-error {
+  margin: 0;
+  color: var(--danger);
+}
+
+.admin-er-cases-check {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.admin-er-cases-check-title {
+  margin: 0;
+  font-weight: 700;
+  color: var(--good);
+}
+
+.admin-er-cases-check-row.has-problems .admin-er-cases-check-title {
+  color: var(--danger);
+}
+
+.admin-er-cases-problems {
+  margin: 0.2rem 0 0 1.2rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.admin-er-cases-problems li::before {
+  content: "• ";
+}
+
 .admin-device-limit-card {
   display: grid;
   gap: 0.6rem;
