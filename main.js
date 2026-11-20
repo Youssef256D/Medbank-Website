@@ -458,6 +458,10 @@ const SESSION_HIGHLIGHTER_DEFAULT = "yellow";
 const SESSION_HIGHLIGHTER_COLORS = new Set(["yellow", "red", "green"]);
 const COURSES_COMING_SOON_FEATURE_KEY = "courses_coming_soon";
 const STUDENT_AUTO_APPROVAL_FEATURE_KEY = "student_auto_approval";
+// Opens ER Shift (app only) to every account, whatever its college or stage.
+// The app's private.can_play_er_shift reads it (20261122150000_er_shift_everyone).
+const ER_SHIFT_EVERYONE_FEATURE_KEY = "er_shift_everyone";
+const ER_SHIFT_EVERYONE_FEATURE_DESCRIPTION = "When on, every account can play ER Shift, whatever its college, stage or organization.";
 const STUDENT_AUTO_APPROVAL_FEATURE_DESCRIPTION = "When enabled, pending students whose profile is already complete are approved automatically while an admin dashboard is open.";
 const STUDENT_AUTO_APPROVAL_MIGRATION_REQUIRED_MESSAGE = "Auto-approval needs the app_feature_flags table. Apply the pending Supabase migration first.";
 const STUDENT_AUTO_APPROVAL_SWEEP_MIN_INTERVAL_MS = 15000;
@@ -723,6 +727,13 @@ const state = {
   studentAutoApprovalSaving: false,
   studentAutoApprovalLoadedAt: 0,
   studentAutoApprovalError: "",
+  // ER Shift for everyone (app_feature_flags.er_shift_everyone). Null until
+  // the first successful read, so the switch never guesses.
+  erShiftEveryoneEnabled: null,
+  erShiftEveryoneLoading: false,
+  erShiftEveryoneSaving: false,
+  erShiftEveryoneLoadedAt: 0,
+  erShiftEveryoneError: "",
   // Auto MCQ access for new students (app_feature_flags.student_auto_mcq_access).
   // Enabled is null until the first successful read; the held count is the
   // server's exact count, null until read.
@@ -6857,6 +6868,103 @@ async function saveStudentAutoApprovalFlag(enabled) {
   } finally {
     state.studentAutoApprovalSaving = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// ER Shift for everyone
+//
+// A site-wide admin switch (`app_feature_flags` -> `er_shift_everyone`). ER
+// Shift itself lives only in the app; the database's private.can_play_er_shift
+// lets every account in while this is on. The website only reads and writes
+// the switch, on the admin Users page settings next to auto-approval.
+// ---------------------------------------------------------------------------
+
+async function loadErShiftEveryoneFlag(options = {}) {
+  const force = Boolean(options?.force);
+  if (state.erShiftEveryoneLoading && !force) {
+    return !state.erShiftEveryoneError;
+  }
+  if (!force && state.erShiftEveryoneLoadedAt) {
+    return true;
+  }
+  const client = getRelationalClient();
+  if (!client || getCurrentUser()?.role !== "admin") {
+    return false;
+  }
+  state.erShiftEveryoneLoading = true;
+  try {
+    const row = await runRelationalQueryWithTimeout(
+      client
+        .from("app_feature_flags")
+        .select("feature_key,enabled")
+        .eq("feature_key", ER_SHIFT_EVERYONE_FEATURE_KEY)
+        .maybeSingle(),
+      "ER Shift switch check timed out.",
+    );
+    // No row means the migration is not applied yet: hide the switch.
+    state.erShiftEveryoneEnabled = row ? Boolean(row.enabled) : null;
+    state.erShiftEveryoneLoadedAt = Date.now();
+    state.erShiftEveryoneError = "";
+    return true;
+  } catch (error) {
+    state.erShiftEveryoneError = getErrorMessage(error, "Could not check the ER Shift switch.");
+    return false;
+  } finally {
+    state.erShiftEveryoneLoading = false;
+  }
+}
+
+async function saveErShiftEveryoneFlag(enabled) {
+  const client = getRelationalClient();
+  const currentUser = getCurrentUser();
+  if (!client || currentUser?.role !== "admin") {
+    throw new Error("Only admins can change the ER Shift switch.");
+  }
+  const profileId = getUserProfileId(currentUser);
+  await runRelationalQueryWithTimeout(
+    client.from("app_feature_flags").upsert({
+      feature_key: ER_SHIFT_EVERYONE_FEATURE_KEY,
+      enabled: Boolean(enabled),
+      description: ER_SHIFT_EVERYONE_FEATURE_DESCRIPTION,
+      updated_by: isUuidValue(profileId) ? profileId : null,
+    }, { onConflict: "feature_key", defaultToNull: false }),
+    "ER Shift switch update timed out.",
+  );
+  state.erShiftEveryoneEnabled = Boolean(enabled);
+  state.erShiftEveryoneLoadedAt = Date.now();
+  state.erShiftEveryoneError = "";
+  return true;
+}
+
+function renderAdminErShiftEveryoneSection() {
+  const enabled = state.erShiftEveryoneEnabled;
+  if (enabled === null && !state.erShiftEveryoneError) {
+    return "";
+  }
+  const busy = Boolean(state.erShiftEveryoneSaving);
+  return `
+          <section class="admin-settings-section">
+            <h4 class="admin-settings-section-title">ER Shift</h4>
+            ${enabled === null ? "" : `
+            <div class="admin-settings-row">
+              <div class="admin-settings-row-text">
+                <p class="admin-settings-row-title">ER Shift for everyone</p>
+                <p class="admin-settings-row-desc">
+                  ${enabled
+    ? "On. Every user can play ER Shift in the app, whatever their college, year or stage."
+    : "Off. Only medicine interns and residents, and organizations with ER Shift, can play it in the app."}
+                </p>
+              </div>
+              <div class="admin-settings-row-control">
+                <button class="admin-access-switch" type="button" data-action="toggle-er-shift-everyone" role="switch" aria-checked="${enabled ? "true" : "false"}" ${busy ? "disabled" : ""} title="Let every user play ER Shift in the app">
+                  ${renderAdminAccessSwitchContent(busy ? "ER Shift..." : "ER Shift", enabled)}
+                </button>
+              </div>
+            </div>`}
+            ${state.erShiftEveryoneError
+    ? `<p class="subtle" style="color: var(--danger);">${escapeHtml(state.erShiftEveryoneError)}</p>`
+    : ""}
+          </section>`;
 }
 
 // Shared by the "Approve all pending" button and the auto-approval sweep, so a
@@ -24798,6 +24906,7 @@ async function refreshAdminDataSnapshot(user, options = {}) {
     hydrateTasks.push(hydrateRelationalNotifications(user));
     hydrateTasks.push(loadCoursesComingSoonFlag({ force }).catch(() => false));
     hydrateTasks.push(loadStudentAutoApprovalFlag({ force }).catch(() => false));
+    hydrateTasks.push(loadErShiftEveryoneFlag({ force }).catch(() => false));
     hydrateTasks.push(loadStudentAutoMcqAccessFlag({ force }).catch(() => false));
     if (activeAdminPage === "users") {
       hydrateTasks.push(loadMcqAccessHeldCount().catch(() => null));
@@ -40164,6 +40273,7 @@ function renderAdmin() {
               </div>
             </div>
           </section>
+          ${renderAdminErShiftEveryoneSection()}
           <section class="admin-settings-section">
             <h4 class="admin-settings-section-title">MCQ access</h4>
             ${renderAdminAutoMcqAccessPanel(users)}
@@ -44489,6 +44599,35 @@ function wireAdmin() {
         submitButton.disabled = false;
         submitButton.textContent = submitButton.dataset.baseLabel || "Add user";
       }
+    }
+  });
+
+  appEl.querySelector("[data-action='toggle-er-shift-everyone']")?.addEventListener("click", async () => {
+    if (state.erShiftEveryoneSaving || state.erShiftEveryoneEnabled === null) {
+      return;
+    }
+    const nextEnabled = !state.erShiftEveryoneEnabled;
+    const confirmed = window.confirm(nextEnabled
+      ? "Open ER Shift to everyone?\n\nEvery user will be able to play ER Shift in the app, whatever their college, year or stage."
+      : "Close ER Shift to everyone?\n\nOnly medicine interns and residents, and organizations with ER Shift, will be able to play it.");
+    if (!confirmed) {
+      return;
+    }
+    state.erShiftEveryoneSaving = true;
+    state.skipNextRouteAnimation = true;
+    render();
+    try {
+      await saveErShiftEveryoneFlag(nextEnabled);
+      toast(nextEnabled ? "ER Shift is open to everyone." : "ER Shift follows the usual rules again.");
+    } catch (error) {
+      state.erShiftEveryoneError = getErrorMessage(error, "Could not update the ER Shift switch.");
+      toast(state.erShiftEveryoneError);
+    } finally {
+      state.erShiftEveryoneSaving = false;
+    }
+    if (state.route === "admin" && state.adminPage === "users") {
+      state.skipNextRouteAnimation = true;
+      render();
     }
   });
 
